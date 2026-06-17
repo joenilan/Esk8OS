@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "author": "Antigravity",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-devkit-c-v4",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-ili9341",
+      "id": "tft",
+      "top": -150,
+      "left": 200,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btnL",
+      "top": 130,
+      "left": -120,
+      "attrs": { "color": "grey", "label": "L" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btnR",
+      "top": 200,
+      "left": -120,
+      "attrs": { "color": "green", "label": "R (units)" }
+    }
+  ],
+  "connections": [
+    [ "esp:GND", "tft:GND", "black", [ "v0" ] ],
+    [ "esp:3V3", "tft:VCC", "red", [ "v0" ] ],
+    [ "esp:15", "tft:CS", "blue", [ "v0" ] ],
+    [ "esp:2", "tft:D/C", "green", [ "v0" ] ],
+    [ "esp:4", "tft:RST", "orange", [ "v0" ] ],
+    [ "esp:23", "tft:MOSI", "yellow", [ "v0" ] ],
+    [ "esp:19", "tft:MISO", "cyan", [ "v0" ] ],
+    [ "esp:18", "tft:SCK", "purple", [ "v0" ] ],
+    [ "esp:3V3", "tft:LED", "white", [ "v0" ] ],
+
+    [ "btnL:2.l", "esp:0", "green", [ "h0" ] ],
+    [ "btnL:1.l", "esp:GND.1", "black", [ "h0" ] ],
+    [ "btnR:2.l", "esp:14", "green", [ "h0" ] ],
+    [ "btnR:1.l", "esp:GND.1", "black", [ "h0" ] ]
+  ]
+}
