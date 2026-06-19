@@ -28,6 +28,14 @@ const int   STORAGE_SCHEMA_VERSION = 2;  // bump once to clear old demo trip/odo
 // replacement — flip back to false once the new ESC is wired in.
 const bool  DEMO_MODE = true;
 
+// True when telemetry is simulated — the Wokwi build, or DEMO_MODE on hardware.
+// Gates demo-only conveniences (fast range learn-in, the recharge gesture).
+#if defined(WOKWI_SIMULATION)
+const bool  DEMO_DATA = true;
+#else
+const bool  DEMO_DATA = DEMO_MODE;
+#endif
+
 // Battery warning thresholds over the configured usable pack window. The display
 // treats 0% as "stop riding now", not absolute empty/dead lithium cells.
 const int   BATT_WARN_PCT = 50;          // below -> yellow
@@ -425,7 +433,8 @@ void drawStaticTrip() {
     GFX->setTextFont(1);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
-    GFX->drawString("hold L to reset trip", X0 + UI_W / 2, 190);
+    GFX->drawString(DEMO_DATA ? "hold L: reset + recharge" : "hold L to reset trip",
+                    X0 + UI_W / 2, 190);
 }
 
 // ── PAGE 3: SETTINGS static chrome ──
@@ -1094,13 +1103,8 @@ void updateRangeEstimate() {
     // Simulated telemetry has no real ride to learn from, so shorten the
     // learn-in window in demo/sim — lets ESTIMATED + AVG WH animate on the bench.
     // Real-ESC riding keeps the conservative full thresholds.
-    #if defined(WOKWI_SIMULATION)
-    const bool demoData = true;
-    #else
-    const bool demoData = DEMO_MODE;
-    #endif
-    float learnDist = demoData ? 0.05f : RANGE_LEARN_MIN_DISTANCE_KM;
-    float learnWh   = demoData ? 1.0f  : RANGE_LEARN_MIN_WH;
+    float learnDist = DEMO_DATA ? 0.05f : RANGE_LEARN_MIN_DISTANCE_KM;
+    float learnWh   = DEMO_DATA ? 1.0f  : RANGE_LEARN_MIN_WH;
 
     rangeEstimateReady = false;
     if (sessionDistanceKm >= learnDist && netWhUsed >= learnWh) {
@@ -1359,6 +1363,17 @@ void checkButtons() {
             remainingRangeKm = 0;
             rangeEstimateReady = false;
             rideEnergyBaselineSet = false;
+            // Demo: also recharge the pack and clear temps so the bench loop can
+            // run indefinitely. On a real ESC these come straight from the VESC,
+            // so the recharge is skipped (it would be overwritten on next poll).
+            if (DEMO_DATA) {
+                currentBatteryPercent = 100;
+                currentVoltage = BATTERY_MAX_V;
+                currentMotorTemp = 0;
+                currentEscTemp = 0;
+                currentBatteryTemp = 0;
+                peakWatts = 0;
+            }
             saveOdo();
             leftHandled = true;
             drawStaticFrame();
