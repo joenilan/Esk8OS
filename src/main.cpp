@@ -446,14 +446,12 @@ void drawSpeedReadout(int spdInt, bool clearZone) {
         GFX->fillRect(X0, 17, UI_W, 73, COL_BG);
     }
 
-    // Value: big bold sans hero number (2x), vertically centered in the band so
-    // it fills the original speed zone without crowding anything below it.
+    // Value: big numeric hero font (48 px, normal numerals — not 7-seg),
+    // vertically centered so it fills the speed band without overflowing it.
     GFX->setTextColor(COL_WHITE);
-    GFX->setFreeFont(&fonts::FreeSansBold24pt7b);
-    GFX->setTextSize(2);
+    GFX->setFont(&fonts::Font6);
     GFX->setTextDatum(MC_DATUM);
-    GFX->drawString(String(spdInt), X0 + 96, 54);
-    GFX->setTextSize(1);
+    GFX->drawString(String(spdInt), X0 + 96, 53);
 
     // Unit: upper-left, top-aligned under the status bar. This is static
     // page chrome and must appear even before the first successful VESC poll.
