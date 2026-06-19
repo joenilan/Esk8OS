@@ -12,6 +12,16 @@
 // Pins/offsets match the verified community config for this board
 // (LovyanGFX discussion #406): WR8 RD9 DC7 CS6 RST5, D0-7 = 39,40,41,42,45,46,
 // 47,48, BL38, panel offset_x=35, invert on.
+//
+// ---- HARDWARE BRING-UP CHEAT SHEET (if the panel looks wrong, change ONE) ----
+//   * Reds and blues swapped ............ flip  _panel cfg  c.rgb_order
+//   * Whole screen looks photo-negative . flip  _panel cfg  c.invert
+//   * Image shifted sideways / cut off .. adjust c.offset_x (try 0 then 35)
+//   * Mirrored or rotated wrong ......... change tft.setRotation(0) in setup()
+//                                          (0..3 normal, 4..7 mirrored)
+//   * Totally black / nothing ........... check GPIO15 power rail + c.pin_rst,
+//                                          and try lowering bus freq_write to 16M
+// (Wokwi's ILI9341 stand-in may render mirrored vs hardware — that's sim-only.)
 // ============================================================================
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>

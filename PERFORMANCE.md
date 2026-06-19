@@ -9,7 +9,14 @@ and build on them.
 
 - **MCU:** ESP32-S3 (dual-core, 240 MHz), 512 KB internal SRAM, 8 MB PSRAM
 - **Panel:** ST7789, 170×320, driven over an **8-bit parallel (i80) bus** — not SPI
-- **Library:** TFT_eSPI 2.5.x (`TFT_PARALLEL_8_BIT`)
+- **Library (this branch):** **LovyanGFX** — drives the ESP32-S3 LCD_CAM
+  peripheral with **DMA**, so a full-frame blit is ~5 ms instead of TFT_eSPI's
+  ~38 ms. (`main` is still on TFT_eSPI; see the "LovyanGFX migration" section.)
+
+> **Branch status:** the full dashboard is ported to LovyanGFX and builds for
+> both envs, but is **pending hardware confirmation** (panel colors/orientation
+> and the measured blit time on the SYSTEM page). Display config + a bring-up
+> cheat sheet live in `src/LGFX_Config.h`.
 
 ## Rendering architecture
 
@@ -87,11 +94,12 @@ drop it to ~5 ms).
 
 ## Roadmap (ordered by impact / effort)
 
-1. **LovyanGFX migration (big, the real ceiling-breaker).** TFT_eSPI can't DMA
-   the parallel bus, so full-frame stays ~38 ms. LovyanGFX drives the S3 LCD_CAM
-   peripheral with DMA — a full frame becomes ~5 ms and the CPU is free during
-   the blit, enabling smooth 60 fps even for full-screen animation. This is the
-   biggest single win but the largest change (port the whole render layer).
+1. **LovyanGFX migration (DONE on the `lovyangfx` branch, pending hardware
+   confirmation).** TFT_eSPI can't DMA the parallel bus, so full-frame stays
+   ~38 ms. LovyanGFX drives the S3 LCD_CAM peripheral with DMA — a full frame
+   becomes ~5 ms, enabling smooth high-refresh even for full-screen pushes. The
+   port keeps all dashboard logic; only the render layer and fonts changed
+   (built-in LovyanGFX fonts for now; custom BebasNeue port deferred).
 2. **Per-widget sprite for the hot path.** Give the big speed number its own
    small sprite so its update is tiny regardless of the rest of the frame
    (complements dirty-rect; mostly matters if we stay on TFT_eSPI).
