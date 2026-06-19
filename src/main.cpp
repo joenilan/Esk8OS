@@ -7,6 +7,7 @@
 #include "BebasNeue40.h"
 #include "BebasNeue80.h"
 #include <WiFi.h>
+#include <Preferences.h>
 #ifndef WOKWI_SIMULATION
 #include <VescUart.h>
 #endif
@@ -14,20 +15,71 @@
 // ==========================================
 // USER CONFIG  — edit these to personalize
 // ==========================================
-const char* PRODUCT_NAME = "ESK8 OS";   // brand shown on splash + top bar
+const char* PRODUCT_NAME = "ESK8OS";     // brand shown on splash + top bar
 const char* RIDER_NAME   = "JOE";        // your name
 const char* FW_VERSION   = "v3.2";       // firmware version string
 const bool  USE_MPH_DEFAULT = true;      // true = MPH, false = KM/H at boot
+const int   STORAGE_SCHEMA_VERSION = 2;  // bump once to clear old demo trip/odo
+
+// DEMO_MODE feeds simulated telemetry even on the physical board, so you can
+// bench-test the UI on the device without the FSESC connected. Set false once
+// it's wired to the VESC to read real data.
+// TEMPORARY: re-enabled while the Flipsky Dual FSESC 6.7 Plus is out for
+// replacement — flip back to false once the new ESC is wired in.
+const bool  DEMO_MODE = true;
+
+// Battery warning thresholds over the configured usable pack window. The display
+// treats 0% as "stop riding now", not absolute empty/dead lithium cells.
+const int   BATT_WARN_PCT = 50;          // below -> yellow
+const int   BATT_LOW_PCT  = 30;          // below -> orange
+const int   BATT_CRIT_PCT = 15;          // below -> red (stop / charge now)
+
+// Battery pack capacity used by the display's range estimate. The cells are
+// nominally 2800 mAh in 10S6P (16.8 Ah), but this pack is configured with a
+// conservative effective capacity of 16.5 Ah to better match real cells/VESC.
+const int   BATTERY_PARALLEL_COUNT = 6;
+const int   BATTERY_CELL_CAPACITY_MAH = 2800;
+const float BATTERY_EFFECTIVE_CAPACITY_AH = 16.5;
+const float BATTERY_NOMINAL_CELL_V = 3.7;
+const float BATTERY_FULL_CELL_V = 4.20;      // fully charged cell voltage
+const float BATTERY_STOP_CELL_V = 3.30;      // dashboard 0%; align with VESC cutoff/end
+const float RANGE_DEFAULT_WH_PER_MILE = 22.0; // used until enough real ride data is learned
+const float RANGE_LEARN_MIN_DISTANCE_KM = 1.6; // wait ~1 mi before trusting learned Wh/mi
+const float RANGE_LEARN_MIN_WH = 20.0;         // avoids nonsense from unloaded bench spins
+
+// Over-temp alert thresholds (deg C). Past these the temp turns red and a
+// banner fires on any page.
+const float MOTOR_TEMP_LIMIT = 80.0;
+const float ESC_TEMP_LIMIT   = 80.0;
+const unsigned long VESC_LINK_TIMEOUT_MS = 3000;
 
 // ==========================================
 // PHYSICAL HARDWARE SPECS
 // ==========================================
 const int   BATTERY_CELLS_COUNT = 10;
-const float BATTERY_MAX_V = BATTERY_CELLS_COUNT * 4.2;
-const float BATTERY_MIN_V = BATTERY_CELLS_COUNT * 3.2;
-const float MOTOR_POLE_PAIRS = 7.0;
-const float GEARING_RATIO = 16.0 / 72.0;
-const float WHEEL_CIRCUMFERENCE_M = 0.203 * PI;
+const float BATTERY_MAX_V = BATTERY_CELLS_COUNT * BATTERY_FULL_CELL_V;
+const float BATTERY_MIN_V = BATTERY_CELLS_COUNT * BATTERY_STOP_CELL_V;
+// Wheel/gearing profiles for the DISPLAY's own speed + distance math (these do
+// NOT write to the FSESC — they only keep the gauge accurate; use bridge mode +
+// VESC Tool to change the VESC's own config). Selected profile persists in NVS.
+struct WheelProfile {
+    const char* name;
+    float wheelDiameterM;
+    int   motorPulley;
+    int   wheelPulley;
+    float polePairs;
+};
+WheelProfile wheelProfiles[] = {
+    { "8IN PNEU", 0.203f, 16, 72, 7.0f },
+    { "100MM",    0.100f, 16, 48, 7.0f },
+};
+const int WHEEL_PROFILE_COUNT = sizeof(wheelProfiles) / sizeof(wheelProfiles[0]);
+int activeWheelProfile = 0;   // loaded from NVS in setup()
+
+float profileGearRatio()    { return (float)wheelProfiles[activeWheelProfile].motorPulley /
+                                     (float)wheelProfiles[activeWheelProfile].wheelPulley; }
+float profileCircumfM()     { return wheelProfiles[activeWheelProfile].wheelDiameterM * PI; }
+float profilePolePairs()    { return wheelProfiles[activeWheelProfile].polePairs; }
 
 // Degree symbol in the TFT_eSPI GLCD font (Font 1 / CP437): 0xF8.
 const char DEG = (char)0xF8;
@@ -55,6 +107,33 @@ unsigned long lastLeftPress = 0, lastRightPress = 0;
 // ==========================================
 TFT_eSPI tft = TFT_eSPI();
 
+// Off-screen frame buffer. All dashboard widgets render into `canvas` and the
+// finished frame is blitted to the panel in a single pushSprite() — the per-
+// widget erase+redraw never reaches the screen, so there is no flicker. `GFX`
+// is the active draw target: it points at the canvas when the PSRAM sprite was
+// allocated, otherwise straight at `tft` (e.g. Wokwi, which has no PSRAM, or if
+// allocation ever fails). Boot splash + bridge screens draw to `tft` directly.
+TFT_eSprite canvas = TFT_eSprite(&tft);
+TFT_eSPI*   GFX = &tft;
+bool gUseCanvas = false;
+bool gCanvasDirty = false;    // a widget changed the canvas; push needed this frame
+uint16_t gFps = 0;            // frames pushed in the last second (SYSTEM page)
+
+// Non-volatile storage for the persisted odometer + trip
+Preferences prefs;
+
+// Set true to force a full repaint of every widget on the next loop (used
+// after drawStaticFrame() wipes the screen, e.g. on unit toggle / trip reset).
+bool gRedrawAll = true;
+
+// VESC Tool WiFi-TCP bridge (active only in MODE_VESC_BRIDGE). Forwards raw
+// bytes between a TCP client (desktop VESC Tool > TCP connection) and Serial1.
+WiFiServer bridgeServer(65102);
+WiFiClient bridgeClient;
+const char* BRIDGE_SSID = "ESK8-BRIDGE";
+const char* BRIDGE_PASS = "esk8bridge";   // must be >= 8 chars
+String bridgeStatus = "WAITING";
+
 // ==========================================
 // COLORS (NZXT CAM Palette)
 // ==========================================
@@ -66,24 +145,62 @@ uint16_t COL_WHITE;     // #ffffff
 uint16_t COL_GREEN;     // #00c864
 uint16_t COL_RED;       // #ff3333
 uint16_t COL_BLUE;      // #4488ff
+uint16_t COL_YELLOW;    // #ffcd00
+uint16_t COL_ORANGE;    // #ff8000
+
+// Battery zone color: green -> yellow -> orange -> red as charge drops.
+uint16_t battColor(int pct) {
+    if (pct >= BATT_WARN_PCT) return COL_GREEN;
+    if (pct >= BATT_LOW_PCT)  return COL_YELLOW;
+    if (pct >= BATT_CRIT_PCT) return COL_ORANGE;
+    return COL_RED;
+}
 
 // ==========================================
 // TELEMETRY STATE
 // ==========================================
 float currentSpeedKmh = 0.0;
 float currentSpeedMph = 0.0;
-float currentVoltage = 39.2;
-int   currentBatteryPercent = 78;
-float currentMotorTemp = 38.0;
-float currentBatteryTemp = 32.0;
-float currentEscTemp = 35.0;
-float currentAmps = 14.2;
-float currentWattHours = 392.0;
-float tripDistanceKm = 12.8;
-float totalDistanceKm = 615.0;
-float estimatedRangeKm = 18.5;
-float remainingRangeKm = 21.3;
-float avgWhPerKm = 18.2;
+float currentVoltage = BATTERY_MAX_V;
+int   currentBatteryPercent = 100;
+float currentMotorTemp = 0.0;
+float currentBatteryTemp = 0.0;
+float currentEscTemp = 0.0;
+float currentAmps = 0.0;        // battery / input amps
+float currentMotorAmps = 0.0;   // motor phase amps
+float currentDuty = 0.0;        // duty cycle %
+float currentWatts = 0.0;
+float peakWatts = 0.0;          // short peak-hold so the spike is readable
+float currentWattHours = 0.0;   // Wh used
+float currentWhRegen = 0.0;     // Wh recovered braking
+float maxSpeedKmh = 0.0;        // session max
+float avgSpeedKmh = 0.0;        // session average
+
+// Page system: 0 dashboard, 1 power/stats, 2 trip, 3 settings, 4 system info
+int currentPage = 0;
+const int PAGE_COUNT = 5;
+
+// Top-level system mode: ride dashboard vs wireless VESC Tool bridge.
+enum SystemMode { MODE_DASHBOARD, MODE_VESC_BRIDGE };
+SystemMode systemMode = MODE_DASHBOARD;
+
+// Safety: VESC fault + link tracking
+int vescFault = 0;              // mc_fault_code as int (0 = none)
+unsigned long lastVescOkMs = 0; // last successful telemetry read
+bool vescLinkOk = true;         // false -> telemetry stale (hardware only)
+
+// Session tracking for avg speed
+unsigned long rideStartMs = 0;
+float sessionTripStartKm = 0.0;
+float tripDistanceKm = 0.0;
+float totalDistanceKm = 0.0;
+float estimatedRangeKm = 0.0;
+float remainingRangeKm = 0.0;
+float avgWhPerKm = 0.0;
+float rideStartVescWh = 0.0;
+float rideStartVescWhRegen = 0.0;
+bool  rideEnergyBaselineSet = false;
+bool  rangeEstimateReady = false;
 
 // Per-component health indicators shown next to each temperature (the green
 // "(90%)" in the design). Placeholder values until wired to a real metric.
@@ -94,158 +211,294 @@ int   escHealthPct = 75;
 bool useMph = USE_MPH_DEFAULT;
 unsigned long lastDataPoll = 0;
 
+void updateRangeEstimate();
+
 // ==========================================
 // LAYOUT CONSTANTS (Designed for 170px width)
 // ==========================================
 int X0 = 0; // X offset to center 170px UI on wider Wokwi screen
 const int UI_W = 170;
 
+// Blit the off-screen canvas to the panel in a single write (flicker-free), and
+// track frames/sec for the SYSTEM page. No-op when unbuffered (draws already
+// went straight to the panel).
+void pushCanvas() {
+    if (!gUseCanvas) return;
+    canvas.pushSprite(0, 0);
+
+    static unsigned long fpsWindow = 0;
+    static uint16_t fpsCount = 0;
+    fpsCount++;
+    unsigned long now = millis();
+    if (now - fpsWindow >= 1000) { gFps = fpsCount; fpsCount = 0; fpsWindow = now; }
+}
+
 // Helpers
 void drawHLine(int x, int y, int w, uint16_t color) {
-    tft.drawFastHLine(x, y, w, color);
+    GFX->drawFastHLine(x, y, w, color);
 }
 
 // Bordered card with a centered header label and an underline.
 void drawCard(int x, int y, int w, int h, const char* title) {
-    tft.drawRect(X0 + x, y, w, h, COL_BORDER);
-    tft.setTextFont(1);
-    tft.setTextDatum(TC_DATUM);
-    tft.setTextColor(COL_LABEL);
-    tft.drawString(title, X0 + x + w / 2, y + 3);
+    GFX->drawRect(X0 + x, y, w, h, COL_BORDER);
+    GFX->setTextFont(1);
+    GFX->setTextDatum(TC_DATUM);
+    GFX->setTextColor(COL_LABEL);
+    GFX->drawString(title, X0 + x + w / 2, y + 3);
     drawHLine(X0 + x + 4, y + 14, w - 8, COL_BORDER);
 }
 
 // ==========================================
-// BOOT SPLASH
+// BOOT SPLASH  (rendered into the canvas too, so it is flicker-free)
 // ==========================================
-void drawBootSplash() {
-    tft.fillScreen(COL_BG);
-    tft.setTextFont(1);
+void drawBootProgress(int pct, const char* status, uint16_t color) {
+    int bw = 120, bh = 8, by = 250;
+    int bx = X0 + (UI_W - bw) / 2;
+    pct = constrain(pct, 0, 100);
+
+    GFX->fillRect(bx + 1, by + 1, bw - 2, bh - 2, COL_BG);
+    GFX->fillRect(bx + 1, by + 1, (bw - 2) * pct / 100, bh - 2, COL_GREEN);
+
+    GFX->fillRect(X0, 266, UI_W, 13, COL_BG);
+    GFX->setTextFont(1);
+    GFX->setTextDatum(MC_DATUM);
+    GFX->setTextColor(color);
+    GFX->drawString(status, X0 + UI_W / 2, 272);
+    pushCanvas();
+}
+
+void drawBootSplashFrame() {
+    GFX->fillScreen(COL_BG);
+    GFX->setTextFont(1);
 
     // Version (top-right, faint)
-    tft.setTextDatum(TR_DATUM);
-    tft.setTextColor(COL_BORDER);
-    tft.drawString(FW_VERSION, X0 + UI_W - 6, 6);
+    GFX->setTextDatum(TR_DATUM);
+    GFX->setTextColor(COL_BORDER);
+    GFX->drawString(FW_VERSION, X0 + UI_W - 6, 6);
 
     // Wordmark: big "ESK8" with a small superscript "OS" -> "ESK8 OS"
     const int topY = 86, gap = 3;
-    tft.setTextDatum(TL_DATUM);
-    tft.setFreeFont(&BebasNeue80pt7b);
-    int wMain = tft.textWidth("ESK8");
-    tft.setFreeFont(&BebasNeue34pt7b);
-    int wOs = tft.textWidth("OS");
+    GFX->setTextDatum(TL_DATUM);
+    GFX->setFreeFont(&BebasNeue80pt7b);
+    int wMain = GFX->textWidth("ESK8");
+    GFX->setFreeFont(&BebasNeue34pt7b);
+    int wOs = GFX->textWidth("OS");
     int startX = X0 + (UI_W - (wMain + gap + wOs)) / 2;
 
-    tft.setFreeFont(&BebasNeue80pt7b);
-    tft.setTextColor(COL_WHITE);
-    tft.drawString("ESK8", startX, topY);
-    tft.setFreeFont(&BebasNeue34pt7b);
-    tft.setTextColor(COL_BLUE);                 // superscript, top-aligned
-    tft.drawString("OS", startX + wMain + gap, topY);
+    GFX->setFreeFont(&BebasNeue80pt7b);
+    GFX->setTextColor(COL_WHITE);
+    GFX->drawString("ESK8", startX, topY);
+    GFX->setFreeFont(&BebasNeue34pt7b);
+    GFX->setTextColor(COL_BLUE);                 // superscript, top-aligned
+    GFX->drawString("OS", startX + wMain + gap, topY);
 
-    // Tagline
-    tft.setTextFont(1);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(COL_DIM);
-    tft.drawString("RIDE DASHBOARD", X0 + UI_W / 2, 168);
+    GFX->setTextFont(1);
+    GFX->setTextDatum(MC_DATUM);
+    GFX->setTextColor(COL_DIM);
+    GFX->drawString("RIDE DASHBOARD", X0 + UI_W / 2, 168);
 
-    // Rider
-    tft.setTextColor(COL_LABEL);
-    tft.drawString(String("RIDER: ") + RIDER_NAME, X0 + UI_W / 2, 300);
+    GFX->setTextColor(COL_LABEL);
+    GFX->drawString(String("RIDER: ") + RIDER_NAME, X0 + UI_W / 2, 300);
 
-    // Status line (while the bar fills)
-    tft.setTextColor(COL_DIM);
-    tft.drawString("CONNECTING TO VESC...", X0 + UI_W / 2, 272);
-
-    // Progress bar shell
     int bw = 120, bh = 8, by = 250;
     int bx = X0 + (UI_W - bw) / 2;
-    tft.drawRect(bx, by, bw, bh, COL_BORDER);
+    GFX->drawRect(bx, by, bw, bh, COL_BORDER);
+    pushCanvas();
+}
 
-    // Animate the fill (~1.6s total)
-    for (int pct = 0; pct <= 100; pct += 4) {
-        int fillw = (bw - 2) * pct / 100;
-        tft.fillRect(bx + 1, by + 1, fillw, bh - 2, COL_GREEN);
-        delay(16);
-    }
+void waitForBootReady() {
+    drawBootSplashFrame();
+    drawBootProgress(20, "DISPLAY READY", COL_DIM);
+    delay(150);
+    drawBootProgress(40, "STORAGE READY", COL_DIM);
+    delay(150);
 
-    // Report the real link state
-    #ifndef WOKWI_SIMULATION
-    bool linked = UART.getVescValues();
-    #else
-    bool linked = false;
-    #endif
-
-    tft.fillRect(X0, 266, UI_W, 12, COL_BG);
-    tft.setTextFont(1);
-    tft.setTextDatum(MC_DATUM);
     #ifdef WOKWI_SIMULATION
-    tft.setTextColor(COL_BLUE);
-    tft.drawString("SIMULATION MODE", X0 + UI_W / 2, 272);
+    drawBootProgress(100, "SIMULATION MODE", COL_BLUE);
+    delay(500);
     #else
-    if (linked) {
-        tft.setTextColor(COL_GREEN);
-        tft.drawString("VESC LINKED", X0 + UI_W / 2, 272);
-    } else {
-        tft.setTextColor(COL_RED);
-        tft.drawString("VESC OFFLINE", X0 + UI_W / 2, 272);
+    drawBootProgress(60, "UART READY", COL_DIM);
+    delay(150);
+
+    if (DEMO_MODE) {
+        drawBootProgress(100, "DEMO TELEMETRY", COL_BLUE);
+        delay(500);
+        return;
     }
+
+    unsigned long lastDraw = 0;
+    int pulse = 0;
+    while (!UART.getVescValues()) {
+        if (millis() - lastDraw > 350) {
+            lastDraw = millis();
+            int pct = 65 + (pulse % 26);  // pulse between 65% and 90% while waiting
+            pulse = (pulse + 5) % 26;
+            drawBootProgress(pct, "CONNECTING TO VESC", COL_YELLOW);
+        }
+        delay(25);
+    }
+
+    lastVescOkMs = millis();
+    drawBootProgress(100, "VESC LINKED", COL_GREEN);
+    delay(500);
     #endif
-    delay(700);
+}
+
+// A static "LABEL ............ (value drawn later)" row in a card.
+void drawRowLabel(const char* label, int y) {
+    GFX->setTextFont(1);
+    GFX->setTextDatum(TL_DATUM);
+    GFX->setTextColor(COL_DIM);
+    GFX->drawString(label, X0 + 12, y);
+}
+
+void drawSpeedReadout(int spdInt, bool clearZone) {
+    if (clearZone) {
+        GFX->fillRect(X0, 17, UI_W, 73, COL_BG);
+    }
+
+    // Value: top-aligned, centered to the right of the unit.
+    GFX->setTextColor(COL_WHITE);
+    GFX->setFreeFont(&BebasNeue80pt7b);
+    GFX->setTextDatum(TC_DATUM);
+    GFX->drawString(String(spdInt), X0 + 96, 14);
+
+    // Unit: upper-left, top-aligned under the status bar. This is static
+    // page chrome and must appear even before the first successful VESC poll.
+    GFX->setFreeFont(&BebasNeue24pt7b);
+    GFX->setTextDatum(TL_DATUM);
+    GFX->setTextColor(COL_LABEL);
+    GFX->drawString(useMph ? "MPH" : "KM/H", X0 + 10, 28);
+}
+
+// ── PAGE 0: DASHBOARD static chrome ──
+void drawStaticDash() {
+    int spdInt = (int)(useMph ? currentSpeedMph : currentSpeedKmh);
+    drawSpeedReadout(spdInt, false);
+
+    // VOLTS | WATTS panel (y=86..118) — values drawn by updateStatPanel
+    int spW = 162, spH = 32, spY = 86;
+    int spX = X0 + (UI_W - spW) / 2;
+    GFX->drawRect(spX, spY, spW, spH, COL_BORDER);
+    GFX->drawFastVLine(X0 + UI_W / 2, spY + 5, spH - 10, COL_BORDER);
+
+    drawCard(4, 122, 162, 70, "TEMPS");
+    drawRowLabel("MOTOR",   140);
+    drawRowLabel("BATTERY", 156);
+    drawRowLabel("ESC",     172);
+
+    drawCard(4, 198, 162, 70, "RANGE");
+    drawRowLabel("ESTIMATED", 216);
+    drawRowLabel("REMAINING", 232);
+    drawRowLabel(useMph ? "AVG. WH/MI" : "AVG. WH/KM", 248);
+}
+
+// ── PAGE 1: POWER / ENERGY / SPEED static chrome ──
+void drawStaticPower() {
+    drawCard(4, 22, 162, 82, "POWER");
+    drawRowLabel("MOTOR",   40);
+    drawRowLabel("BATTERY", 56);
+    drawRowLabel("DUTY",    72);
+    drawRowLabel("PEAK",    88);
+
+    drawCard(4, 110, 162, 54, "ENERGY");
+    drawRowLabel("USED",  128);
+    drawRowLabel("REGEN", 144);
+
+    drawCard(4, 170, 162, 54, "SPEED");
+    drawRowLabel("MAX", 188);
+    drawRowLabel("AVG", 204);
+}
+
+// ── PAGE 2: TRIP static chrome ──
+void drawStaticTrip() {
+    drawCard(4, 22, 162, 102, "THIS TRIP");
+    drawRowLabel("TIME",       40);
+    drawRowLabel("DISTANCE",   56);
+    drawRowLabel("AVG SPEED",  72);
+    drawRowLabel("MAX SPEED",  88);
+    drawRowLabel("EFFICIENCY", 104);
+
+    drawCard(4, 132, 162, 40, "ODOMETER");
+    drawRowLabel("TOTAL", 150);
+
+    GFX->setTextFont(1);
+    GFX->setTextDatum(MC_DATUM);
+    GFX->setTextColor(COL_DIM);
+    GFX->drawString("hold L to reset trip", X0 + UI_W / 2, 190);
+}
+
+// ── PAGE 3: SETTINGS static chrome ──
+void drawStaticSettings() {
+    drawCard(4, 22, 162, 82, "WHEEL PROFILE");
+    drawRowLabel("PROFILE",  40);
+    drawRowLabel("DIAMETER", 56);
+    drawRowLabel("GEARING",  72);
+    drawRowLabel("POLES",    88);
+
+    drawCard(4, 110, 162, 54, "DISPLAY");
+    drawRowLabel("UNITS", 128);
+    drawRowLabel("DEMO",  144);
+
+    GFX->setTextFont(1);
+    GFX->setTextDatum(MC_DATUM);
+    GFX->setTextColor(COL_DIM);
+    GFX->drawString("R: change wheel", X0 + UI_W / 2, 176);
+    GFX->drawString("hold L+R: bridge", X0 + UI_W / 2, 190);
+}
+
+// ── PAGE 4: SYSTEM INFO static chrome ──
+void drawStaticSystem() {
+    drawCard(4, 22, 162, 70, "DEVICE");
+    drawRowLabel("CHIP",  40);
+    drawRowLabel("CORES", 56);
+    drawRowLabel("FLASH", 72);
+
+    drawCard(4, 98, 162, 70, "MEMORY");
+    drawRowLabel("HEAP",  116);
+    drawRowLabel("MIN",   132);
+    drawRowLabel("PSRAM", 148);
+
+    drawCard(4, 174, 162, 70, "RUNTIME");
+    drawRowLabel("TEMP",    192);
+    drawRowLabel("UPTIME",  208);
+    drawRowLabel("REFRESH", 224);
 }
 
 // ==========================================
-// DRAW THE COMPLETE STATIC FRAME
+// DRAW THE COMPLETE STATIC FRAME (page-aware)
 // ==========================================
 void drawStaticFrame() {
-    tft.fillScreen(COL_BG);
-    tft.setTextFont(1);
+    GFX->fillScreen(COL_BG);
+    GFX->setTextFont(1);
 
-    // ── TOP STATUS BAR (y=0..16) ──
-    tft.setTextDatum(TL_DATUM);
-    tft.setTextColor(COL_DIM);
-    tft.drawString(PRODUCT_NAME, X0 + 4, 4);
-
-    tft.setTextDatum(TC_DATUM);
-    tft.setTextColor(COL_DIM);
-    tft.drawString(String("RIDER: ") + RIDER_NAME, X0 + 85, 4);
-
+    // ── TOP STATUS BAR (common, y=0..16) ──
+    GFX->setTextDatum(TL_DATUM);
+    GFX->setTextColor(COL_DIM);
+    GFX->drawString(PRODUCT_NAME, X0 + 4, 4);
+    GFX->setTextDatum(TC_DATUM);
+    GFX->setTextColor(COL_DIM);
+    GFX->drawString(String("RIDER: ") + RIDER_NAME, X0 + 85, 4);
     drawHLine(X0, 16, UI_W, COL_BORDER);
 
-    // ── PRO MODE PILL (y=122..144) ──
-    int pmW = 84, pmH = 22, pmY = 122;
-    int pmX = X0 + (UI_W - pmW) / 2;
-    tft.fillRect(pmX, pmY, pmW, pmH, COL_WHITE);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(COL_BG);
-    tft.drawString("PRO MODE", X0 + 85, pmY + pmH / 2);
+    if (currentPage == 1)      drawStaticPower();
+    else if (currentPage == 2) drawStaticTrip();
+    else if (currentPage == 3) drawStaticSettings();
+    else if (currentPage == 4) drawStaticSystem();
+    else                       drawStaticDash();
 
-    // ── TEMPS CARD (y=150..212) ──
-    drawCard(4, 150, 162, 62, "TEMPS");
-    tft.setTextDatum(TL_DATUM);
-    tft.setTextColor(COL_DIM);
-    tft.drawString("MOTOR",   X0 + 12, 166);
-    tft.drawString("BATTERY", X0 + 12, 180);
-    tft.drawString("ESC",     X0 + 12, 194);
-
-    // ── RANGE CARD (y=216..278) ──
-    drawCard(4, 216, 162, 62, "RANGE");
-    tft.setTextDatum(TL_DATUM);
-    tft.setTextColor(COL_DIM);
-    tft.drawString("ESTIMATED",  X0 + 12, 232);
-    tft.drawString("REMAINING",  X0 + 12, 246);
-    tft.drawString(useMph ? "AVG. WH/MI" : "AVG. WH/KM", X0 + 12, 260);
-
-    // ── BATTERY CELLS ROW (y=282..293) ──
-    int cellW = 13, cellH = 11, cellGap = 2;
+    // ── BATTERY CELLS OUTLINE (common, y=276..288) ──
+    int cellW = 13, cellH = 12, cellGap = 2;
     int cellsTotalW = (BATTERY_CELLS_COUNT * cellW) + ((BATTERY_CELLS_COUNT - 1) * cellGap);
     int cellStartX = X0 + (UI_W - cellsTotalW) / 2;
     for (int i = 0; i < BATTERY_CELLS_COUNT; i++) {
-        tft.drawRect(cellStartX + i * (cellW + cellGap), 282, cellW, cellH, COL_BORDER);
+        GFX->drawRect(cellStartX + i * (cellW + cellGap), 276, cellW, cellH, COL_BORDER);
     }
 
-    // ── BOTTOM STATUS BAR (y=298..318) ──
+    // ── BOTTOM STATUS BAR (common, y=298..318) ──
     drawHLine(X0, 298, UI_W, COL_BORDER);
+    gRedrawAll = true;
+    gCanvasDirty = true;
 }
 
 // ==========================================
@@ -257,16 +510,17 @@ void updateClock() {
     int mins = (s / 60) % 100;
     int secs = s % 60;
     int key = mins * 100 + secs;
-    if (key == lastShown) return;
+    if (key == lastShown && !gRedrawAll) return;
     lastShown = key;
 
     char buf[6];
     snprintf(buf, sizeof(buf), "%02d:%02d", mins, secs);
-    tft.fillRect(X0 + 120, 4, 46, 9, COL_BG);
-    tft.setTextFont(1);
-    tft.setTextDatum(TR_DATUM);
-    tft.setTextColor(COL_WHITE);
-    tft.drawString(buf, X0 + 166, 4);
+    GFX->fillRect(X0 + 120, 4, 46, 9, COL_BG);
+    GFX->setTextFont(1);
+    GFX->setTextDatum(TR_DATUM);
+    GFX->setTextColor(COL_WHITE);
+    GFX->drawString(buf, X0 + 166, 4);
+    gCanvasDirty = true;
 }
 
 // ==========================================
@@ -278,40 +532,77 @@ void updateSpeed() {
 
     int spdInt = (int)(useMph ? currentSpeedMph : currentSpeedKmh);
 
-    if (spdInt != lastSpeedInt || useMph != lastUseMph) {
-        // Clear the speed zone (y=20..118)
-        tft.fillRect(X0, 20, UI_W, 98, COL_BG);
-
-        // Value
-        tft.setTextColor(COL_WHITE);
-        tft.setFreeFont(&BebasNeue80pt7b);
-        tft.setTextDatum(MC_DATUM);
-        tft.drawString(String(spdInt), X0 + 80, 70);
-
-        // Unit (top-right of the speed zone)
-        tft.setFreeFont(&BebasNeue18pt7b);
-        tft.setTextDatum(TR_DATUM);
-        tft.setTextColor(COL_LABEL);
-        tft.drawString(useMph ? "MPH" : "KM/H", X0 + 164, 24);
-
+    if (spdInt != lastSpeedInt || useMph != lastUseMph || gRedrawAll) {
+        drawSpeedReadout(spdInt, true);
         lastSpeedInt = spdInt;
         lastUseMph = useMph;
+        gCanvasDirty = true;
     }
 }
 
+// One stat in the VOLTS|WATTS panel: big value (colored) + dim unit, as a
+// centered group around cx.
+void drawStat(int cx, String value, const char* unit, uint16_t vcol) {
+    const int cy = 103;   // vertical middle of the panel (86 + 32/2), nudged
+    const int g = 3;
+    GFX->setFreeFont(&BebasNeue24pt7b);
+    int wn = GFX->textWidth(value);
+    GFX->setFreeFont(&BebasNeue18pt7b);
+    int wu = GFX->textWidth(unit);
+    int gx = cx - (wn + g + wu) / 2;
+
+    GFX->setTextDatum(ML_DATUM);
+    GFX->setFreeFont(&BebasNeue24pt7b);
+    GFX->setTextColor(vcol);
+    GFX->drawString(value, gx, cy);
+    GFX->setFreeFont(&BebasNeue18pt7b);
+    GFX->setTextColor(COL_DIM);
+    GFX->drawString(unit, gx + wn + g, cy);
+}
+
+// ==========================================
+// UPDATE: Volts | Watts panel
+// ==========================================
+void updateStatPanel() {
+    static float lastV = -1;
+    static int lastW = -1;
+    static int lastPct = -1;
+
+    int bx = X0 + (UI_W - 162) / 2;
+    int midx = X0 + UI_W / 2;
+    int by = 86, bh = 32;
+
+    int w = (int)round(peakWatts);
+    bool vchanged = abs(currentVoltage - lastV) > 0.05 || currentBatteryPercent != lastPct || gRedrawAll;
+    bool wchanged = abs(w - lastW) >= 5 || gRedrawAll;
+
+    if (vchanged) {
+        GFX->fillRect(bx + 1, by + 1, midx - bx - 2, bh - 2, COL_BG);
+        drawStat((bx + midx) / 2, String(currentVoltage, 1), "V", battColor(currentBatteryPercent));
+        lastV = currentVoltage; lastPct = currentBatteryPercent;
+    }
+    if (wchanged) {
+        GFX->fillRect(midx + 1, by + 1, (bx + 162) - midx - 2, bh - 2, COL_BG);
+        drawStat((midx + bx + 162) / 2, String(w), "W", COL_WHITE);
+        lastW = w;
+    }
+    if (vchanged || wchanged) gCanvasDirty = true;
+}
+
 // One temps row: dim label is static; this redraws "<temp>C (pct%)".
-void drawTempRow(int y, float temp, int pct) {
-    tft.setTextFont(1);
+// `hot` turns the temperature red when past its limit.
+void drawTempRow(int y, float temp, int pct, bool hot) {
+    GFX->setTextFont(1);
     String pstr = String("(") + pct + "%)";
     String tstr = String((int)round(temp)) + DEG + "C";
 
-    int pw = tft.textWidth(pstr);
-    tft.setTextDatum(TR_DATUM);
-    tft.setTextColor(COL_GREEN);
-    tft.drawString(pstr, X0 + 158, y);
+    int pw = GFX->textWidth(pstr);
+    GFX->setTextDatum(TR_DATUM);
+    GFX->setTextColor(COL_GREEN);
+    GFX->drawString(pstr, X0 + 158, y);
 
-    tft.setTextColor(COL_WHITE);
-    tft.drawString(tstr, X0 + 158 - pw - 4, y);
+    GFX->setTextColor(hot ? COL_RED : COL_WHITE);
+    GFX->drawString(tstr, X0 + 158 - pw - 4, y);
 }
 
 // ==========================================
@@ -322,16 +613,17 @@ void updateTemps() {
 
     if (abs(currentMotorTemp - lastMotor) > 0.3 ||
         abs(currentBatteryTemp - lastBat) > 0.3 ||
-        abs(currentEscTemp - lastEsc) > 0.3) {
+        abs(currentEscTemp - lastEsc) > 0.3 || gRedrawAll) {
 
         // Clear the values column for all three rows
-        tft.fillRect(X0 + 90, 166, 72, 42, COL_BG);
+        GFX->fillRect(X0 + 90, 140, 72, 44, COL_BG);
 
-        drawTempRow(166, currentMotorTemp,   motorHealthPct);
-        drawTempRow(180, currentBatteryTemp, batteryHealthPct);
-        drawTempRow(194, currentEscTemp,     escHealthPct);
+        drawTempRow(140, currentMotorTemp,   motorHealthPct,  currentMotorTemp > MOTOR_TEMP_LIMIT);
+        drawTempRow(156, currentBatteryTemp, batteryHealthPct, false);
+        drawTempRow(172, currentEscTemp,     escHealthPct,    currentEscTemp > ESC_TEMP_LIMIT);
 
         lastMotor = currentMotorTemp; lastBat = currentBatteryTemp; lastEsc = currentEscTemp;
+        gCanvasDirty = true;
     }
 }
 
@@ -345,26 +637,27 @@ void updateRange() {
     if (abs(estimatedRangeKm - lastEst) > 0.1 ||
         abs(remainingRangeKm - lastRem) > 0.1 ||
         abs(avgWhPerKm - lastWh) > 0.1 ||
-        useMph != lastUseMph) {
+        useMph != lastUseMph || gRedrawAll) {
 
         // Clear the values column for all three rows
-        tft.fillRect(X0 + 80, 232, 82, 42, COL_BG);
+        GFX->fillRect(X0 + 80, 216, 82, 44, COL_BG);
 
-        tft.setTextFont(1);
-        tft.setTextDatum(TR_DATUM);
-        tft.setTextColor(COL_WHITE);
+        GFX->setTextFont(1);
+        GFX->setTextDatum(TR_DATUM);
+        GFX->setTextColor(COL_WHITE);
 
         String du = useMph ? "mi" : "km";
         float cv = useMph ? 0.621371 : 1.0;        // km -> mi for distances
         // Energy-per-distance scales inversely: wh/km -> wh/mi multiplies by 1.609.
         float avgWh = useMph ? avgWhPerKm / 0.621371 : avgWhPerKm;
 
-        tft.drawString(String(estimatedRangeKm * cv, 1) + " " + du, X0 + 158, 232);
-        tft.drawString(String(remainingRangeKm * cv, 1) + " " + du, X0 + 158, 246);
-        tft.drawString(String(avgWh, 1) + " wh/" + du,              X0 + 158, 260);
+        GFX->drawString(String(estimatedRangeKm * cv, 1) + " " + du, X0 + 158, 216);
+        GFX->drawString(String(remainingRangeKm * cv, 1) + " " + du, X0 + 158, 232);
+        GFX->drawString(String(avgWh, 1) + " wh/" + du,              X0 + 158, 248);
 
         lastEst = estimatedRangeKm; lastRem = remainingRangeKm; lastWh = avgWhPerKm;
         lastUseMph = useMph;
+        gCanvasDirty = true;
     }
 }
 
@@ -374,21 +667,21 @@ void updateRange() {
 void updateBatteryCells() {
     static int lastPct = -1;
 
-    if (currentBatteryPercent != lastPct) {
+    if (currentBatteryPercent != lastPct || gRedrawAll) {
         int filled = (currentBatteryPercent * BATTERY_CELLS_COUNT + 50) / 100;
-        int cellW = 13, cellH = 11, cellGap = 2;
+        int cellW = 13, cellH = 12, cellGap = 2;
         int cellsTotalW = (BATTERY_CELLS_COUNT * cellW) + ((BATTERY_CELLS_COUNT - 1) * cellGap);
         int cellStartX = X0 + (UI_W - cellsTotalW) / 2;
 
         for (int i = 0; i < BATTERY_CELLS_COUNT; i++) {
             int cx = cellStartX + i * (cellW + cellGap);
-            tft.fillRect(cx + 1, 283, cellW - 2, cellH - 2, COL_BG); // Clear
+            GFX->fillRect(cx + 1, 277, cellW - 2, cellH - 2, COL_BG); // Clear
             if (i < filled) {
-                uint16_t cc = (filled <= 2) ? COL_RED : COL_GREEN;
-                tft.fillRect(cx + 1, 283, cellW - 2, cellH - 2, cc);
+                GFX->fillRect(cx + 1, 277, cellW - 2, cellH - 2, battColor(currentBatteryPercent));
             }
         }
         lastPct = currentBatteryPercent;
+        gCanvasDirty = true;
     }
 }
 
@@ -397,24 +690,231 @@ void updateBatteryCells() {
 // ==========================================
 void updateBottomBar() {
     static int lastPct = -1;
-    static float lastV = -1;
     static bool lastUseMph = !useMph;
+    static float lastTrip = -1;
 
-    if (currentBatteryPercent != lastPct || abs(currentVoltage - lastV) > 0.1 || useMph != lastUseMph) {
-        tft.fillRect(X0, 300, UI_W, 18, COL_BG);
-        tft.setTextFont(1);
-        tft.setTextColor(COL_DIM);
-        tft.setTextDatum(MC_DATUM);
-        float odo = useMph ? totalDistanceKm * 0.621371 : totalDistanceKm;
-        String bottom = String(currentBatteryPercent) + "%  |  " +
-                        String(currentVoltage, 1) + "V  |  " +
-                        String(odo, 0) + (useMph ? "mi" : "km");
-        tft.drawString(bottom, X0 + UI_W / 2, 306);
+    if (currentBatteryPercent != lastPct || useMph != lastUseMph ||
+        abs(tripDistanceKm - lastTrip) >= 0.05 || gRedrawAll) {
+        GFX->fillRect(X0, 300, UI_W, 18, COL_BG);
+        GFX->setTextFont(1);
+
+        String du = useMph ? "mi" : "km";
+        float odo  = useMph ? totalDistanceKm * 0.621371 : totalDistanceKm;
+        float trip = useMph ? tripDistanceKm * 0.621371 : tripDistanceKm;
+
+        String pctStr = String(currentBatteryPercent) + "%";
+        String rest = String("  T:") + String(trip, 1) + du +
+                      "  O:" + String(odo, 0) + du;
+        int wp = GFX->textWidth(pctStr);
+        int wr = GFX->textWidth(rest);
+        int sx = X0 + (UI_W - (wp + wr)) / 2;
+
+        GFX->setTextDatum(ML_DATUM);
+        GFX->setTextColor(battColor(currentBatteryPercent));
+        GFX->drawString(pctStr, sx, 308);
+        GFX->setTextColor(COL_DIM);
+        GFX->drawString(rest, sx + wp, 308);
 
         lastPct = currentBatteryPercent;
-        lastV = currentVoltage;
         lastUseMph = useMph;
+        lastTrip = tripDistanceKm;
+        gCanvasDirty = true;
     }
+}
+
+// Clear a card's value column and draw a right-aligned value at row y.
+void drawVal(int y, String value, uint16_t color) {
+    GFX->fillRect(X0 + 78, y - 1, 84, 12, COL_BG);
+    GFX->setTextFont(1);
+    GFX->setTextDatum(TR_DATUM);
+    GFX->setTextColor(color);
+    GFX->drawString(value, X0 + 158, y);
+}
+
+// ==========================================
+// UPDATE: Page 1 (POWER / ENERGY / SPEED)
+// ==========================================
+void updatePower() {
+    static unsigned long lastMs = 0;
+    if (!gRedrawAll && millis() - lastMs < 400) return;
+    lastMs = millis();
+
+    String su = useMph ? "mph" : "kmh";
+    float cv = useMph ? 0.621371 : 1.0;
+
+    drawVal(40,  String(currentMotorAmps, 1) + " A", COL_WHITE);
+    drawVal(56,  String(currentAmps, 1) + " A",      COL_WHITE);
+    drawVal(72,  String((int)round(currentDuty)) + " %", COL_WHITE);
+    drawVal(88,  String((int)round(peakWatts)) + " W",   COL_WHITE);
+    drawVal(128, String((int)round(currentWattHours)) + " Wh", COL_WHITE);
+    drawVal(144, String("+") + String((int)round(currentWhRegen)) + " Wh", COL_GREEN);
+    drawVal(188, String((int)round(maxSpeedKmh * cv)) + " " + su, COL_WHITE);
+    drawVal(204, String((int)round(avgSpeedKmh * cv)) + " " + su, COL_WHITE);
+    gCanvasDirty = true;
+}
+
+// ==========================================
+// UPDATE: Page 2 (TRIP)
+// ==========================================
+void updateTrip() {
+    static unsigned long lastMs = 0;
+    if (!gRedrawAll && millis() - lastMs < 400) return;
+    lastMs = millis();
+
+    String du = useMph ? "mi" : "km";
+    String su = useMph ? "mph" : "kmh";
+    float cv = useMph ? 0.621371 : 1.0;
+    float avgWh = useMph ? avgWhPerKm / 0.621371 : avgWhPerKm;
+
+    unsigned long sec = millis() / 1000;
+    char tb[6];
+    snprintf(tb, sizeof(tb), "%02d:%02d", (int)((sec / 60) % 100), (int)(sec % 60));
+
+    drawVal(40,  String(tb),                          COL_WHITE);
+    drawVal(56,  String(tripDistanceKm * cv, 1) + " " + du, COL_WHITE);
+    drawVal(72,  String((int)round(avgSpeedKmh * cv)) + " " + su, COL_WHITE);
+    drawVal(88,  String((int)round(maxSpeedKmh * cv)) + " " + su, COL_WHITE);
+    drawVal(104, String((int)round(avgWh)) + " wh/" + du, COL_WHITE);
+    drawVal(150, String((int)round(totalDistanceKm * cv)) + " " + du, COL_WHITE);
+    gCanvasDirty = true;
+}
+
+// ==========================================
+// UPDATE: Page 3 (SETTINGS)
+// ==========================================
+void updateSettings() {
+    static unsigned long lastMs = 0;
+    if (!gRedrawAll && millis() - lastMs < 400) return;
+    lastMs = millis();
+
+    WheelProfile &w = wheelProfiles[activeWheelProfile];
+    drawVal(40,  String(w.name), COL_WHITE);
+    drawVal(56,  String((int)round(w.wheelDiameterM * 1000)) + "mm", COL_WHITE);
+    drawVal(72,  String(w.motorPulley) + ":" + String(w.wheelPulley), COL_WHITE);
+    drawVal(88,  String((int)w.polePairs), COL_WHITE);
+    drawVal(128, String(useMph ? "MPH" : "KM/H"), COL_WHITE);
+    drawVal(144, String(DEMO_MODE ? "ON" : "OFF"), DEMO_MODE ? COL_YELLOW : COL_WHITE);
+    gCanvasDirty = true;
+}
+
+// ==========================================
+// UPDATE: Page 4 (SYSTEM INFO) — live ESP32 board stats
+// ==========================================
+void updateSystem() {
+    static unsigned long lastMs = 0;
+    if (!gRedrawAll && millis() - lastMs < 500) return;
+    lastMs = millis();
+
+    drawVal(40, String(ESP.getChipModel()), COL_WHITE);
+    drawVal(56, String(ESP.getChipCores()) + " @ " + String(getCpuFrequencyMhz()) + "M", COL_WHITE);
+    drawVal(72, String(ESP.getFlashChipSize() / (1024 * 1024)) + " MB", COL_WHITE);
+
+    uint32_t freeK = ESP.getFreeHeap() / 1024;
+    drawVal(116, String(freeK) + " kB", freeK < 30 ? COL_ORANGE : COL_WHITE);
+    drawVal(132, String(ESP.getMinFreeHeap() / 1024) + " kB", COL_WHITE);
+    if (ESP.getPsramSize() > 0)
+        drawVal(148, String(ESP.getFreePsram() / 1024) + " kB", COL_WHITE);
+    else
+        drawVal(148, String("none"), COL_DIM);
+
+    float t = temperatureRead();
+    drawVal(192, String(t, 1) + DEG + "C", t > 70 ? COL_ORANGE : COL_WHITE);
+
+    unsigned long up = millis() / 1000;
+    char ub[12];
+    snprintf(ub, sizeof(ub), "%02lu:%02lu:%02lu", up / 3600, (up / 60) % 60, up % 60);
+    drawVal(208, String(ub), COL_WHITE);
+
+    drawVal(224, String(gFps) + " fps", gFps >= 30 ? COL_GREEN : COL_WHITE);
+    gCanvasDirty = true;
+}
+
+void updateCurrentPageContent() {
+    if (currentPage == 1) {
+        updatePower();
+    } else if (currentPage == 2) {
+        updateTrip();
+    } else if (currentPage == 3) {
+        updateSettings();
+    } else if (currentPage == 4) {
+        updateSystem();
+    } else {
+        updateSpeed();
+        updateStatPanel();
+        updateTemps();
+        updateRange();
+    }
+}
+
+// ==========================================
+// SAFETY: alerts + overlay banners
+// ==========================================
+const char* faultName(int f) {
+    switch (f) {
+        case 1: return "OVER-VOLTAGE";
+        case 2: return "UNDER-VOLTAGE";
+        case 3: return "DRV FAULT";
+        case 4: return "OVER-CURRENT";
+        case 5: return "ESC OVER-TEMP";
+        case 6: return "MOTOR OVER-TEMP";
+        default: return "VESC FAULT";
+    }
+}
+
+// Highest-priority alert: 1 fault, 2 link-lost, 3 over-temp, 4 crit battery.
+int alertState() {
+    if (vescFault != 0) return 1;
+    if (!vescLinkOk) return 2;
+    if (currentMotorTemp > MOTOR_TEMP_LIMIT || currentEscTemp > ESC_TEMP_LIMIT) return 3;
+    if (currentBatteryPercent < BATT_CRIT_PCT) return 4;
+    return 0;
+}
+
+void updateOverlays(int state) {
+    static int lastState = 0;
+    static String lastText = "";
+
+    if (state == 0) {
+        if (lastState != 0) { drawStaticFrame(); gRedrawAll = true; }  // restore page
+        lastState = 0;
+        lastText = "";
+        return;
+    }
+
+    bool crit = (state == 4);
+    int by = crit ? 108 : 118;
+    int bh = crit ? 92 : 64;
+
+    String line1, line2, line3 = "";
+    if (state == 1)      { line1 = "! FAULT";      line2 = faultName(vescFault); }
+    else if (state == 2) { line1 = "VESC";         line2 = "LINK LOST"; }
+    else if (state == 3) {
+        line1 = "! HOT";
+        line2 = (currentMotorTemp > MOTOR_TEMP_LIMIT)
+                ? "MOTOR " + String((int)round(currentMotorTemp)) + DEG + "C"
+                : "ESC " + String((int)round(currentEscTemp)) + DEG + "C";
+    } else {
+        line1 = "LOW BATTERY";
+        line2 = "STOP & CHARGE";
+        line3 = String(currentBatteryPercent) + "%   " + String(currentVoltage, 1) + " V";
+    }
+
+    String textKey = line1 + "|" + line2 + "|" + line3;
+    if (state != lastState || textKey != lastText || gRedrawAll) {
+        GFX->fillRect(X0 + 8, by, UI_W - 16, bh, COL_RED);
+        GFX->setTextDatum(MC_DATUM);
+        GFX->setTextColor(COL_WHITE);
+        GFX->setFreeFont(&BebasNeue24pt7b);
+        GFX->drawString(line1, X0 + UI_W / 2, by + (crit ? 18 : 16));
+        GFX->setTextFont(1);
+        GFX->drawString(line2, X0 + UI_W / 2, by + (crit ? 50 : 48));
+        if (crit) {
+            GFX->drawString(line3, X0 + UI_W / 2, by + 74);
+        }
+        lastText = textKey;
+        gCanvasDirty = true;
+    }
+    lastState = state;
 }
 
 // ==========================================
@@ -424,16 +924,38 @@ void setup() {
     Serial.begin(115200);
     delay(500);
 
+    // Restore persisted odometer + trip
+    prefs.begin("esk8os", false);
+    int storedSchema = prefs.getInt("schema", 0);
+    if (storedSchema != STORAGE_SCHEMA_VERSION) {
+        totalDistanceKm = 0.0;
+        tripDistanceKm = 0.0;
+        prefs.putFloat("odo", totalDistanceKm);
+        prefs.putFloat("trip", tripDistanceKm);
+        prefs.putInt("schema", STORAGE_SCHEMA_VERSION);
+    } else {
+        totalDistanceKm = prefs.getFloat("odo", 0.0);
+        tripDistanceKm  = prefs.getFloat("trip", 0.0);
+    }
+
+    activeWheelProfile = prefs.getInt("wheelprof", 0);
+    if (activeWheelProfile < 0 || activeWheelProfile >= WHEEL_PROFILE_COUNT) activeWheelProfile = 0;
+
+    rideStartMs = millis();
+    sessionTripStartKm = tripDistanceKm;
+
     #ifndef WOKWI_SIMULATION
-    // Power on the display rail + backlight (critical for T-Display-S3)
+    // Power the display rail, but keep the backlight off until the panel is
+    // initialized and cleared. This avoids the brief white/glitch frame at boot.
     pinMode(15, OUTPUT);
     digitalWrite(15, HIGH);
     pinMode(TFT_BL, OUTPUT);
-    digitalWrite(TFT_BL, HIGH);
+    digitalWrite(TFT_BL, LOW);
     #endif
 
     tft.init();
     tft.setRotation(0);
+    tft.fillScreen(TFT_BLACK);
 
     // Center UI if screen is wider than 170 (e.g. Wokwi's 240px ILI9341)
     X0 = (tft.width() - UI_W) / 2;
@@ -447,6 +969,20 @@ void setup() {
     COL_GREEN   = tft.color565(0, 200, 100);
     COL_RED     = tft.color565(255, 51, 51);
     COL_BLUE    = tft.color565(68, 136, 255);
+    COL_YELLOW  = tft.color565(255, 205, 0);
+    COL_ORANGE  = tft.color565(255, 128, 0);
+
+    // Allocate the off-screen frame buffer (full panel, 16-bit, lives in PSRAM
+    // on the T-Display-S3). On success all dashboard drawing is double-buffered
+    // and flicker-free; if it fails (or on Wokwi, which has no PSRAM) GFX stays
+    // pointed at the panel and we render directly as before.
+    #ifndef WOKWI_SIMULATION
+    canvas.setColorDepth(16);
+    if (canvas.createSprite(tft.width(), tft.height()) != nullptr) {
+        GFX = &canvas;
+        gUseCanvas = true;
+    }
+    #endif
 
     pinMode(BTN_LEFT, INPUT_PULLUP);
     pinMode(BTN_RIGHT, INPUT_PULLUP);
@@ -454,20 +990,141 @@ void setup() {
     #ifndef WOKWI_SIMULATION
     Serial1.begin(115200, SERIAL_8N1, VESC_RX_PIN, VESC_TX_PIN);
     UART.setSerialPort(&Serial1);
+    digitalWrite(TFT_BL, HIGH);
     #endif
 
-    drawBootSplash();
+    waitForBootReady();
     drawStaticFrame();
+    updateRangeEstimate();
+    updateClock();
+    updateCurrentPageContent();
+    updateBatteryCells();
+    updateBottomBar();
+    pushCanvas();           // first complete frame -> panel
+    gCanvasDirty = false;
+    gRedrawAll = false;
 }
 
 // ==========================================
 // LOOP & VESC
 // ==========================================
+void saveOdo() {
+    prefs.putFloat("odo", totalDistanceKm);
+    prefs.putFloat("trip", tripDistanceKm);
+}
+
+// Fake telemetry for bench testing (Wokwi or DEMO_MODE on hardware). Drives the
+// SAME state a real VESC poll would: a speed ramp, load-proportional draw with
+// regen on braking, integrated energy (Wh used/regen), and first-order thermal
+// models for motor/ESC/battery — so every page animates as if wired to the ESC.
+void simulateTelemetry() {
+    static unsigned long lastMs = 0;
+    unsigned long now = millis();
+    float dt = (lastMs == 0) ? 0.1f : (now - lastMs) / 1000.0f;   // seconds
+    lastMs = now;
+
+    // Speed: ramp 0 -> 45 km/h and back down, cycling.
+    static bool accel = true;
+    if (accel) currentSpeedKmh += 0.5; else currentSpeedKmh -= 0.5;
+    if (currentSpeedKmh >= 45.0) accel = false;
+    if (currentSpeedKmh <= 0.0) accel = true;
+    currentSpeedMph = currentSpeedKmh * 0.621371;
+
+    currentDuty = constrain(currentSpeedKmh / 45.0 * 100.0, 0.0, 100.0);
+
+    // Current: draw under acceleration, regen (negative) under braking.
+    if (accel) {
+        currentMotorAmps = currentSpeedKmh * 1.2f;
+        currentAmps      = currentSpeedKmh * 0.7f;
+    } else {
+        currentMotorAmps = -currentSpeedKmh * 0.5f;   // regen braking
+        currentAmps      = -currentSpeedKmh * 0.3f;
+    }
+    currentWatts = currentVoltage * currentAmps;
+
+    // Integrate energy: positive power -> Wh used, negative -> Wh regenerated.
+    float dWh = currentVoltage * currentAmps * (dt / 3600.0f);
+    if (dWh >= 0) currentWattHours += dWh;
+    else          currentWhRegen   += -dWh;
+
+    // Thermal models: each component eases toward a load-dependent target with a
+    // first-order lag, so temps climb under load and cool when coasting. Targets
+    // stay just under the alert limits so the demo doesn't trip the over-temp banner.
+    float load = currentDuty / 100.0f;
+    const float ambient = 24.0f;
+    float kMotor = 1.0f - expf(-dt / 18.0f);
+    float kEsc   = 1.0f - expf(-dt / 14.0f);
+    float kBatt  = 1.0f - expf(-dt / 30.0f);
+    currentMotorTemp   += ((ambient + 52.0f * load) - currentMotorTemp)   * kMotor;
+    currentEscTemp     += ((ambient + 36.0f * load) - currentEscTemp)     * kEsc;
+    currentBatteryTemp += ((ambient + 12.0f * load) - currentBatteryTemp) * kBatt;
+
+    lastVescOkMs = millis();      // demo link always "up"
+
+    static unsigned long lastDrain = 0;
+    if (millis() - lastDrain > 2000) {
+        lastDrain = millis();
+        if (currentBatteryPercent > 0) currentBatteryPercent--;
+        currentVoltage = BATTERY_MIN_V + (BATTERY_MAX_V - BATTERY_MIN_V) * currentBatteryPercent / 100.0;
+    }
+}
+
+float configuredNominalPackWh() {
+    return BATTERY_EFFECTIVE_CAPACITY_AH * BATTERY_CELLS_COUNT * BATTERY_NOMINAL_CELL_V;
+}
+
+float configuredUsablePackWh() {
+    // Scale nominal pack Wh by the configured usable voltage window. This keeps
+    // range conservative and aligned with the voltage where the dashboard says
+    // to stop, instead of estimating all the way to a fully depleted cell.
+    float usableWindow = max(0.1f, BATTERY_FULL_CELL_V - BATTERY_STOP_CELL_V);
+    float nominalWindow = max(0.1f, BATTERY_FULL_CELL_V - 3.0f);
+    return configuredNominalPackWh() * constrain(usableWindow / nominalWindow, 0.0f, 1.0f);
+}
+
+float defaultWhPerKm() {
+    return RANGE_DEFAULT_WH_PER_MILE / 1.609344f;
+}
+
+void updateRangeEstimate() {
+    float sessionDistanceKm = tripDistanceKm - sessionTripStartKm;
+    float netWhUsed = currentWattHours - currentWhRegen;
+    float whPerKm = defaultWhPerKm();
+
+    // Simulated telemetry has no real ride to learn from, so shorten the
+    // learn-in window in demo/sim — lets ESTIMATED + AVG WH animate on the bench.
+    // Real-ESC riding keeps the conservative full thresholds.
+    #if defined(WOKWI_SIMULATION)
+    const bool demoData = true;
+    #else
+    const bool demoData = DEMO_MODE;
+    #endif
+    float learnDist = demoData ? 0.05f : RANGE_LEARN_MIN_DISTANCE_KM;
+    float learnWh   = demoData ? 1.0f  : RANGE_LEARN_MIN_WH;
+
+    rangeEstimateReady = false;
+    if (sessionDistanceKm >= learnDist && netWhUsed >= learnWh) {
+        float learnedWhPerKm = netWhUsed / sessionDistanceKm;
+        if (learnedWhPerKm >= defaultWhPerKm() * 0.6f && learnedWhPerKm <= defaultWhPerKm() * 2.0f) {
+            whPerKm = learnedWhPerKm;
+            rangeEstimateReady = true;
+        }
+    }
+
+    avgWhPerKm = whPerKm;
+    float packWh = configuredUsablePackWh();
+    float remainingWh = packWh * constrain(currentBatteryPercent, 0, 100) / 100.0f;
+    estimatedRangeKm = packWh / avgWhPerKm;
+    remainingRangeKm = remainingWh / avgWhPerKm;
+}
+
 void pollVescData() {
+    bool useSim = true;
     #ifndef WOKWI_SIMULATION
-    if (UART.getVescValues()) {
-        float wheelRPM = (UART.data.rpm / MOTOR_POLE_PAIRS) * GEARING_RATIO;
-        currentSpeedKmh = (wheelRPM * WHEEL_CIRCUMFERENCE_M * 60.0) / 1000.0;
+    useSim = DEMO_MODE;
+    if (!useSim && UART.getVescValues()) {
+        float wheelRPM = (UART.data.rpm / profilePolePairs()) * profileGearRatio();
+        currentSpeedKmh = (wheelRPM * profileCircumfM() * 60.0) / 1000.0;
         currentSpeedMph = currentSpeedKmh * 0.621371;
 
         currentVoltage = UART.data.inpVoltage;
@@ -477,49 +1134,296 @@ void pollVescData() {
         currentMotorTemp = UART.data.tempMotor;
         currentEscTemp = UART.data.tempMosfet;
         currentAmps = UART.data.avgInputCurrent;
-        currentWattHours = UART.data.wattHours;
+        currentMotorAmps = UART.data.avgMotorCurrent;
+        currentDuty = UART.data.dutyCycleNow * 100.0;
+        if (!rideEnergyBaselineSet) {
+            rideStartVescWh = UART.data.wattHours;
+            rideStartVescWhRegen = UART.data.wattHoursCharged;
+            rideEnergyBaselineSet = true;
+        }
+        currentWattHours = max(0.0f, UART.data.wattHours - rideStartVescWh);
+        currentWhRegen = max(0.0f, UART.data.wattHoursCharged - rideStartVescWhRegen);
+        currentWatts = currentVoltage * currentAmps;
+        vescFault = (int)UART.data.error;
+        lastVescOkMs = millis();
     }
-    #else
-    static bool accel = true;
-    if (accel) currentSpeedKmh += 0.5; else currentSpeedKmh -= 0.5;
-    if (currentSpeedKmh >= 45.0) accel = false;
-    if (currentSpeedKmh <= 0.0) accel = true;
-    currentSpeedMph = currentSpeedKmh * 0.621371;
     #endif
+    if (useSim) simulateTelemetry();
+
+    // Peak-hold: rise instantly to new peaks, ease back down (~2-3s) so the
+    // spike is readable instead of flickering.
+    if (currentWatts >= peakWatts) peakWatts = currentWatts;
+    else peakWatts += (currentWatts - peakWatts) * 0.15f;
+    if (peakWatts < 0) peakWatts = 0;   // regen can drive watts negative; peak-hold stays >= 0
+
+    // Accumulate trip + odometer from speed (km), then persist to flash on
+    // every stop and every 60s so they survive a disconnect / power-off.
+    static unsigned long lastDistMs = 0;
+    unsigned long nowMs = millis();
+    if (lastDistMs != 0) {
+        float dKm = currentSpeedKmh * ((nowMs - lastDistMs) / 3600000.0f);
+        if (dKm > 0) { tripDistanceKm += dKm; totalDistanceKm += dKm; }
+    }
+    lastDistMs = nowMs;
+
+    static unsigned long lastSave = 0;
+    static bool wasMoving = false;
+    bool moving = currentSpeedKmh > 1.0;
+    if ((wasMoving && !moving) || (millis() - lastSave > 60000)) {
+        saveOdo();
+        lastSave = millis();
+    }
+    wasMoving = moving;
+
+    // Telemetry link freshness, session max + average speed
+    vescLinkOk = (millis() - lastVescOkMs < VESC_LINK_TIMEOUT_MS);
+    if (currentSpeedKmh > maxSpeedKmh) maxSpeedKmh = currentSpeedKmh;
+    float hrs = (millis() - rideStartMs) / 3600000.0f;
+    if (hrs > 0.0001f) avgSpeedKmh = (tripDistanceKm - sessionTripStartKm) / hrs;
+    updateRangeEstimate();
+}
+
+// ==========================================
+// VESC TOOL BRIDGE MODE (WiFi-TCP)  — rendered into the canvas (flicker-free)
+// ==========================================
+void updateBridgeStatus(const char* status) {
+    bridgeStatus = status;
+    GFX->fillRect(X0 + 8, 212, UI_W - 16, 38, COL_BG);
+    GFX->drawRect(X0 + 8, 212, UI_W - 16, 38, COL_BORDER);
+    uint16_t c = COL_DIM;
+    if (strcmp(status, "CONNECTED") == 0 || strcmp(status, "TRAFFIC") == 0) c = COL_GREEN;
+    else if (strcmp(status, "ERROR") == 0) c = COL_RED;
+    GFX->setTextDatum(MC_DATUM);
+    GFX->setTextColor(c);
+    GFX->setFreeFont(&BebasNeue24pt7b);
+    GFX->drawString(status, X0 + UI_W / 2, 232);
+    GFX->setTextFont(1);
+    pushCanvas();
+}
+
+void drawBridgeScreen() {
+    GFX->fillScreen(COL_BG);
+
+    GFX->setTextDatum(TC_DATUM);
+    GFX->setTextColor(COL_BLUE);
+    GFX->setFreeFont(&BebasNeue24pt7b);
+    GFX->drawString("BRIDGE MODE", X0 + UI_W / 2, 18);
+
+    GFX->setTextFont(1);
+    GFX->setTextColor(COL_LABEL);
+    GFX->drawString("VESC TOOL CONFIG", X0 + UI_W / 2, 56);
+
+    GFX->setTextDatum(TL_DATUM);
+    GFX->setTextColor(COL_DIM);  GFX->drawString("WiFi:",  X0 + 12, 84);
+    GFX->setTextColor(COL_WHITE); GFX->drawString(BRIDGE_SSID, X0 + 46, 84);
+    GFX->setTextColor(COL_DIM);  GFX->drawString("pass:",  X0 + 12, 100);
+    GFX->setTextColor(COL_WHITE); GFX->drawString(BRIDGE_PASS, X0 + 46, 100);
+    GFX->setTextColor(COL_DIM);  GFX->drawString("TCP:",   X0 + 12, 124);
+    GFX->setTextColor(COL_WHITE); GFX->drawString("192.168.4.1:65102", X0 + 40, 124);
+
+    GFX->setTextColor(COL_DIM);
+    GFX->drawString("VESC Tool > Connection", X0 + 12, 150);
+    GFX->drawString("> TCP > connect", X0 + 12, 162);
+
+    GFX->setTextDatum(TC_DATUM);
+    GFX->setTextColor(COL_DIM);
+    GFX->drawString("hold L+R to exit", X0 + UI_W / 2, 300);
+
+    updateBridgeStatus(bridgeStatus.c_str());   // pushes the finished frame
+}
+
+void bridgeStart() {
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(BRIDGE_SSID, BRIDGE_PASS);
+    bridgeServer.begin();
+    bridgeServer.setNoDelay(true);
+    bridgeStatus = "WAITING";
+}
+
+void bridgeStop() {
+    if (bridgeClient) bridgeClient.stop();
+    bridgeServer.end();
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_OFF);
+}
+
+// Raw byte forwarding between the TCP client (VESC Tool) and Serial1 (FSESC).
+void bridgeLoop() {
+    if (!bridgeClient || !bridgeClient.connected()) {
+        WiFiClient nc = bridgeServer.available();
+        if (nc) { bridgeClient = nc; updateBridgeStatus("CONNECTED"); }
+    }
+
+    uint8_t buf[256];
+    bool traffic = false;
+
+    if (bridgeClient && bridgeClient.connected()) {
+        int n = bridgeClient.available();
+        if (n > 0) {
+            if (n > (int)sizeof(buf)) n = sizeof(buf);
+            int r = bridgeClient.read(buf, n);
+            if (r > 0) { Serial1.write(buf, r); traffic = true; }
+        }
+    }
+    int sa = Serial1.available();
+    if (sa > 0 && bridgeClient && bridgeClient.connected()) {
+        if (sa > (int)sizeof(buf)) sa = sizeof(buf);
+        int r = Serial1.readBytes(buf, sa);
+        if (r > 0) { bridgeClient.write(buf, r); traffic = true; }
+    }
+
+    static unsigned long lastTrafficShown = 0;
+    if (traffic && millis() - lastTrafficShown > 300) {
+        lastTrafficShown = millis();
+        updateBridgeStatus("TRAFFIC");
+    }
+    static bool wasConn = false;
+    bool nowConn = bridgeClient && bridgeClient.connected();
+    if (wasConn && !nowConn) updateBridgeStatus("WAITING");
+    wasConn = nowConn;
+}
+
+void enterBridgeMode() {
+    if (currentSpeedKmh > 1.0) {                 // safety: only when stopped
+        GFX->fillRect(X0 + 8, 140, UI_W - 16, 40, COL_RED);
+        GFX->setTextDatum(MC_DATUM);
+        GFX->setTextColor(COL_WHITE);
+        GFX->setFreeFont(&BebasNeue18pt7b);
+        GFX->drawString("STOP BOARD FIRST", X0 + UI_W / 2, 160);
+        GFX->setTextFont(1);
+        pushCanvas();
+        delay(1200);
+        drawStaticFrame();
+        gRedrawAll = true;
+        return;
+    }
+    saveOdo();
+    systemMode = MODE_VESC_BRIDGE;
+    bridgeStart();
+    drawBridgeScreen();
+}
+
+void exitBridgeMode() {
+    bridgeStop();
+    while (Serial1.available()) Serial1.read();   // flush stale VESC replies
+    systemMode = MODE_DASHBOARD;
+    lastVescOkMs = millis();
+    currentPage = 0;
+    drawStaticFrame();
+    gRedrawAll = true;
 }
 
 void checkButtons() {
     bool left = digitalRead(BTN_LEFT);
     bool right = digitalRead(BTN_RIGHT);
 
-    if (left == LOW && lastLeftBtn == HIGH && millis() - lastLeftPress > 200) {
-        lastLeftPress = millis();
+    // ---- BOTH held 2s: enter/exit bridge mode (suppresses single actions) ----
+    static unsigned long bothDownAt = 0;
+    static bool bothHandled = false;
+    static bool lockSingles = false;
+    if (left == LOW && right == LOW) {
+        lockSingles = true;
+        if (bothDownAt == 0) { bothDownAt = millis(); bothHandled = false; }
+        if (!bothHandled && millis() - bothDownAt > 2000) {
+            bothHandled = true;
+            if (systemMode == MODE_DASHBOARD) enterBridgeMode();
+            else                              exitBridgeMode();
+        }
+        lastLeftBtn = left; lastRightBtn = right;
+        return;
+    }
+    bothDownAt = 0;
+    bothHandled = false;
+    if (lockSingles) {                       // wait for full release before singles resume
+        if (left == HIGH && right == HIGH) lockSingles = false;
+        lastLeftBtn = left; lastRightBtn = right;
+        return;
+    }
+    if (systemMode == MODE_VESC_BRIDGE) { lastLeftBtn = left; lastRightBtn = right; return; }
+
+    // LEFT button: short-press cycles pages, hold ~1.5s resets the trip
+    static unsigned long leftDownAt = 0;
+    static bool leftHandled = false;
+    if (left == LOW) {
+        if (lastLeftBtn == HIGH) { leftDownAt = millis(); leftHandled = false; }
+        if (!leftHandled && millis() - leftDownAt > 1500) {     // long press: reset trip
+            tripDistanceKm = 0;
+            sessionTripStartKm = 0;
+            rideStartMs = millis();
+            avgSpeedKmh = 0;
+            maxSpeedKmh = 0;
+            currentWattHours = 0;
+            currentWhRegen = 0;
+            avgWhPerKm = 0;
+            estimatedRangeKm = 0;
+            remainingRangeKm = 0;
+            rangeEstimateReady = false;
+            rideEnergyBaselineSet = false;
+            saveOdo();
+            leftHandled = true;
+            drawStaticFrame();
+            gRedrawAll = true;
+        }
+    } else if (lastLeftBtn == LOW && !leftHandled && millis() - leftDownAt > 30) {
+        currentPage = (currentPage + 1) % PAGE_COUNT;        // short press: next page
+        drawStaticFrame();
+        gRedrawAll = true;
     }
     lastLeftBtn = left;
 
+    // RIGHT button: on Settings page cycles wheel profile, else toggles units
     if (right == LOW && lastRightBtn == HIGH && millis() - lastRightPress > 200) {
-        useMph = !useMph;
-        drawStaticFrame(); // Force redraw
+        if (currentPage == 3) {
+            activeWheelProfile = (activeWheelProfile + 1) % WHEEL_PROFILE_COUNT;
+            prefs.putInt("wheelprof", activeWheelProfile);
+            gRedrawAll = true;             // refresh settings values
+        } else {
+            useMph = !useMph;
+            drawStaticFrame();
+            gRedrawAll = true;
+        }
         lastRightPress = millis();
     }
     lastRightBtn = right;
 }
 
-void loop() {
+void dashboardLoop() {
     unsigned long now = millis();
-    checkButtons();
 
     if (now - lastDataPoll > 100) {
         pollVescData();
         lastDataPoll = now;
     }
 
+    int alert = alertState();
     updateClock();
-    updateSpeed();
-    updateTemps();
-    updateRange();
-    updateBatteryCells();
+
+    if (alert == 0 || gRedrawAll) {   // first repaint still draws zero placeholders under alerts
+        updateCurrentPageContent();
+    }
+
+    updateBatteryCells();   // common, below any banner
     updateBottomBar();
+    updateOverlays(alert);
+
+    gRedrawAll = false;   // one-shot full repaint consumed
+
+    // On the SYSTEM page, push every loop so the FPS readout reflects the real
+    // achievable refresh rate; everywhere else push only when a widget changed.
+    if (currentPage == 4) gCanvasDirty = true;
+    if (gCanvasDirty) { pushCanvas(); gCanvasDirty = false; }
 
     delay(10);
+}
+
+void loop() {
+    checkButtons();
+
+    if (systemMode == MODE_VESC_BRIDGE) {
+        bridgeLoop();
+        delay(1);
+        return;
+    }
+
+    dashboardLoop();
 }

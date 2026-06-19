@@ -54,7 +54,7 @@ build_flags =
 If you get a "black screen" but the code seems to be running, it's a power issue.
 
 1. **Display Power Enable (GPIO 15):** The T-Display-S3 requires GPIO 15 to be set `HIGH` to physically power the display rail.
-2. **Backlight Enable (TFT_BL / GPIO 38):** The backlight must also be turned on explicitly.
+2. **Backlight Enable (TFT_BL / GPIO 38):** The backlight must also be turned on explicitly. To avoid a brief white/glitch frame at boot, keep `TFT_BL` LOW until after `tft.init()`, `tft.setRotation(...)`, and an initial black `fillScreen(...)`.
 
 Add this to the very top of `setup()`:
 ```cpp
@@ -62,13 +62,17 @@ Add this to the very top of `setup()`:
 pinMode(15, OUTPUT);
 digitalWrite(15, HIGH);
 
-// Turn on the display backlight
+// Keep backlight off while the panel initializes/clears
 pinMode(TFT_BL, OUTPUT);
-digitalWrite(TFT_BL, HIGH);
+digitalWrite(TFT_BL, LOW);
 
 // Initialize TFT
 tft.init();
 tft.setRotation(1); // Landscape
+tft.fillScreen(TFT_BLACK);
+
+// Turn on the display backlight after the panel is clean
+digitalWrite(TFT_BL, HIGH);
 ```
 
 ## 4. Recovering a Lost COM Port (Download Mode)
@@ -78,3 +82,34 @@ If the board is ever flashed without `ARDUINO_USB_CDC_ON_BOOT=1`, the COM port w
 3. While holding BOOT, press and release the **RST** button.
 4. Release the **BOOT** button.
 The board will now appear as a USB Serial device and accept a new flash.
+
+## 5. VESC / FSESC UART Wiring
+The firmware expects the FSESC UART on:
+* ESP32 `VESC_RX_PIN` = GPIO 18, connected to FSESC TX
+* ESP32 `VESC_TX_PIN` = GPIO 17, connected to FSESC RX
+* Shared GND is required
+* The display can be powered from the comm port 5V pin if the port can supply enough current
+
+Do not connect the display to SPI display pins for telemetry. The display uses its own 8-bit parallel TFT pins; the FSESC telemetry/config connection is only the UART pair above.
+
+## 6. Dashboard vs VESC Tool Bridge Mode
+The firmware now has two top-level modes:
+* `MODE_DASHBOARD`: normal ride UI. This mode owns `VescUart` and may call `UART.getVescValues()`.
+* `MODE_VESC_BRIDGE`: WiFi TCP bridge for desktop VESC Tool. This mode owns `Serial1` directly and forwards raw bytes between TCP and the FSESC.
+
+Critical rule: never allow dashboard polling and bridge forwarding to run at the same time. `UART.getVescValues()` must not be called while bridge mode is active, because mixed packets can corrupt VESC Tool config reads/writes.
+
+Current bridge controls:
+* Hold both buttons for about 2 seconds to enter bridge mode.
+* Hold both buttons again for about 2 seconds to exit bridge mode.
+* Entry is blocked if `currentSpeedKmh > 1.0`; stop the board first.
+* Bridge AP: `ESK8-BRIDGE`
+* Bridge password: `esk8bridge`
+* TCP endpoint: `192.168.4.1:65102`
+
+Bridge mode is a first-step TCP proof for desktop VESC Tool. Phone/mobile VESC Tool compatibility will likely need a BLE backend later; do not assume the WiFi TCP bridge works with every mobile VESC Tool build.
+
+## 7. Demo Mode and Wheel Profiles
+`DEMO_MODE` in `src/main.cpp` makes the physical board use simulated telemetry for bench testing. Set it to `false` when testing live dashboard telemetry from the FSESC.
+
+Wheel/gearing profiles are local display settings only. They affect the display's own speed and distance math and are saved in NVS, but they do not write VESC motor/app configuration. Use bridge mode plus official VESC Tool for actual FSESC config changes.
