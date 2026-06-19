@@ -112,11 +112,11 @@ public:
 // Rotation passed to tft.setRotation() in setup(). Keep to the PORTRAIT values
 // so the 170-wide UI band stays centered (verified against LovyanGFX's MADCTL
 // table): 0 = normal, 2 = 180 deg, 4 = vertical mirror (MY), 6 = horizontal
-// mirror (MX). The Wokwi ILI9341 stand-in needs a different portrait orientation
-// than the real panel; 0/4/6 were visually wrong, so it uses 2. Hardware uses
-// plain portrait (0). If the sim is still off, just change this number (0/2/4/6).
+// mirror (MX). The Wokwi ILI9341 stand-in needs a left-to-right (horizontal)
+// flip vs the real panel, which is rotation 6 (MX). Hardware uses plain portrait
+// (0). If the sim still looks off, change this number (portrait = 0/2/4/6).
 #ifdef WOKWI_SIMULATION
-  #define DISPLAY_ROTATION 2
+  #define DISPLAY_ROTATION 6
 #else
   #define DISPLAY_ROTATION 0
 #endif
