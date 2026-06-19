@@ -124,8 +124,8 @@ TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite canvas = TFT_eSprite(&tft);
 TFT_eSPI*   GFX = &tft;
 bool gUseCanvas = false;
-bool gCanvasDirty = false;    // a widget changed the canvas; push needed this frame
 uint16_t gFps = 0;            // frames pushed in the last second (SYSTEM page)
+unsigned long gLastPushUs = 0; // duration of the last blit (SYSTEM page diag)
 
 // Brief on-screen confirmation banner (e.g. after a trip reset / recharge).
 unsigned long gToastUntil = 0;
@@ -262,15 +262,56 @@ const int UI_W = 170;
 // Blit the off-screen canvas to the panel in a single write (flicker-free), and
 // track frames/sec for the SYSTEM page. No-op when unbuffered (draws already
 // went straight to the panel).
+// Dirty-rectangle tracking. A full-frame blit on this 8-bit parallel panel is
+// ~38 ms (TFT_eSPI bit-bangs the bus, no DMA), so instead of pushing all 320
+// rows every change we push only the changed vertical bands. Bands are full
+// width so each is a contiguous block copy (TFT_eSprite fast path).
+int gCanvasH = 320;
+struct DirtyBand { int16_t y0, y1; };
+const int MAX_DIRTY = 10;
+DirtyBand gDirty[MAX_DIRTY];
+int gDirtyN = 0;
+
+void markDirty(int y, int h) {
+    if (!gUseCanvas) return;              // direct mode draws straight to the panel
+    int y0 = y < 0 ? 0 : y;
+    int y1 = y + h;
+    if (y1 > gCanvasH) y1 = gCanvasH;
+    if (y1 <= y0) return;
+    for (int i = 0; i < gDirtyN; i++) {  // merge into an overlapping band
+        if (y0 <= gDirty[i].y1 && y1 >= gDirty[i].y0) {
+            if (y0 < gDirty[i].y0) gDirty[i].y0 = y0;
+            if (y1 > gDirty[i].y1) gDirty[i].y1 = y1;
+            return;
+        }
+    }
+    if (gDirtyN < MAX_DIRTY) { gDirty[gDirtyN].y0 = y0; gDirty[gDirtyN].y1 = y1; gDirtyN++; }
+    else { gDirty[0].y0 = 0; gDirty[0].y1 = gCanvasH; gDirtyN = 1; }  // overflow -> full
+}
+
 void pushCanvas() {
     if (!gUseCanvas) return;
-    canvas.pushSprite(0, 0);
+    unsigned long t0 = micros();
+    for (int i = 0; i < gDirtyN; i++) {
+        int h = gDirty[i].y1 - gDirty[i].y0;
+        // full-width band -> fast contiguous block copy inside TFT_eSprite
+        canvas.pushSprite(0, gDirty[i].y0, 0, gDirty[i].y0, canvas.width(), h);
+    }
+    gLastPushUs = micros() - t0;
+    gDirtyN = 0;
 
     static unsigned long fpsWindow = 0;
     static uint16_t fpsCount = 0;
     fpsCount++;
     unsigned long now = millis();
     if (now - fpsWindow >= 1000) { gFps = fpsCount; fpsCount = 0; fpsWindow = now; }
+}
+
+// Blit the whole frame. Used by the boot splash and bridge screens, which redraw
+// full-screen and don't track dirty bands.
+void pushCanvasFull() {
+    markDirty(0, gCanvasH);
+    pushCanvas();
 }
 
 // Show a brief centered confirmation banner over the dashboard (~1.2 s).
@@ -311,7 +352,7 @@ void drawBootProgress(int pct, const char* status, uint16_t color) {
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(color);
     GFX->drawString(status, X0 + UI_W / 2, 272);
-    pushCanvas();
+    pushCanvasFull();
 }
 
 void drawBootSplashFrame() {
@@ -350,7 +391,7 @@ void drawBootSplashFrame() {
     int bw = 120, bh = 8, by = 250;
     int bx = X0 + (UI_W - bw) / 2;
     GFX->drawRect(bx, by, bw, bh, COL_BORDER);
-    pushCanvas();
+    pushCanvasFull();
 }
 
 void waitForBootReady() {
@@ -572,7 +613,7 @@ void drawStaticFrame() {
     // ── BOTTOM STATUS BAR (common, y=298..318) ──
     drawHLine(X0, 298, UI_W, COL_BORDER);
     gRedrawAll = true;
-    gCanvasDirty = true;
+    markDirty(0, gCanvasH);
 }
 
 // ==========================================
@@ -594,7 +635,7 @@ void updateClock() {
     GFX->setTextDatum(TR_DATUM);
     GFX->setTextColor(COL_WHITE);
     GFX->drawString(buf, X0 + 166, 4);
-    gCanvasDirty = true;
+    markDirty(0, 16);
 }
 
 // ==========================================
@@ -610,7 +651,7 @@ void updateSpeed() {
         drawSpeedReadout(spdInt, true);
         lastSpeedInt = spdInt;
         lastUseMph = useMph;
-        gCanvasDirty = true;
+        markDirty(17, 73);
     }
 }
 
@@ -660,7 +701,7 @@ void updateStatPanel() {
         drawStat((midx + bx + 162) / 2, String(w), "W", wattColor(w));
         lastW = w;
     }
-    if (vchanged || wchanged) gCanvasDirty = true;
+    if (vchanged || wchanged) markDirty(86, 32);
 }
 
 // One temps row: dim label is static; this redraws "<temp>C (pct%)".
@@ -697,7 +738,7 @@ void updateTemps() {
         drawTempRow(172, currentEscTemp,     escHealthPct,    currentEscTemp > ESC_TEMP_LIMIT);
 
         lastMotor = currentMotorTemp; lastBat = currentBatteryTemp; lastEsc = currentEscTemp;
-        gCanvasDirty = true;
+        markDirty(140, 44);
     }
 }
 
@@ -739,7 +780,7 @@ void updateRange() {
 
         lastEst = estimatedRangeKm; lastRem = remainingRangeKm; lastWh = avgWhPerKm;
         lastUseMph = useMph;
-        gCanvasDirty = true;
+        markDirty(216, 44);
     }
 }
 
@@ -763,7 +804,7 @@ void updateBatteryCells() {
             }
         }
         lastPct = currentBatteryPercent;
-        gCanvasDirty = true;
+        markDirty(276, 13);
     }
 }
 
@@ -800,7 +841,7 @@ void updateBottomBar() {
         lastPct = currentBatteryPercent;
         lastUseMph = useMph;
         lastTrip = tripDistanceKm;
-        gCanvasDirty = true;
+        markDirty(300, 18);
     }
 }
 
@@ -838,7 +879,7 @@ void updatePower() {
     int maxW = (int)round(maxWattsSession);
     drawVal(230, String(maxW) + " W", wattColor(maxW));
     drawVal(246, String(minVoltageSession, 1) + " V", COL_WHITE);
-    gCanvasDirty = true;
+    markDirty(22, 252);
 }
 
 // ==========================================
@@ -864,7 +905,7 @@ void updateTrip() {
     drawVal(88,  String((int)round(maxSpeedKmh * cv)) + " " + su, COL_WHITE);
     drawVal(104, String((int)round(avgWh)) + " wh/" + du, COL_WHITE);
     drawVal(150, String((int)round(totalDistanceKm * cv)) + " " + du, COL_WHITE);
-    gCanvasDirty = true;
+    markDirty(22, 172);
 }
 
 // ==========================================
@@ -882,7 +923,7 @@ void updateSettings() {
     drawVal(88,  String((int)w.polePairs), COL_WHITE);
     drawVal(128, String(useMph ? "MPH" : "KM/H"), COL_WHITE);
     drawVal(144, String(DEMO_MODE ? "ON" : "OFF"), DEMO_MODE ? COL_YELLOW : COL_WHITE);
-    gCanvasDirty = true;
+    markDirty(22, 142);
 }
 
 // ==========================================
@@ -915,8 +956,9 @@ void updateSystem() {
     snprintf(ub, sizeof(ub), "%02lu:%02lu:%02lu", up / 3600, (up / 60) % 60, up % 60);
     drawVal(208, String(ub), COL_WHITE);
 
-    drawVal(224, String(gFps) + " fps", gFps >= 30 ? COL_GREEN : COL_WHITE);
-    gCanvasDirty = true;
+    drawVal(224, String(gFps) + "f " + String(gLastPushUs / 1000) + "ms",
+            gFps >= 30 ? COL_GREEN : COL_WHITE);
+    markDirty(22, 210);
 }
 
 void updateCurrentPageContent() {
@@ -1002,7 +1044,7 @@ void updateOverlays(int state) {
             GFX->drawString(line3, X0 + UI_W / 2, by + 74);
         }
         lastText = textKey;
-        gCanvasDirty = true;
+        markDirty(by, bh);
     }
     lastState = state;
 }
@@ -1080,6 +1122,7 @@ void setup() {
     if (cbuf != nullptr) {
         GFX = &canvas;
         gUseCanvas = true;
+        gCanvasH = canvas.height();
     }
     #endif
 
@@ -1099,8 +1142,7 @@ void setup() {
     updateCurrentPageContent();
     updateBatteryCells();
     updateBottomBar();
-    pushCanvas();           // first complete frame -> panel
-    gCanvasDirty = false;
+    pushCanvasFull();       // first complete frame -> panel
     gRedrawAll = false;
 }
 
@@ -1297,7 +1339,7 @@ void updateBridgeStatus(const char* status) {
     GFX->setFreeFont(&BebasNeue24pt7b);
     GFX->drawString(status, X0 + UI_W / 2, 232);
     GFX->setTextFont(1);
-    pushCanvas();
+    pushCanvasFull();
 }
 
 // Live throughput + connected-station count, just under the status box.
@@ -1309,7 +1351,7 @@ void updateBridgeStats() {
     String s = "RX " + String(bridgeRxBytes / 1024) + "K  TX " + String(bridgeTxBytes / 1024) +
                "K  STA " + String(WiFi.softAPgetStationNum());
     GFX->drawString(s, X0 + UI_W / 2, 260);
-    pushCanvas();
+    pushCanvasFull();
 }
 
 void drawBridgeScreen() {
@@ -1410,7 +1452,7 @@ void enterBridgeMode() {
         GFX->setFreeFont(&BebasNeue18pt7b);
         GFX->drawString("STOP BOARD FIRST", X0 + UI_W / 2, 160);
         GFX->setTextFont(1);
-        pushCanvas();
+        pushCanvasFull();
         delay(1200);
         drawStaticFrame();
         gRedrawAll = true;
@@ -1554,17 +1596,22 @@ void dashboardLoop() {
         GFX->setTextColor(COL_BG);
         GFX->drawString(gToastMsg, X0 + UI_W / 2, 165);
         GFX->setTextFont(1);
-        gCanvasDirty = true;
+        markDirty(150, 30);
     } else if (toastWasUp) {
-        gRedrawAll = true;          // repaint cleanly once the toast clears
-        gCanvasDirty = true;
+        // The toast covered chrome (card borders/labels), so repaint the whole
+        // page rather than just the value bands.
+        drawStaticFrame();
+        updateCurrentPageContent();
+        updateBatteryCells();
+        updateBottomBar();
     }
     toastWasUp = toastUp;
 
-    // On the SYSTEM page, push every loop so the FPS readout reflects the real
-    // achievable refresh rate; everywhere else push only when a widget changed.
-    if (currentPage == 4) gCanvasDirty = true;
-    if (gCanvasDirty) { pushCanvas(); gCanvasDirty = false; }
+    // SYSTEM page benchmarks the worst case: force a full-frame blit every loop
+    // so its FPS readout shows the full-repaint ceiling. Other pages push only
+    // the changed bands, so their effective refresh is much higher.
+    if (currentPage == 4) markDirty(0, gCanvasH);
+    if (gDirtyN) pushCanvas();
 
     delay(2);   // keep buttons responsive; pushes are change-gated anyway
 }

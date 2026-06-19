@@ -181,12 +181,13 @@ class State:
     cpu_mhz = 240
     fw_used = 0.8
     fw_tot = 6.3
-    heap = 210
-    heap_min = 178
+    heap = 168     # ~170 kB free after the 108 kB SRAM canvas
+    heap_min = 150
     psram = 8100
     mcu_temp = 44.5
     uptime = "00:12:34"
-    fps = 58
+    fps = 26
+    blit_ms = 38
     reset = "POWER-ON"
     canvas_psram = False
     # bridge screen
@@ -405,7 +406,7 @@ def draw_page_system(p, s):
     card(p, "RUNTIME", 4, 174, 162, 70)
     list_rows(p, [("TEMP", "%.1f°C" % s.mcu_temp),
                   ("UPTIME", s.uptime)], 192)
-    row(p, "REFRESH", "%d fps" % s.fps, 224, GREEN if s.fps >= 30 else WHITE)
+    row(p, "REFRESH", "%df %dms" % (s.fps, s.blit_ms), 224, GREEN if s.fps >= 30 else WHITE)
 
     p.set_datum(MC); p.set_color(DIM)
     p.draw_string("reset: " + s.reset, W // 2, 256)

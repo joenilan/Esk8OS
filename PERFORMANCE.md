@@ -60,29 +60,45 @@ this hardware."
 |---|---|
 | Off-screen canvas + single blit | Eliminates per-widget flicker |
 | Change-gated pushes | Bus idle when nothing changes; no wasted full-frame redraws |
-| **Canvas in internal SRAM** (`setAttribute(PSRAM_ENABLE, false)`) | TFT_eSPI defaults large sprites to PSRAM; streaming 108 KB/frame out of PSRAM to the parallel bus per pixel is the main FPS bottleneck. Internal SRAM read is far faster. Falls back to PSRAM if 108 KB won't fit. |
-| Loop delay 10 ms → 2 ms | More responsive buttons; lets the SYSTEM page report true FPS |
+| **Canvas in internal SRAM** (`setAttribute(PSRAM_ENABLE, false)`) | TFT_eSPI defaults large sprites to PSRAM. Internal SRAM read is faster. Falls back to PSRAM if 108 KB won't fit. |
+| **Dirty-rectangle blits** | Push only the changed vertical bands via `pushSprite(0,y,0,y,W,h)` (full-width = fast contiguous block copy), not all 320 rows. |
+| Loop delay 10 ms → 2 ms | More responsive buttons |
 
 The canvas costs ~108 KB (170×320×2). In internal SRAM that drops free heap from
-~280 KB to ~170 KB — still plenty, including for WiFi during bridge mode. The
-SYSTEM page shows where the canvas landed (`canvas: SRAM` / `PSRAM`) and the live
-FPS, so you can confirm the win on-device.
+~280 KB to ~170 KB — still plenty, including for WiFi during bridge mode.
+
+### Measured on hardware (LilyGo T-Display-S3)
+
+- A **full-frame blit is ~38 ms (~25 fps)** — this is the TFT_eSPI 8-bit-parallel
+  ceiling. The library bit-bangs the bus pixel-by-pixel with no DMA, so this is
+  CPU-bound on GPIO writes, not bus-bound.
+- Moving the canvas PSRAM → internal SRAM only gained ~5 fps (20 → 25). So PSRAM
+  latency was a minor factor; **the GPIO write loop is the real ceiling.**
+- **Dirty-rect is therefore the high-value win:** a speed-only change repaints
+  ~73 of 320 rows (~9 ms) instead of the whole frame, so the dashboard's hot path
+  is ~4× faster even though the full-frame worst case is unchanged.
+
+The SYSTEM page is a deliberate worst-case benchmark — it forces a full-frame
+blit every loop and shows `canvas: SRAM/PSRAM` plus a live `<fps>f <blit>ms`
+readout. So it will read ~25 fps / ~38 ms by design; the real dashboard pages are
+much faster because they only push changed bands. The blit-ms number is the one
+to watch when evaluating future render changes (e.g. a LovyanGFX/DMA port should
+drop it to ~5 ms).
 
 ## Roadmap (ordered by impact / effort)
 
-1. **Dirty-rectangle blits.** Track the changed vertical band (`yMin..yMax`) per
-   frame and push only those rows via `tft.pushImage(0, yMin, W, h, buf + yMin*W)`
-   (full-width bands stay contiguous in the buffer). A speed-only change touches
-   ~73 of 320 rows → ~4× less data per push, on top of the SRAM win. Main risk:
-   a mis-tracked band leaves a widget stale, so it needs on-device verification.
-2. **Per-widget sprites for the hot path.** The big speed number is the most
-   frequent change; a dedicated small sprite for just that region would make its
-   update tiny regardless of the rest of the frame.
-3. **LovyanGFX migration (big).** Unlocks true parallel DMA so the CPU is free
-   during the blit. Only worth it if 1–2 prove insufficient.
-4. **Smarter poll cadence.** Telemetry is polled every 100 ms; decouple the
-   render rate from the poll rate so motion (speed) can interpolate smoothly
-   between polls without faster UART traffic.
+1. **LovyanGFX migration (big, the real ceiling-breaker).** TFT_eSPI can't DMA
+   the parallel bus, so full-frame stays ~38 ms. LovyanGFX drives the S3 LCD_CAM
+   peripheral with DMA — a full frame becomes ~5 ms and the CPU is free during
+   the blit, enabling smooth 60 fps even for full-screen animation. This is the
+   biggest single win but the largest change (port the whole render layer).
+2. **Per-widget sprite for the hot path.** Give the big speed number its own
+   small sprite so its update is tiny regardless of the rest of the frame
+   (complements dirty-rect; mostly matters if we stay on TFT_eSPI).
+3. **Decouple render rate from poll rate.** Telemetry polls every 100 ms;
+   interpolate speed between polls so motion looks smooth without faster UART.
+4. **Adaptive dirty granularity.** Current bands are per-update; per-value bands
+   (e.g. only the changed temp row) would shrink pushes further.
 
 ## Intuitiveness roadmap (UX)
 
