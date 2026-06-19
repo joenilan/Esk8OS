@@ -131,8 +131,12 @@ uint16_t gFps = 0;            // frames pushed in the last second (SYSTEM page)
 unsigned long gToastUntil = 0;
 char gToastMsg[20] = "";
 // NOTE: TFT_eSPI has no DMA path for 8-bit parallel on the ESP32-S3, so the
-// canvas is blitted with a blocking pushSprite (~5 ms) — fast enough that it
-// only happens on changed frames.
+// canvas is blitted with a blocking pushSprite — fast enough that it only
+// happens on changed frames (see PERFORMANCE.md).
+
+// Where the canvas actually landed (shown on the SYSTEM page). Internal SRAM is
+// far faster to blit than PSRAM, which bottlenecks the per-pixel parallel write.
+bool gCanvasPsram = false;
 
 // Non-volatile storage for the persisted odometer + trip
 Preferences prefs;
@@ -444,17 +448,17 @@ void drawStaticPower() {
     drawRowLabel("DUTY",    72);
     drawRowLabel("PEAK",    88);
 
-    drawCard(4, 110, 162, 54, "ENERGY");
-    drawRowLabel("USED",  128);
-    drawRowLabel("REGEN", 144);
+    drawCard(4, 108, 162, 48, "ENERGY");
+    drawRowLabel("USED",  126);
+    drawRowLabel("REGEN", 142);
 
-    drawCard(4, 170, 162, 54, "SPEED");
-    drawRowLabel("MAX", 188);
-    drawRowLabel("AVG", 204);
+    drawCard(4, 160, 162, 48, "SPEED");
+    drawRowLabel("MAX", 178);
+    drawRowLabel("AVG", 194);
 
-    drawCard(4, 228, 162, 46, "SESSION");
-    drawRowLabel("MAX PWR",  250);
-    drawRowLabel("MIN VOLT", 264);
+    drawCard(4, 212, 162, 48, "SESSION");
+    drawRowLabel("MAX PWR",  230);
+    drawRowLabel("MIN VOLT", 246);
 }
 
 // ── PAGE 2: TRIP static chrome ──
@@ -531,7 +535,8 @@ void drawStaticSystem() {
     GFX->setTextFont(1);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
-    GFX->drawString(String("reset: ") + resetReasonStr(), X0 + UI_W / 2, 258);
+    GFX->drawString(String("reset: ") + resetReasonStr(), X0 + UI_W / 2, 256);
+    GFX->drawString(String("canvas: ") + (gCanvasPsram ? "PSRAM" : "SRAM"), X0 + UI_W / 2, 268);
 }
 
 // ==========================================
@@ -825,14 +830,14 @@ void updatePower() {
     drawVal(56,  String(currentAmps, 1) + " A",      COL_WHITE);
     drawVal(72,  String(duty) + " %", dutyColor(duty));
     drawVal(88,  String(peakW) + " W", wattColor(peakW));
-    drawVal(128, String((int)round(currentWattHours)) + " Wh", COL_WHITE);
-    drawVal(144, String("+") + String((int)round(currentWhRegen)) + " Wh", COL_GREEN);
-    drawVal(188, String((int)round(maxSpeedKmh * cv)) + " " + su, COL_WHITE);
-    drawVal(204, String((int)round(avgSpeedKmh * cv)) + " " + su, COL_WHITE);
+    drawVal(126, String((int)round(currentWattHours)) + " Wh", COL_WHITE);
+    drawVal(142, String("+") + String((int)round(currentWhRegen)) + " Wh", COL_GREEN);
+    drawVal(178, String((int)round(maxSpeedKmh * cv)) + " " + su, COL_WHITE);
+    drawVal(194, String((int)round(avgSpeedKmh * cv)) + " " + su, COL_WHITE);
 
     int maxW = (int)round(maxWattsSession);
-    drawVal(250, String(maxW) + " W", wattColor(maxW));
-    drawVal(264, String(minVoltageSession, 1) + " V", COL_WHITE);
+    drawVal(230, String(maxW) + " W", wattColor(maxW));
+    drawVal(246, String(minVoltageSession, 1) + " V", COL_WHITE);
     gCanvasDirty = true;
 }
 
@@ -1062,8 +1067,17 @@ void setup() {
     // and flicker-free; if it fails (or on Wokwi, which has no PSRAM) GFX stays
     // pointed at the panel and we render directly as before.
     #ifndef WOKWI_SIMULATION
+    // Prefer fast internal SRAM for the frame buffer; fall back to PSRAM if it
+    // won't fit, and finally to direct drawing — so the UI always comes up.
     canvas.setColorDepth(16);
-    if (canvas.createSprite(tft.width(), tft.height()) != nullptr) {
+    canvas.setAttribute(PSRAM_ENABLE, false);
+    void* cbuf = canvas.createSprite(tft.width(), tft.height());
+    if (cbuf == nullptr) {
+        canvas.setAttribute(PSRAM_ENABLE, true);
+        cbuf = canvas.createSprite(tft.width(), tft.height());
+        gCanvasPsram = true;
+    }
+    if (cbuf != nullptr) {
         GFX = &canvas;
         gUseCanvas = true;
     }
@@ -1552,7 +1566,7 @@ void dashboardLoop() {
     if (currentPage == 4) gCanvasDirty = true;
     if (gCanvasDirty) { pushCanvas(); gCanvasDirty = false; }
 
-    delay(10);
+    delay(2);   // keep buttons responsive; pushes are change-gated anyway
 }
 
 void loop() {

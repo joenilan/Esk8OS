@@ -103,6 +103,15 @@ pio run -e wokwi-simulator                    # build for the simulator
 > SPI ILI9341 at 240×320. The UI is drawn in a centered 170px band, so what you
 > see in that band matches the device.
 
+## Performance
+
+The UI is double-buffered: every widget renders into an off-screen canvas in
+fast internal SRAM, and only changed frames are blitted to the panel, so there's
+no flicker and the bus is idle when nothing moves. See
+[`PERFORMANCE.md`](PERFORMANCE.md) for the rendering architecture, the parallel-
+bus DMA situation, applied optimizations, and the roadmap. The on-device
+**System** page shows live FPS and where the canvas landed (SRAM/PSRAM).
+
 ## Design preview
 
 `preview.py` renders the UI at the exact 170×320 panel resolution to a PNG, so

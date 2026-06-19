@@ -11,8 +11,11 @@ to src/main.cpp. The Bebas free-fonts are rasterised from the same
 BebasNeue.ttf at the same pixel sizes the GFX headers were generated at,
 so the hero number matches the device closely.
 
-Usage:  python preview.py            -> writes preview.png (scaled x3)
-        python preview.py --speed 27 --mph
+Usage:  python preview.py                  -> writes preview.png (scaled x3)
+        python preview.py --speed 27 --kmh
+        python preview.py --page 4          -> system info page
+        python preview.py --bridge          -> VESC Tool bridge screen
+        python preview.py --splash
 """
 import argparse
 from PIL import Image, ImageDraw, ImageFont
@@ -48,6 +51,26 @@ def batt_color(pct):
     if pct >= BATT_CRIT:
         return ORANGE
     return RED
+
+
+def watt_color(w):
+    if w >= 3000:
+        return RED
+    if w >= 2000:
+        return ORANGE
+    if w >= 1000:
+        return YELLOW
+    return WHITE
+
+
+def duty_color(d):
+    if d >= 95:
+        return RED
+    if d >= 85:
+        return ORANGE
+    if d >= 70:
+        return YELLOW
+    return WHITE
 
 # datum constants (subset of TFT_eSPI)
 TL, TC, TR, ML, MC, MR = "TL", "TC", "TR", "ML", "MC", "MR"
@@ -130,9 +153,10 @@ class State:
     odo_km = 615
     trip_km = 12.8
     watts = 540
-    # page system
-    page = 0          # 0 dash, 1 power, 2 trip
+    # page system: 0 dash, 1 power, 2 trip, 3 settings, 4 system
+    page = 0
     fault = ""        # "" = none, else fault name -> banner
+    demo = True       # ships in demo mode (Settings DEMO row + trip hint)
     # page-1 / page-2 stats
     motor_amps = 28.4
     batt_amps = 14.2
@@ -142,6 +166,35 @@ class State:
     max_kmh = 50.0
     avg_kmh = 29.0
     ride_time = "16:34"
+    # page-1 SESSION card
+    max_watts = 1320
+    min_voltage = 36.4
+    # page-3 wheel profile
+    wheel_name = "8IN PNEU"
+    wheel_diam_mm = 203
+    motor_pulley = 16
+    wheel_pulley = 72
+    poles = 7
+    # page-4 system (host-side mocks of the ESP32 stats)
+    chip = "ESP32-S3"
+    cores = 2
+    cpu_mhz = 240
+    fw_used = 0.8
+    fw_tot = 6.3
+    heap = 210
+    heap_min = 178
+    psram = 8100
+    mcu_temp = 44.5
+    uptime = "00:12:34"
+    fps = 58
+    reset = "POWER-ON"
+    canvas_psram = False
+    # bridge screen
+    bridge_status = "CONNECTED"
+    bridge_ip = "192.168.4.1"
+    bridge_rx_k = 12
+    bridge_tx_k = 8
+    bridge_sta = 1
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +213,12 @@ def list_rows(p, rows, y0, step=16, lx=12, vx=158, vcol=WHITE):
         y += step
 
 
+def row(p, label, val, y, vcol=WHITE):
+    """A single labeled value row with its own value color."""
+    p.set_datum(TL); p.set_color(DIM); p.draw_string(label, 12, y)
+    p.set_datum(TR); p.set_color(vcol); p.draw_string(val, 158, y)
+
+
 def draw(p: Panel, s: State):
     p.fill_screen(BG)
     draw_topbar(p, s)
@@ -167,6 +226,10 @@ def draw(p: Panel, s: State):
         draw_page_power(p, s)
     elif s.page == 2:
         draw_page_trip(p, s)
+    elif s.page == 3:
+        draw_page_settings(p, s)
+    elif s.page == 4:
+        draw_page_system(p, s)
     else:
         draw_page_dash(p, s)
     draw_cells(p, s)
@@ -239,7 +302,7 @@ def draw_page_dash(p, s):
         p.draw_string(unit, int(gx + wn + g), cy, px=upx)
 
     stat((bx + midx) // 2, "%.1f" % s.voltage, "V", batt_color(s.batt_pct))
-    stat((midx + bx + bw) // 2, str(s.watts), "W", WHITE)
+    stat((midx + bx + bw) // 2, str(s.watts), "W", watt_color(s.watts))
 
     # -- TEMPS card (y 122..192) --------------------------------------------
     card(p, "TEMPS", 4, 122, 162, 70)
@@ -262,8 +325,13 @@ def draw_page_dash(p, s):
     card(p, "RANGE", 4, 198, 162, 70)
     cv, du = dist_cv(s), dist_unit(s)
     avg_wh = s.avg_whkm / 0.621371 if s.use_mph else s.avg_whkm
+    rem_disp = "%.1f %s" % (s.rem_km * cv, du)
+    if s.avg_kmh > 1.0:                          # add estimated time-left
+        mins = int(s.rem_km / s.avg_kmh * 60)
+        if 0 < mins < 1000:
+            rem_disp += " %dm" % mins
     rrows = [("ESTIMATED", "%.1f %s" % (s.est_km * cv, du)),
-             ("REMAINING", "%.1f %s" % (s.rem_km * cv, du)),
+             ("REMAINING", rem_disp),
              ("AVG. WH/%s" % du.upper(), "%.1f wh/%s" % (avg_wh, du))]
     list_rows(p, rrows, 216)
 
@@ -272,16 +340,22 @@ def draw_page_power(p, s):
     cv = dist_cv(s)
     su = "mph" if s.use_mph else "kmh"
     card(p, "POWER", 4, 22, 162, 82)
-    list_rows(p, [("MOTOR", "%.1f A" % s.motor_amps),
-                  ("BATTERY", "%.1f A" % s.batt_amps),
-                  ("DUTY", "%d %%" % s.duty),
-                  ("PEAK", "%d W" % s.watts)], 40)
-    card(p, "ENERGY", 4, 110, 162, 54)
-    list_rows(p, [("USED", "%d Wh" % s.wh_used),
-                  ("REGEN", "+%d Wh" % s.wh_regen)], 128)
-    card(p, "SPEED", 4, 170, 162, 54)
-    list_rows(p, [("MAX", "%.0f %s" % (s.max_kmh * cv, su)),
-                  ("AVG", "%.0f %s" % (s.avg_kmh * cv, su))], 188)
+    row(p, "MOTOR",   "%.1f A" % s.motor_amps, 40)
+    row(p, "BATTERY", "%.1f A" % s.batt_amps, 56)
+    row(p, "DUTY",    "%d %%" % s.duty, 72, duty_color(s.duty))
+    row(p, "PEAK",    "%d W" % s.watts, 88, watt_color(s.watts))
+
+    card(p, "ENERGY", 4, 108, 162, 48)
+    row(p, "USED",  "%d Wh" % s.wh_used, 126)
+    row(p, "REGEN", "+%d Wh" % s.wh_regen, 142, GREEN)
+
+    card(p, "SPEED", 4, 160, 162, 48)
+    row(p, "MAX", "%.0f %s" % (s.max_kmh * cv, su), 178)
+    row(p, "AVG", "%.0f %s" % (s.avg_kmh * cv, su), 194)
+
+    card(p, "SESSION", 4, 212, 162, 48)
+    row(p, "MAX PWR",  "%d W" % s.max_watts, 230, watt_color(s.max_watts))
+    row(p, "MIN VOLT", "%.1f V" % s.min_voltage, 246)
 
 
 def draw_page_trip(p, s):
@@ -297,7 +371,45 @@ def draw_page_trip(p, s):
     card(p, "ODOMETER", 4, 132, 162, 40)
     list_rows(p, [("TOTAL", "%d %s" % (s.odo_km * cv, du))], 150)
     p.set_datum(MC); p.set_color(DIM)
-    p.draw_string("hold L to reset trip", W // 2, 190)
+    p.draw_string("hold L: reset + recharge" if s.demo else "hold L to reset trip",
+                  W // 2, 190)
+
+
+def draw_page_settings(p, s):
+    card(p, "WHEEL PROFILE", 4, 22, 162, 82)
+    list_rows(p, [("PROFILE", s.wheel_name),
+                  ("DIAMETER", "%dmm" % s.wheel_diam_mm),
+                  ("GEARING", "%d:%d" % (s.motor_pulley, s.wheel_pulley)),
+                  ("POLES", "%d" % s.poles)], 40)
+
+    card(p, "DISPLAY", 4, 110, 162, 54)
+    row(p, "UNITS", "MPH" if s.use_mph else "KM/H", 128)
+    row(p, "DEMO", "ON" if s.demo else "OFF", 144, YELLOW if s.demo else WHITE)
+
+    p.set_datum(MC); p.set_color(DIM)
+    p.draw_string("R: change wheel", W // 2, 176)
+    p.draw_string("hold L+R: bridge", W // 2, 190)
+
+
+def draw_page_system(p, s):
+    card(p, "DEVICE", 4, 22, 162, 70)
+    list_rows(p, [("CHIP", s.chip),
+                  ("CORES", "%d @ %dM" % (s.cores, s.cpu_mhz)),
+                  ("FIRMWARE", "%.1f/%.1fM" % (s.fw_used, s.fw_tot))], 40)
+
+    card(p, "MEMORY", 4, 98, 162, 70)
+    list_rows(p, [("HEAP", "%d kB" % s.heap),
+                  ("MIN", "%d kB" % s.heap_min),
+                  ("PSRAM", "%d kB" % s.psram)], 116)
+
+    card(p, "RUNTIME", 4, 174, 162, 70)
+    list_rows(p, [("TEMP", "%.1f°C" % s.mcu_temp),
+                  ("UPTIME", s.uptime)], 192)
+    row(p, "REFRESH", "%d fps" % s.fps, 224, GREEN if s.fps >= 30 else WHITE)
+
+    p.set_datum(MC); p.set_color(DIM)
+    p.draw_string("reset: " + s.reset, W // 2, 256)
+    p.draw_string("canvas: " + ("PSRAM" if s.canvas_psram else "SRAM"), W // 2, 268)
 
 
 def draw_fault_banner(p, s):
@@ -314,6 +426,55 @@ def draw_crit_overlay(p, s):
     p.draw_string("LOW BATTERY", W // 2, 126, px=24)
     p.draw_string("STOP & CHARGE", W // 2, 158)
     p.draw_string("%d%%   %.1f V" % (s.batt_pct, s.voltage), W // 2, 182)
+
+
+def draw_toast(p, msg):
+    """Transient confirmation banner over the dashboard (matches showToast)."""
+    p.set_datum(MC)
+    tw = p.text_w(msg, px=18) + 28
+    tx = (W - tw) // 2
+    p.fill_rect(int(tx), 150, int(tw), 30, GREEN)
+    p.set_color(BG)
+    p.draw_string(msg, W // 2, 165, px=18)
+
+
+def draw_bridge(p: Panel, s: State):
+    """VESC Tool WiFi-TCP bridge screen."""
+    p.fill_screen(BG)
+    p.set_datum(TC); p.set_color(BLUE)
+    p.draw_string("BRIDGE MODE", W // 2, 18, px=24)
+    p.set_datum(TC); p.set_color(LABEL)
+    p.draw_string("VESC TOOL CONFIG", W // 2, 56)
+
+    p.set_datum(TL)
+    p.set_color(DIM);  p.draw_string("WiFi:", 12, 84)
+    p.set_color(WHITE); p.draw_string("ESK8-BRIDGE", 46, 84)
+    p.set_color(DIM);  p.draw_string("pass:", 12, 100)
+    p.set_color(WHITE); p.draw_string("esk8bridge", 46, 100)
+    p.set_color(DIM);  p.draw_string("TCP:", 12, 124)
+    p.set_color(WHITE); p.draw_string("%s:65102" % s.bridge_ip, 40, 124)
+    p.set_color(DIM)
+    p.draw_string("VESC Tool > Connection", 12, 150)
+    p.draw_string("> TCP > connect", 12, 162)
+
+    # status box
+    p.fill_rect(8, 212, W - 16, 38, BG)
+    p.draw_rect(8, 212, W - 16, 38, BORDER)
+    if s.bridge_status in ("CONNECTED", "TRAFFIC"):
+        sc = GREEN
+    elif s.bridge_status == "ERROR":
+        sc = RED
+    else:
+        sc = DIM
+    p.set_datum(MC); p.set_color(sc)
+    p.draw_string(s.bridge_status, W // 2, 232, px=24)
+
+    # live throughput / station line
+    p.set_datum(MC); p.set_color(DIM)
+    p.draw_string("RX %dK  TX %dK  STA %d" % (s.bridge_rx_k, s.bridge_tx_k, s.bridge_sta),
+                  W // 2, 260)
+    p.set_datum(MC); p.set_color(DIM)
+    p.draw_string("hold L+R to exit", W // 2, 300)
 
 
 def draw_splash(p: Panel, s: State, progress=0.7):
@@ -369,10 +530,13 @@ def main():
     ap.add_argument("--speed", type=int, default=State.speed)
     ap.add_argument("--kmh", action="store_true", help="metric (default is MPH)")
     ap.add_argument("--splash", action="store_true", help="render the boot splash")
+    ap.add_argument("--bridge", action="store_true", help="render the VESC bridge screen")
+    ap.add_argument("--toast", default="", help="overlay a confirmation banner, e.g. RECHARGED")
     ap.add_argument("--progress", type=float, default=0.7)
     ap.add_argument("--batt", type=int, default=State.batt_pct, help="battery %% for color test")
     ap.add_argument("--watts", type=int, default=State.watts)
-    ap.add_argument("--page", type=int, default=0, help="0 dash, 1 power, 2 trip")
+    ap.add_argument("--page", type=int, default=0,
+                    help="0 dash, 1 power, 2 trip, 3 settings, 4 system")
     ap.add_argument("--fault", default="", help="fault name -> show banner")
     ap.add_argument("-o", "--out", default="preview.png")
     a = ap.parse_args()
@@ -390,8 +554,12 @@ def main():
     p = Panel()
     if a.splash:
         draw_splash(p, s, a.progress)
+    elif a.bridge:
+        draw_bridge(p, s)
     else:
         draw(p, s)
+        if a.toast:
+            draw_toast(p, a.toast)
     p.save(a.out)
     print("wrote", a.out, "(%dx%d logical, x%d)" % (W, H, SCALE))
 

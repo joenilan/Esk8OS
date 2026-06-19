@@ -15,5 +15,4 @@ __pycache__/
 *.pyc
 
 # Generated design previews (regenerate with `python preview.py`)
-preview.png
-preview_splash.png
+preview*.png
