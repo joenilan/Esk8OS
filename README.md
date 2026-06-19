@@ -25,10 +25,24 @@ Connect the display to one free FSESC comm port:
 
 VESC UART logic is 3.3V, so no level shifter is expected.
 
+## Pages
+
+Cycle with a short Left press:
+
+1. **Dashboard** — speed, volts/watts (color-zoned by load), temps, range
+   (remaining distance also shows estimated time left)
+2. **Power** — motor/battery amps, duty, peak watts, energy used/regen, max/avg
+   speed, plus a session card (max power, min voltage)
+3. **Trip** — trip time/distance/avg/max/efficiency and the odometer
+4. **Settings** — wheel profile, units, demo flag
+5. **System** — live ESP32 stats: chip, firmware usage, free/min heap, PSRAM,
+   internal temperature, uptime, refresh rate (FPS), and last reset cause
+
 ## Controls
 
 - Left short press: next page
-- Left hold: reset trip
+- Left hold: reset trip (in demo mode this also recharges the pack and clears
+  temps, so a bench session can run indefinitely)
 - Right short press: toggle MPH/KM-H, or cycle wheel profile on the Settings page
 - Both buttons held for about 2 seconds: enter/exit VESC bridge mode
 
@@ -42,6 +56,9 @@ desktop VESC Tool and the FSESC UART.
 - WiFi AP: `ESK8-BRIDGE`
 - Password: `esk8bridge`
 - TCP endpoint: `192.168.4.1:65102`
+
+The TCP endpoint IP is also shown on-screen, and the bridge screen displays
+live link status, throughput (RX/TX bytes), and the connected client count.
 
 In desktop VESC Tool, connect to the AP, then use a TCP connection to that
 endpoint. This is the first bridge backend; mobile VESC Tool will likely need a
@@ -57,8 +74,16 @@ Wh used, regen Wh, watts, and VESC faults come from the FSESC when dashboard
 mode is active.
 
 Trip and odometer are calculated locally on the ESP32 from speed over time and
-saved in flash. Range estimates, battery temperature, and health percentages are
-currently placeholders until those models/sensors are implemented.
+saved in flash. Range estimates and health percentages are currently placeholders
+until those models/sensors are implemented. Battery temperature comes from the
+VESC only if a sensor is wired; otherwise it reads as a placeholder.
+
+With `DEMO_MODE = true` (or the Wokwi build), the full telemetry set is
+simulated — including load-proportional current with regen braking, integrated
+Wh, and thermal models for motor/ESC/battery — so every page animates without an
+ESC connected. Demo mode also shortens the range learn-in so the estimate moves
+on the bench. **This repo currently ships with `DEMO_MODE = true`** so it runs
+out of the box; set it to `false` once your VESC is wired in.
 
 ## Build & flash
 

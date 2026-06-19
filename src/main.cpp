@@ -127,6 +127,13 @@ bool gUseCanvas = false;
 bool gCanvasDirty = false;    // a widget changed the canvas; push needed this frame
 uint16_t gFps = 0;            // frames pushed in the last second (SYSTEM page)
 
+// Brief on-screen confirmation banner (e.g. after a trip reset / recharge).
+unsigned long gToastUntil = 0;
+char gToastMsg[20] = "";
+// NOTE: TFT_eSPI has no DMA path for 8-bit parallel on the ESP32-S3, so the
+// canvas is blitted with a blocking pushSprite (~5 ms) — fast enough that it
+// only happens on changed frames.
+
 // Non-volatile storage for the persisted odometer + trip
 Preferences prefs;
 
@@ -141,6 +148,8 @@ WiFiClient bridgeClient;
 const char* BRIDGE_SSID = "ESK8-BRIDGE";
 const char* BRIDGE_PASS = "esk8bridge";   // must be >= 8 chars
 String bridgeStatus = "WAITING";
+unsigned long bridgeRxBytes = 0;   // VESC Tool -> ESC, bytes this session
+unsigned long bridgeTxBytes = 0;   // ESC -> VESC Tool, bytes this session
 
 // ==========================================
 // COLORS (NZXT CAM Palette)
@@ -164,6 +173,22 @@ uint16_t battColor(int pct) {
     return COL_RED;
 }
 
+// Power readout zones: white -> yellow -> orange -> red as wattage climbs.
+uint16_t wattColor(int w) {
+    if (w >= 3000) return COL_RED;
+    if (w >= 2000) return COL_ORANGE;
+    if (w >= 1000) return COL_YELLOW;
+    return COL_WHITE;
+}
+
+// Duty-cycle zones: the top end (near 100%) is where you run out of headroom.
+uint16_t dutyColor(int d) {
+    if (d >= 95) return COL_RED;
+    if (d >= 85) return COL_ORANGE;
+    if (d >= 70) return COL_YELLOW;
+    return COL_WHITE;
+}
+
 // ==========================================
 // TELEMETRY STATE
 // ==========================================
@@ -183,6 +208,9 @@ float currentWattHours = 0.0;   // Wh used
 float currentWhRegen = 0.0;     // Wh recovered braking
 float maxSpeedKmh = 0.0;        // session max
 float avgSpeedKmh = 0.0;        // session average
+float maxWattsSession = 0.0;            // session peak power (W)
+float minVoltageSession = BATTERY_MAX_V; // session lowest pack voltage (sag)
+float maxMotorAmpsSession = 0.0;        // session peak motor current (A)
 
 // Page system: 0 dashboard, 1 power/stats, 2 trip, 3 settings, 4 system info
 int currentPage = 0;
@@ -239,6 +267,13 @@ void pushCanvas() {
     fpsCount++;
     unsigned long now = millis();
     if (now - fpsWindow >= 1000) { gFps = fpsCount; fpsCount = 0; fpsWindow = now; }
+}
+
+// Show a brief centered confirmation banner over the dashboard (~1.2 s).
+void showToast(const char* msg) {
+    strncpy(gToastMsg, msg, sizeof(gToastMsg) - 1);
+    gToastMsg[sizeof(gToastMsg) - 1] = '\0';
+    gToastUntil = millis() + 1200;
 }
 
 // Helpers
@@ -416,6 +451,10 @@ void drawStaticPower() {
     drawCard(4, 170, 162, 54, "SPEED");
     drawRowLabel("MAX", 188);
     drawRowLabel("AVG", 204);
+
+    drawCard(4, 228, 162, 46, "SESSION");
+    drawRowLabel("MAX PWR",  250);
+    drawRowLabel("MIN VOLT", 264);
 }
 
 // ── PAGE 2: TRIP static chrome ──
@@ -456,12 +495,28 @@ void drawStaticSettings() {
     GFX->drawString("hold L+R: bridge", X0 + UI_W / 2, 190);
 }
 
+// Human-readable last-reset cause for the SYSTEM page.
+const char* resetReasonStr() {
+    switch (esp_reset_reason()) {
+        case ESP_RST_POWERON:   return "POWER-ON";
+        case ESP_RST_SW:        return "SOFTWARE";
+        case ESP_RST_PANIC:     return "PANIC";
+        case ESP_RST_INT_WDT:   return "INT WDT";
+        case ESP_RST_TASK_WDT:  return "TASK WDT";
+        case ESP_RST_WDT:       return "WDT";
+        case ESP_RST_BROWNOUT:  return "BROWNOUT";
+        case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+        case ESP_RST_EXT:       return "EXTERNAL";
+        default:                return "UNKNOWN";
+    }
+}
+
 // ── PAGE 4: SYSTEM INFO static chrome ──
 void drawStaticSystem() {
     drawCard(4, 22, 162, 70, "DEVICE");
-    drawRowLabel("CHIP",  40);
-    drawRowLabel("CORES", 56);
-    drawRowLabel("FLASH", 72);
+    drawRowLabel("CHIP",     40);
+    drawRowLabel("CORES",    56);
+    drawRowLabel("FIRMWARE", 72);
 
     drawCard(4, 98, 162, 70, "MEMORY");
     drawRowLabel("HEAP",  116);
@@ -472,6 +527,11 @@ void drawStaticSystem() {
     drawRowLabel("TEMP",    192);
     drawRowLabel("UPTIME",  208);
     drawRowLabel("REFRESH", 224);
+
+    GFX->setTextFont(1);
+    GFX->setTextDatum(MC_DATUM);
+    GFX->setTextColor(COL_DIM);
+    GFX->drawString(String("reset: ") + resetReasonStr(), X0 + UI_W / 2, 258);
 }
 
 // ==========================================
@@ -592,7 +652,7 @@ void updateStatPanel() {
     }
     if (wchanged) {
         GFX->fillRect(midx + 1, by + 1, (bx + 162) - midx - 2, bh - 2, COL_BG);
-        drawStat((midx + bx + 162) / 2, String(w), "W", COL_WHITE);
+        drawStat((midx + bx + 162) / 2, String(w), "W", wattColor(w));
         lastW = w;
     }
     if (vchanged || wchanged) gCanvasDirty = true;
@@ -660,8 +720,16 @@ void updateRange() {
         // Energy-per-distance scales inversely: wh/km -> wh/mi multiplies by 1.609.
         float avgWh = useMph ? avgWhPerKm / 0.621371 : avgWhPerKm;
 
+        // REMAINING also shows an estimated time-left (range / current avg speed),
+        // which riders tend to read more intuitively than distance.
+        String remStr = String(remainingRangeKm * cv, 1) + " " + du;
+        if (avgSpeedKmh > 1.0) {
+            int mins = (int)(remainingRangeKm / avgSpeedKmh * 60.0);
+            if (mins > 0 && mins < 1000) remStr += " " + String(mins) + "m";
+        }
+
         GFX->drawString(String(estimatedRangeKm * cv, 1) + " " + du, X0 + 158, 216);
-        GFX->drawString(String(remainingRangeKm * cv, 1) + " " + du, X0 + 158, 232);
+        GFX->drawString(remStr,                                      X0 + 158, 232);
         GFX->drawString(String(avgWh, 1) + " wh/" + du,              X0 + 158, 248);
 
         lastEst = estimatedRangeKm; lastRem = remainingRangeKm; lastWh = avgWhPerKm;
@@ -751,14 +819,20 @@ void updatePower() {
     String su = useMph ? "mph" : "kmh";
     float cv = useMph ? 0.621371 : 1.0;
 
+    int duty = (int)round(currentDuty);
+    int peakW = (int)round(peakWatts);
     drawVal(40,  String(currentMotorAmps, 1) + " A", COL_WHITE);
     drawVal(56,  String(currentAmps, 1) + " A",      COL_WHITE);
-    drawVal(72,  String((int)round(currentDuty)) + " %", COL_WHITE);
-    drawVal(88,  String((int)round(peakWatts)) + " W",   COL_WHITE);
+    drawVal(72,  String(duty) + " %", dutyColor(duty));
+    drawVal(88,  String(peakW) + " W", wattColor(peakW));
     drawVal(128, String((int)round(currentWattHours)) + " Wh", COL_WHITE);
     drawVal(144, String("+") + String((int)round(currentWhRegen)) + " Wh", COL_GREEN);
     drawVal(188, String((int)round(maxSpeedKmh * cv)) + " " + su, COL_WHITE);
     drawVal(204, String((int)round(avgSpeedKmh * cv)) + " " + su, COL_WHITE);
+
+    int maxW = (int)round(maxWattsSession);
+    drawVal(250, String(maxW) + " W", wattColor(maxW));
+    drawVal(264, String(minVoltageSession, 1) + " V", COL_WHITE);
     gCanvasDirty = true;
 }
 
@@ -775,7 +849,7 @@ void updateTrip() {
     float cv = useMph ? 0.621371 : 1.0;
     float avgWh = useMph ? avgWhPerKm / 0.621371 : avgWhPerKm;
 
-    unsigned long sec = millis() / 1000;
+    unsigned long sec = (millis() - rideStartMs) / 1000;   // trip elapsed; resets with the trip
     char tb[6];
     snprintf(tb, sizeof(tb), "%02d:%02d", (int)((sec / 60) % 100), (int)(sec % 60));
 
@@ -816,7 +890,9 @@ void updateSystem() {
 
     drawVal(40, String(ESP.getChipModel()), COL_WHITE);
     drawVal(56, String(ESP.getChipCores()) + " @ " + String(getCpuFrequencyMhz()) + "M", COL_WHITE);
-    drawVal(72, String(ESP.getFlashChipSize() / (1024 * 1024)) + " MB", COL_WHITE);
+    float fwUsedMB = ESP.getSketchSize() / 1048576.0f;
+    float fwTotMB  = (ESP.getSketchSize() + ESP.getFreeSketchSpace()) / 1048576.0f;
+    drawVal(72, String(fwUsedMB, 1) + "/" + String(fwTotMB, 1) + "M", COL_WHITE);
 
     uint32_t freeK = ESP.getFreeHeap() / 1024;
     drawVal(116, String(freeK) + " kB", freeK < 30 ? COL_ORANGE : COL_WHITE);
@@ -1160,6 +1236,11 @@ void pollVescData() {
     else peakWatts += (currentWatts - peakWatts) * 0.15f;
     if (peakWatts < 0) peakWatts = 0;   // regen can drive watts negative; peak-hold stays >= 0
 
+    // Session extremes for the Power page SESSION card
+    if (currentWatts > maxWattsSession)              maxWattsSession = currentWatts;
+    if (currentVoltage < minVoltageSession)          minVoltageSession = currentVoltage;
+    if (fabs(currentMotorAmps) > maxMotorAmpsSession) maxMotorAmpsSession = fabs(currentMotorAmps);
+
     // Accumulate trip + odometer from speed (km), then persist to flash on
     // every stop and every 60s so they survive a disconnect / power-off.
     static unsigned long lastDistMs = 0;
@@ -1205,6 +1286,18 @@ void updateBridgeStatus(const char* status) {
     pushCanvas();
 }
 
+// Live throughput + connected-station count, just under the status box.
+void updateBridgeStats() {
+    GFX->fillRect(X0 + 8, 254, UI_W - 16, 12, COL_BG);
+    GFX->setTextFont(1);
+    GFX->setTextDatum(MC_DATUM);
+    GFX->setTextColor(COL_DIM);
+    String s = "RX " + String(bridgeRxBytes / 1024) + "K  TX " + String(bridgeTxBytes / 1024) +
+               "K  STA " + String(WiFi.softAPgetStationNum());
+    GFX->drawString(s, X0 + UI_W / 2, 260);
+    pushCanvas();
+}
+
 void drawBridgeScreen() {
     GFX->fillScreen(COL_BG);
 
@@ -1223,7 +1316,8 @@ void drawBridgeScreen() {
     GFX->setTextColor(COL_DIM);  GFX->drawString("pass:",  X0 + 12, 100);
     GFX->setTextColor(COL_WHITE); GFX->drawString(BRIDGE_PASS, X0 + 46, 100);
     GFX->setTextColor(COL_DIM);  GFX->drawString("TCP:",   X0 + 12, 124);
-    GFX->setTextColor(COL_WHITE); GFX->drawString("192.168.4.1:65102", X0 + 40, 124);
+    GFX->setTextColor(COL_WHITE);
+    GFX->drawString(WiFi.softAPIP().toString() + ":65102", X0 + 40, 124);
 
     GFX->setTextColor(COL_DIM);
     GFX->drawString("VESC Tool > Connection", X0 + 12, 150);
@@ -1233,7 +1327,8 @@ void drawBridgeScreen() {
     GFX->setTextColor(COL_DIM);
     GFX->drawString("hold L+R to exit", X0 + UI_W / 2, 300);
 
-    updateBridgeStatus(bridgeStatus.c_str());   // pushes the finished frame
+    updateBridgeStatus(bridgeStatus.c_str());
+    updateBridgeStats();                        // pushes the finished frame
 }
 
 void bridgeStart() {
@@ -1242,6 +1337,8 @@ void bridgeStart() {
     bridgeServer.begin();
     bridgeServer.setNoDelay(true);
     bridgeStatus = "WAITING";
+    bridgeRxBytes = 0;
+    bridgeTxBytes = 0;
 }
 
 void bridgeStop() {
@@ -1266,14 +1363,14 @@ void bridgeLoop() {
         if (n > 0) {
             if (n > (int)sizeof(buf)) n = sizeof(buf);
             int r = bridgeClient.read(buf, n);
-            if (r > 0) { Serial1.write(buf, r); traffic = true; }
+            if (r > 0) { Serial1.write(buf, r); bridgeRxBytes += r; traffic = true; }
         }
     }
     int sa = Serial1.available();
     if (sa > 0 && bridgeClient && bridgeClient.connected()) {
         if (sa > (int)sizeof(buf)) sa = sizeof(buf);
         int r = Serial1.readBytes(buf, sa);
-        if (r > 0) { bridgeClient.write(buf, r); traffic = true; }
+        if (r > 0) { bridgeClient.write(buf, r); bridgeTxBytes += r; traffic = true; }
     }
 
     static unsigned long lastTrafficShown = 0;
@@ -1285,6 +1382,10 @@ void bridgeLoop() {
     bool nowConn = bridgeClient && bridgeClient.connected();
     if (wasConn && !nowConn) updateBridgeStatus("WAITING");
     wasConn = nowConn;
+
+    // Refresh the throughput / station-count line a couple times a second.
+    static unsigned long lastStats = 0;
+    if (millis() - lastStats > 500) { lastStats = millis(); updateBridgeStats(); }
 }
 
 void enterBridgeMode() {
@@ -1363,6 +1464,9 @@ void checkButtons() {
             remainingRangeKm = 0;
             rangeEstimateReady = false;
             rideEnergyBaselineSet = false;
+            maxWattsSession = 0;
+            minVoltageSession = BATTERY_MAX_V;
+            maxMotorAmpsSession = 0;
             // Demo: also recharge the pack and clear temps so the bench loop can
             // run indefinitely. On a real ESC these come straight from the VESC,
             // so the recharge is skipped (it would be overwritten on next poll).
@@ -1378,6 +1482,7 @@ void checkButtons() {
             leftHandled = true;
             drawStaticFrame();
             gRedrawAll = true;
+            showToast(DEMO_DATA ? "RECHARGED" : "TRIP RESET");
         }
     } else if (lastLeftBtn == LOW && !leftHandled && millis() - leftDownAt > 30) {
         currentPage = (currentPage + 1) % PAGE_COUNT;        // short press: next page
@@ -1422,6 +1527,25 @@ void dashboardLoop() {
     updateOverlays(alert);
 
     gRedrawAll = false;   // one-shot full repaint consumed
+
+    // Transient confirmation toast (drawn on top of the finished frame).
+    static bool toastWasUp = false;
+    bool toastUp = (long)(gToastUntil - millis()) > 0;
+    if (toastUp) {
+        GFX->setFreeFont(&BebasNeue18pt7b);
+        int tw = GFX->textWidth(gToastMsg) + 28;
+        int tx = X0 + (UI_W - tw) / 2;
+        GFX->fillRect(tx, 150, tw, 30, COL_GREEN);
+        GFX->setTextDatum(MC_DATUM);
+        GFX->setTextColor(COL_BG);
+        GFX->drawString(gToastMsg, X0 + UI_W / 2, 165);
+        GFX->setTextFont(1);
+        gCanvasDirty = true;
+    } else if (toastWasUp) {
+        gRedrawAll = true;          // repaint cleanly once the toast clears
+        gCanvasDirty = true;
+    }
+    toastWasUp = toastUp;
 
     // On the SYSTEM page, push every loop so the FPS readout reflects the real
     // achievable refresh rate; everywhere else push only when a widget changed.
