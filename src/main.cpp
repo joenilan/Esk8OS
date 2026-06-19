@@ -1,11 +1,5 @@
 #include <Arduino.h>
-#include <TFT_eSPI.h>
-#include <Fonts/GFXFF/gfxfont.h>
-#include "BebasNeue18.h"
-#include "BebasNeue24.h"
-#include "BebasNeue34.h"
-#include "BebasNeue40.h"
-#include "BebasNeue80.h"
+#include "LGFX_Config.h"   // LovyanGFX device + sprite (DMA on the S3 parallel bus)
 #include <WiFi.h>
 #include <Preferences.h>
 #ifndef WOKWI_SIMULATION
@@ -89,7 +83,7 @@ float profileGearRatio()    { return (float)wheelProfiles[activeWheelProfile].mo
 float profileCircumfM()     { return wheelProfiles[activeWheelProfile].wheelDiameterM * PI; }
 float profilePolePairs()    { return wheelProfiles[activeWheelProfile].polePairs; }
 
-// Degree symbol in the TFT_eSPI GLCD font (Font 1 / CP437): 0xF8.
+// Degree symbol in the GLCD font (LovyanGFX Font0, CP437): 0xF8.
 const char DEG = (char)0xF8;
 
 // ==========================================
@@ -113,16 +107,15 @@ unsigned long lastLeftPress = 0, lastRightPress = 0;
 // ==========================================
 // DISPLAY
 // ==========================================
-TFT_eSPI tft = TFT_eSPI();
+LGFX tft;
 
-// Off-screen frame buffer. All dashboard widgets render into `canvas` and the
-// finished frame is blitted to the panel in a single pushSprite() — the per-
-// widget erase+redraw never reaches the screen, so there is no flicker. `GFX`
-// is the active draw target: it points at the canvas when the PSRAM sprite was
-// allocated, otherwise straight at `tft` (e.g. Wokwi, which has no PSRAM, or if
-// allocation ever fails). Boot splash + bridge screens draw to `tft` directly.
-TFT_eSprite canvas = TFT_eSprite(&tft);
-TFT_eSPI*   GFX = &tft;
+// Off-screen frame buffer. All widgets render into `canvas` and the finished
+// frame is blitted to the panel with a single DMA pushSprite() — no flicker, and
+// the LCD_CAM DMA path makes a full-frame push ~5 ms instead of TFT_eSPI's
+// ~38 ms. `GFX` is the active draw target: the canvas when allocated, otherwise
+// `tft` directly (fallback if the SRAM sprite can't be created).
+LGFX_Sprite      canvas(&tft);
+lgfx::LovyanGFX* GFX = &tft;
 bool gUseCanvas = false;
 uint16_t gFps = 0;            // frames pushed in the last second (SYSTEM page)
 unsigned long gLastPushUs = 0; // duration of the last blit (SYSTEM page diag)
@@ -291,12 +284,12 @@ void markDirty(int y, int h) {
 
 void pushCanvas() {
     if (!gUseCanvas) return;
+    // LovyanGFX blits the sprite over the LCD_CAM DMA path (~5 ms full frame),
+    // so we just push the whole canvas whenever anything changed — no need for
+    // the dirty-band splitting TFT_eSPI required. markDirty() still gates whether
+    // a push is needed at all (gDirtyN > 0).
     unsigned long t0 = micros();
-    for (int i = 0; i < gDirtyN; i++) {
-        int h = gDirty[i].y1 - gDirty[i].y0;
-        // full-width band -> fast contiguous block copy inside TFT_eSprite
-        canvas.pushSprite(0, gDirty[i].y0, 0, gDirty[i].y0, canvas.width(), h);
-    }
+    canvas.pushSprite(0, 0);
     gLastPushUs = micros() - t0;
     gDirtyN = 0;
 
@@ -329,7 +322,7 @@ void drawHLine(int x, int y, int w, uint16_t color) {
 // Bordered card with a centered header label and an underline.
 void drawCard(int x, int y, int w, int h, const char* title) {
     GFX->drawRect(X0 + x, y, w, h, COL_BORDER);
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(TC_DATUM);
     GFX->setTextColor(COL_LABEL);
     GFX->drawString(title, X0 + x + w / 2, y + 3);
@@ -348,7 +341,7 @@ void drawBootProgress(int pct, const char* status, uint16_t color) {
     GFX->fillRect(bx + 1, by + 1, (bw - 2) * pct / 100, bh - 2, COL_GREEN);
 
     GFX->fillRect(X0, 266, UI_W, 13, COL_BG);
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(color);
     GFX->drawString(status, X0 + UI_W / 2, 272);
@@ -357,7 +350,7 @@ void drawBootProgress(int pct, const char* status, uint16_t color) {
 
 void drawBootSplashFrame() {
     GFX->fillScreen(COL_BG);
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
 
     // Version (top-right, faint)
     GFX->setTextDatum(TR_DATUM);
@@ -367,20 +360,20 @@ void drawBootSplashFrame() {
     // Wordmark: big "ESK8" with a small superscript "OS" -> "ESK8 OS"
     const int topY = 86, gap = 3;
     GFX->setTextDatum(TL_DATUM);
-    GFX->setFreeFont(&BebasNeue80pt7b);
+    GFX->setFreeFont(&fonts::FreeSansBold24pt7b);
     int wMain = GFX->textWidth("ESK8");
-    GFX->setFreeFont(&BebasNeue34pt7b);
+    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
     int wOs = GFX->textWidth("OS");
     int startX = X0 + (UI_W - (wMain + gap + wOs)) / 2;
 
-    GFX->setFreeFont(&BebasNeue80pt7b);
+    GFX->setFreeFont(&fonts::FreeSansBold24pt7b);
     GFX->setTextColor(COL_WHITE);
     GFX->drawString("ESK8", startX, topY);
-    GFX->setFreeFont(&BebasNeue34pt7b);
+    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
     GFX->setTextColor(COL_BLUE);                 // superscript, top-aligned
     GFX->drawString("OS", startX + wMain + gap, topY);
 
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
     GFX->drawString("RIDE DASHBOARD", X0 + UI_W / 2, 168);
@@ -434,7 +427,7 @@ void waitForBootReady() {
 
 // A static "LABEL ............ (value drawn later)" row in a card.
 void drawRowLabel(const char* label, int y) {
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(TL_DATUM);
     GFX->setTextColor(COL_DIM);
     GFX->drawString(label, X0 + 12, y);
@@ -445,15 +438,15 @@ void drawSpeedReadout(int spdInt, bool clearZone) {
         GFX->fillRect(X0, 17, UI_W, 73, COL_BG);
     }
 
-    // Value: top-aligned, centered to the right of the unit.
+    // Value: big 7-segment-style hero number, vertically centered in the band.
     GFX->setTextColor(COL_WHITE);
-    GFX->setFreeFont(&BebasNeue80pt7b);
-    GFX->setTextDatum(TC_DATUM);
-    GFX->drawString(String(spdInt), X0 + 96, 14);
+    GFX->setFont(&fonts::Font7);
+    GFX->setTextDatum(MC_DATUM);
+    GFX->drawString(String(spdInt), X0 + 96, 53);
 
     // Unit: upper-left, top-aligned under the status bar. This is static
     // page chrome and must appear even before the first successful VESC poll.
-    GFX->setFreeFont(&BebasNeue24pt7b);
+    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
     GFX->setTextDatum(TL_DATUM);
     GFX->setTextColor(COL_LABEL);
     GFX->drawString(useMph ? "MPH" : "KM/H", X0 + 10, 28);
@@ -514,7 +507,7 @@ void drawStaticTrip() {
     drawCard(4, 132, 162, 40, "ODOMETER");
     drawRowLabel("TOTAL", 150);
 
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
     GFX->drawString(DEMO_DATA ? "hold L: reset + recharge" : "hold L to reset trip",
@@ -533,7 +526,7 @@ void drawStaticSettings() {
     drawRowLabel("UNITS", 128);
     drawRowLabel("DEMO",  144);
 
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
     GFX->drawString("R: change wheel", X0 + UI_W / 2, 176);
@@ -573,7 +566,7 @@ void drawStaticSystem() {
     drawRowLabel("UPTIME",  208);
     drawRowLabel("REFRESH", 224);
 
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
     GFX->drawString(String("reset: ") + resetReasonStr(), X0 + UI_W / 2, 256);
@@ -585,7 +578,7 @@ void drawStaticSystem() {
 // ==========================================
 void drawStaticFrame() {
     GFX->fillScreen(COL_BG);
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
 
     // ── TOP STATUS BAR (common, y=0..16) ──
     GFX->setTextDatum(TL_DATUM);
@@ -631,7 +624,7 @@ void updateClock() {
     char buf[6];
     snprintf(buf, sizeof(buf), "%02d:%02d", mins, secs);
     GFX->fillRect(X0 + 120, 4, 46, 9, COL_BG);
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(TR_DATUM);
     GFX->setTextColor(COL_WHITE);
     GFX->drawString(buf, X0 + 166, 4);
@@ -660,17 +653,17 @@ void updateSpeed() {
 void drawStat(int cx, String value, const char* unit, uint16_t vcol) {
     const int cy = 103;   // vertical middle of the panel (86 + 32/2), nudged
     const int g = 3;
-    GFX->setFreeFont(&BebasNeue24pt7b);
+    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
     int wn = GFX->textWidth(value);
-    GFX->setFreeFont(&BebasNeue18pt7b);
+    GFX->setFreeFont(&fonts::FreeSans12pt7b);
     int wu = GFX->textWidth(unit);
     int gx = cx - (wn + g + wu) / 2;
 
     GFX->setTextDatum(ML_DATUM);
-    GFX->setFreeFont(&BebasNeue24pt7b);
+    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
     GFX->setTextColor(vcol);
     GFX->drawString(value, gx, cy);
-    GFX->setFreeFont(&BebasNeue18pt7b);
+    GFX->setFreeFont(&fonts::FreeSans12pt7b);
     GFX->setTextColor(COL_DIM);
     GFX->drawString(unit, gx + wn + g, cy);
 }
@@ -707,7 +700,7 @@ void updateStatPanel() {
 // One temps row: dim label is static; this redraws "<temp>C (pct%)".
 // `hot` turns the temperature red when past its limit.
 void drawTempRow(int y, float temp, int pct, bool hot) {
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
     String pstr = String("(") + pct + "%)";
     String tstr = String((int)round(temp)) + DEG + "C";
 
@@ -757,7 +750,7 @@ void updateRange() {
         // Clear the values column for all three rows
         GFX->fillRect(X0 + 80, 216, 82, 44, COL_BG);
 
-        GFX->setTextFont(1);
+        GFX->setFont(&fonts::Font0);
         GFX->setTextDatum(TR_DATUM);
         GFX->setTextColor(COL_WHITE);
 
@@ -819,7 +812,7 @@ void updateBottomBar() {
     if (currentBatteryPercent != lastPct || useMph != lastUseMph ||
         abs(tripDistanceKm - lastTrip) >= 0.05 || gRedrawAll) {
         GFX->fillRect(X0, 300, UI_W, 18, COL_BG);
-        GFX->setTextFont(1);
+        GFX->setFont(&fonts::Font0);
 
         String du = useMph ? "mi" : "km";
         float odo  = useMph ? totalDistanceKm * 0.621371 : totalDistanceKm;
@@ -848,7 +841,7 @@ void updateBottomBar() {
 // Clear a card's value column and draw a right-aligned value at row y.
 void drawVal(int y, String value, uint16_t color) {
     GFX->fillRect(X0 + 78, y - 1, 84, 12, COL_BG);
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(TR_DATUM);
     GFX->setTextColor(color);
     GFX->drawString(value, X0 + 158, y);
@@ -1036,9 +1029,9 @@ void updateOverlays(int state) {
         GFX->fillRect(X0 + 8, by, UI_W - 16, bh, COL_RED);
         GFX->setTextDatum(MC_DATUM);
         GFX->setTextColor(COL_WHITE);
-        GFX->setFreeFont(&BebasNeue24pt7b);
+        GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
         GFX->drawString(line1, X0 + UI_W / 2, by + (crit ? 18 : 16));
-        GFX->setTextFont(1);
+        GFX->setFont(&fonts::Font0);
         GFX->drawString(line2, X0 + UI_W / 2, by + (crit ? 50 : 48));
         if (crit) {
             GFX->drawString(line3, X0 + UI_W / 2, by + 74);
@@ -1077,17 +1070,14 @@ void setup() {
     sessionTripStartKm = tripDistanceKm;
 
     #ifndef WOKWI_SIMULATION
-    // Power the display rail, but keep the backlight off until the panel is
-    // initialized and cleared. This avoids the brief white/glitch frame at boot.
-    pinMode(15, OUTPUT);
+    pinMode(15, OUTPUT);      // T-Display-S3 display power rail
     digitalWrite(15, HIGH);
-    pinMode(TFT_BL, OUTPUT);
-    digitalWrite(TFT_BL, LOW);
     #endif
 
     tft.init();
     tft.setRotation(0);
-    tft.fillScreen(TFT_BLACK);
+    tft.setBrightness(0);     // dark until the first frame, avoids a boot flash
+    tft.fillScreen(0);
 
     // Center UI if screen is wider than 170 (e.g. Wokwi's 240px ILI9341)
     X0 = (tft.width() - UI_W) / 2;
@@ -1097,7 +1087,7 @@ void setup() {
     COL_BORDER  = tft.color565(68, 68, 68);
     COL_DIM     = tft.color565(136, 136, 136);
     COL_LABEL   = tft.color565(170, 170, 170);
-    COL_WHITE   = TFT_WHITE;
+    COL_WHITE   = tft.color565(255, 255, 255);
     COL_GREEN   = tft.color565(0, 200, 100);
     COL_RED     = tft.color565(255, 51, 51);
     COL_BLUE    = tft.color565(68, 136, 255);
@@ -1112,10 +1102,10 @@ void setup() {
     // Prefer fast internal SRAM for the frame buffer; fall back to PSRAM if it
     // won't fit, and finally to direct drawing — so the UI always comes up.
     canvas.setColorDepth(16);
-    canvas.setAttribute(PSRAM_ENABLE, false);
+    canvas.setPsram(false);
     void* cbuf = canvas.createSprite(tft.width(), tft.height());
     if (cbuf == nullptr) {
-        canvas.setAttribute(PSRAM_ENABLE, true);
+        canvas.setPsram(true);
         cbuf = canvas.createSprite(tft.width(), tft.height());
         gCanvasPsram = true;
     }
@@ -1132,7 +1122,7 @@ void setup() {
     #ifndef WOKWI_SIMULATION
     Serial1.begin(115200, SERIAL_8N1, VESC_RX_PIN, VESC_TX_PIN);
     UART.setSerialPort(&Serial1);
-    digitalWrite(TFT_BL, HIGH);
+    tft.setBrightness(255);
     #endif
 
     waitForBootReady();
@@ -1336,16 +1326,16 @@ void updateBridgeStatus(const char* status) {
     else if (strcmp(status, "ERROR") == 0) c = COL_RED;
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(c);
-    GFX->setFreeFont(&BebasNeue24pt7b);
+    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
     GFX->drawString(status, X0 + UI_W / 2, 232);
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
     pushCanvasFull();
 }
 
 // Live throughput + connected-station count, just under the status box.
 void updateBridgeStats() {
     GFX->fillRect(X0 + 8, 254, UI_W - 16, 12, COL_BG);
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
     String s = "RX " + String(bridgeRxBytes / 1024) + "K  TX " + String(bridgeTxBytes / 1024) +
@@ -1359,10 +1349,10 @@ void drawBridgeScreen() {
 
     GFX->setTextDatum(TC_DATUM);
     GFX->setTextColor(COL_BLUE);
-    GFX->setFreeFont(&BebasNeue24pt7b);
+    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
     GFX->drawString("BRIDGE MODE", X0 + UI_W / 2, 18);
 
-    GFX->setTextFont(1);
+    GFX->setFont(&fonts::Font0);
     GFX->setTextColor(COL_LABEL);
     GFX->drawString("VESC TOOL CONFIG", X0 + UI_W / 2, 56);
 
@@ -1449,9 +1439,9 @@ void enterBridgeMode() {
         GFX->fillRect(X0 + 8, 140, UI_W - 16, 40, COL_RED);
         GFX->setTextDatum(MC_DATUM);
         GFX->setTextColor(COL_WHITE);
-        GFX->setFreeFont(&BebasNeue18pt7b);
+        GFX->setFreeFont(&fonts::FreeSans12pt7b);
         GFX->drawString("STOP BOARD FIRST", X0 + UI_W / 2, 160);
-        GFX->setTextFont(1);
+        GFX->setFont(&fonts::Font0);
         pushCanvasFull();
         delay(1200);
         drawStaticFrame();
@@ -1588,14 +1578,14 @@ void dashboardLoop() {
     static bool toastWasUp = false;
     bool toastUp = (long)(gToastUntil - millis()) > 0;
     if (toastUp) {
-        GFX->setFreeFont(&BebasNeue18pt7b);
+        GFX->setFreeFont(&fonts::FreeSans12pt7b);
         int tw = GFX->textWidth(gToastMsg) + 28;
         int tx = X0 + (UI_W - tw) / 2;
         GFX->fillRect(tx, 150, tw, 30, COL_GREEN);
         GFX->setTextDatum(MC_DATUM);
         GFX->setTextColor(COL_BG);
         GFX->drawString(gToastMsg, X0 + UI_W / 2, 165);
-        GFX->setTextFont(1);
+        GFX->setFont(&fonts::Font0);
         markDirty(150, 30);
     } else if (toastWasUp) {
         // The toast covered chrome (card borders/labels), so repaint the whole
