@@ -234,6 +234,7 @@ def draw(p: Panel, s: State):
     else:
         draw_page_dash(p, s)
     draw_cells(p, s)
+    draw_dots(p, s)
     draw_bottom(p, s)
     # safety overlays (drawn on top of everything)
     if s.fault:
@@ -263,6 +264,20 @@ def draw_cells(p, s):
         p.draw_rect(cx, 276, cw, ch, BORDER)
         if i < filled:
             p.fill_rect(cx + 1, 277, cw - 2, ch - 2, cc)
+
+
+def draw_dots(p, s):
+    # Page-indicator dots in the gap between cells and the bottom bar.
+    n = 5
+    gap = 8
+    x0 = W // 2 - (n - 1) * gap // 2
+    for i in range(n):
+        dx = x0 + i * gap
+        box = [dx - 2, 291, dx + 2, 295]
+        if i == s.page:
+            p.d.ellipse(box, fill=BLUE)
+        else:
+            p.d.ellipse(box, outline=BORDER)
 
 
 def draw_bottom(p, s):
@@ -496,6 +511,12 @@ def draw_splash(p: Panel, s: State, progress=0.7):
     # tagline
     p.set_datum(MC); p.set_color(DIM)
     p.draw_string("RIDE DASHBOARD", W // 2, 168)
+
+    # controls legend
+    p.set_datum(MC); p.set_color(DIM)
+    p.draw_string("L: page     R: units", W // 2, 196)
+    p.draw_string("hold L: reset trip", W // 2, 210)
+    p.draw_string("hold L+R: bridge mode", W // 2, 224)
 
     # version (top-right)
     p.set_datum(TR); p.set_color(BORDER)

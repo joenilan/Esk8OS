@@ -108,3 +108,13 @@ public:
 };
 
 #endif
+
+// Rotation passed to tft.setRotation() in setup(). 0..3 = 0/90/180/270 degrees,
+// 4..7 add a horizontal mirror. Keep it to the PORTRAIT values (0/2/4/6) so the
+// 170-wide UI band stays centered. The Wokwi ILI9341 stand-in renders mirrored
+// vs the real panel, so it uses a mirrored portrait; hardware uses plain.
+#ifdef WOKWI_SIMULATION
+  #define DISPLAY_ROTATION 4
+#else
+  #define DISPLAY_ROTATION 0
+#endif

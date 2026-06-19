@@ -378,6 +378,14 @@ void drawBootSplashFrame() {
     GFX->setTextColor(COL_DIM);
     GFX->drawString("RIDE DASHBOARD", X0 + UI_W / 2, 168);
 
+    // Controls legend (boot-time reference; keeps the dashboard itself uncluttered)
+    GFX->setFont(&fonts::Font0);
+    GFX->setTextDatum(MC_DATUM);
+    GFX->setTextColor(COL_DIM);
+    GFX->drawString("L: page     R: units", X0 + UI_W / 2, 196);
+    GFX->drawString("hold L: reset trip",   X0 + UI_W / 2, 210);
+    GFX->drawString("hold L+R: bridge mode", X0 + UI_W / 2, 224);
+
     GFX->setTextColor(COL_LABEL);
     GFX->drawString(String("RIDER: ") + RIDER_NAME, X0 + UI_W / 2, 300);
 
@@ -438,11 +446,14 @@ void drawSpeedReadout(int spdInt, bool clearZone) {
         GFX->fillRect(X0, 17, UI_W, 73, COL_BG);
     }
 
-    // Value: big 7-segment-style hero number, vertically centered in the band.
+    // Value: big bold sans hero number (2x), vertically centered in the band so
+    // it fills the original speed zone without crowding anything below it.
     GFX->setTextColor(COL_WHITE);
-    GFX->setFont(&fonts::Font7);
+    GFX->setFreeFont(&fonts::FreeSansBold24pt7b);
+    GFX->setTextSize(2);
     GFX->setTextDatum(MC_DATUM);
-    GFX->drawString(String(spdInt), X0 + 96, 53);
+    GFX->drawString(String(spdInt), X0 + 96, 54);
+    GFX->setTextSize(1);
 
     // Unit: upper-left, top-aligned under the status bar. This is static
     // page chrome and must appear even before the first successful VESC poll.
@@ -601,6 +612,16 @@ void drawStaticFrame() {
     int cellStartX = X0 + (UI_W - cellsTotalW) / 2;
     for (int i = 0; i < BATTERY_CELLS_COUNT; i++) {
         GFX->drawRect(cellStartX + i * (cellW + cellGap), 276, cellW, cellH, COL_BORDER);
+    }
+
+    // ── PAGE INDICATOR DOTS (in the gap between cells and bottom bar) ──
+    int dotGap = 8;
+    int dotsW = (PAGE_COUNT - 1) * dotGap;
+    int dotX0 = X0 + UI_W / 2 - dotsW / 2;
+    for (int i = 0; i < PAGE_COUNT; i++) {
+        int dx = dotX0 + i * dotGap;
+        if (i == currentPage) GFX->fillCircle(dx, 293, 2, COL_BLUE);
+        else                  GFX->drawCircle(dx, 293, 2, COL_BORDER);
     }
 
     // ── BOTTOM STATUS BAR (common, y=298..318) ──
@@ -1075,7 +1096,7 @@ void setup() {
     #endif
 
     tft.init();
-    tft.setRotation(0);
+    tft.setRotation(DISPLAY_ROTATION);
     tft.setBrightness(0);     // dark until the first frame, avoids a boot flash
     tft.fillScreen(0);
 
