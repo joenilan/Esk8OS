@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include "LGFX_Config.h"   // LovyanGFX device + sprite (DMA on the S3 parallel bus)
-#include <WiFi.h>
 #include <Preferences.h>
 #ifndef WOKWI_SIMULATION
 #include <VescUart.h>
