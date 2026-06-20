@@ -159,7 +159,8 @@ uint16_t COL_LABEL;     // #aaaaaa
 uint16_t COL_WHITE;     // #ffffff
 uint16_t COL_GREEN;     // #00c864
 uint16_t COL_RED;       // #ff3333
-uint16_t COL_BLUE;      // #4488ff
+uint16_t COL_ACCENT;    // #b950d7 brand violet/purple (highlights, logo, dots).
+                        // Magenta-shifted (R~=B) so it reads purple, not blue, on the panel.
 uint16_t COL_YELLOW;    // #ffcd00
 uint16_t COL_ORANGE;    // #ff8000
 
@@ -284,13 +285,18 @@ void markDirty(int y, int h) {
 }
 
 void pushCanvas() {
-    if (!gUseCanvas) return;
-    // LovyanGFX blits the sprite over the LCD_CAM DMA path (~5 ms full frame),
-    // so we just push the whole canvas whenever anything changed — no need for
-    // the dirty-band splitting TFT_eSPI required. markDirty() still gates whether
-    // a push is needed at all (gDirtyN > 0).
+    if (!gUseCanvas || gDirtyN == 0) return;
+    // ISOLATION TEST: partial clip-rect blit at 20 MHz. Push only the changed
+    // bands (markDirty tracks them) to cut bus traffic. If this garbles the panel
+    // like 40 MHz did, revert to the single full canvas.pushSprite(0,0) above.
     unsigned long t0 = micros();
-    canvas.pushSprite(0, 0);
+    for (int i = 0; i < gDirtyN; i++) {
+        int y0 = gDirty[i].y0;
+        int h  = gDirty[i].y1 - y0;
+        tft.setClipRect(0, y0, tft.width(), h);
+        canvas.pushSprite(0, 0);
+    }
+    tft.clearClipRect();
     gLastPushUs = micros() - t0;
     gDirtyN = 0;
 
@@ -361,17 +367,17 @@ void drawBootSplashFrame() {
     // Wordmark: big "ESK8" with a small superscript "OS" -> "ESK8 OS"
     const int topY = 86, gap = 3;
     GFX->setTextDatum(TL_DATUM);
-    GFX->setFreeFont(&fonts::FreeSansBold24pt7b);
+    GFX->setFont(&fonts::FreeSansBold24pt7b);
     int wMain = GFX->textWidth("ESK8");
-    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
+    GFX->setFont(&fonts::FreeSansBold12pt7b);
     int wOs = GFX->textWidth("OS");
     int startX = X0 + (UI_W - (wMain + gap + wOs)) / 2;
 
-    GFX->setFreeFont(&fonts::FreeSansBold24pt7b);
+    GFX->setFont(&fonts::FreeSansBold24pt7b);
     GFX->setTextColor(COL_WHITE);
     GFX->drawString("ESK8", startX, topY);
-    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
-    GFX->setTextColor(COL_BLUE);                 // superscript, top-aligned
+    GFX->setFont(&fonts::FreeSansBold12pt7b);
+    GFX->setTextColor(COL_ACCENT);                 // superscript, top-aligned
     GFX->drawString("OS", startX + wMain + gap, topY);
 
     GFX->setFont(&fonts::Font0);
@@ -404,14 +410,14 @@ void waitForBootReady() {
     delay(150);
 
     #ifdef WOKWI_SIMULATION
-    drawBootProgress(100, "SIMULATION MODE", COL_BLUE);
+    drawBootProgress(100, "SIMULATION MODE", COL_ACCENT);
     delay(500);
     #else
     drawBootProgress(60, "UART READY", COL_DIM);
     delay(150);
 
     if (DEMO_MODE) {
-        drawBootProgress(100, "DEMO TELEMETRY", COL_BLUE);
+        drawBootProgress(100, "DEMO TELEMETRY", COL_ACCENT);
         delay(500);
         return;
     }
@@ -619,7 +625,7 @@ void drawStaticFrame() {
     int dotX0 = X0 + UI_W / 2 - dotsW / 2;
     for (int i = 0; i < PAGE_COUNT; i++) {
         int dx = dotX0 + i * dotGap;
-        if (i == currentPage) GFX->fillCircle(dx, 293, 2, COL_BLUE);
+        if (i == currentPage) GFX->fillCircle(dx, 293, 2, COL_ACCENT);
         else                  GFX->drawCircle(dx, 293, 2, COL_BORDER);
     }
 
@@ -673,17 +679,17 @@ void updateSpeed() {
 void drawStat(int cx, String value, const char* unit, uint16_t vcol) {
     const int cy = 103;   // vertical middle of the panel (86 + 32/2), nudged
     const int g = 3;
-    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
+    GFX->setFont(&fonts::FreeSansBold12pt7b);
     int wn = GFX->textWidth(value);
-    GFX->setFreeFont(&fonts::FreeSans12pt7b);
+    GFX->setFont(&fonts::FreeSans12pt7b);
     int wu = GFX->textWidth(unit);
     int gx = cx - (wn + g + wu) / 2;
 
     GFX->setTextDatum(ML_DATUM);
-    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
+    GFX->setFont(&fonts::FreeSansBold12pt7b);
     GFX->setTextColor(vcol);
     GFX->drawString(value, gx, cy);
-    GFX->setFreeFont(&fonts::FreeSans12pt7b);
+    GFX->setFont(&fonts::FreeSans12pt7b);
     GFX->setTextColor(COL_DIM);
     GFX->drawString(unit, gx + wn + g, cy);
 }
@@ -1068,7 +1074,7 @@ void updateOverlays(int state) {
             GFX->drawString(line2, X0 + UI_W / 2, by + 49);
             GFX->drawString(line3, X0 + UI_W / 2, by + 73);
         } else {
-            GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
+            GFX->setFont(&fonts::FreeSansBold12pt7b);
             GFX->drawString(line1, X0 + UI_W / 2, by + 16);
             GFX->setFont(&fonts::Font0);
             GFX->drawString(line2, X0 + UI_W / 2, by + 48);
@@ -1127,7 +1133,7 @@ void setup() {
     COL_WHITE   = tft.color565(255, 255, 255);
     COL_GREEN   = tft.color565(0, 200, 100);
     COL_RED     = tft.color565(255, 51, 51);
-    COL_BLUE    = tft.color565(68, 136, 255);
+    COL_ACCENT  = tft.color565(185, 80, 215);
     COL_YELLOW  = tft.color565(255, 205, 0);
     COL_ORANGE  = tft.color565(255, 128, 0);
 
@@ -1363,7 +1369,7 @@ void updateBridgeStatus(const char* status) {
     else if (strcmp(status, "ERROR") == 0) c = COL_RED;
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(c);
-    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
+    GFX->setFont(&fonts::FreeSansBold12pt7b);
     GFX->drawString(status, X0 + UI_W / 2, 232);
     GFX->setFont(&fonts::Font0);
     pushCanvasFull();
@@ -1385,8 +1391,8 @@ void drawBridgeScreen() {
     GFX->fillScreen(COL_BG);
 
     GFX->setTextDatum(TC_DATUM);
-    GFX->setTextColor(COL_BLUE);
-    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
+    GFX->setTextColor(COL_ACCENT);
+    GFX->setFont(&fonts::FreeSansBold12pt7b);
     GFX->drawString("BRIDGE MODE", X0 + UI_W / 2, 18);
 
     GFX->setFont(&fonts::Font0);
@@ -1476,7 +1482,7 @@ void enterBridgeMode() {
         GFX->fillRect(X0 + 8, 140, UI_W - 16, 40, COL_RED);
         GFX->setTextDatum(MC_DATUM);
         GFX->setTextColor(COL_WHITE);
-        GFX->setFreeFont(&fonts::FreeSans12pt7b);
+        GFX->setFont(&fonts::FreeSans12pt7b);
         GFX->drawString("STOP BOARD FIRST", X0 + UI_W / 2, 160);
         GFX->setFont(&fonts::Font0);
         pushCanvasFull();
@@ -1615,7 +1621,7 @@ void dashboardLoop() {
     static bool toastWasUp = false;
     bool toastUp = (long)(gToastUntil - millis()) > 0;
     if (toastUp) {
-        GFX->setFreeFont(&fonts::FreeSans12pt7b);
+        GFX->setFont(&fonts::FreeSans12pt7b);
         int tw = GFX->textWidth(gToastMsg) + 28;
         int tx = X0 + (UI_W - tw) / 2;
         GFX->fillRect(tx, 150, tw, 30, COL_GREEN);

@@ -23,7 +23,9 @@
 //                                          and try lowering bus freq_write to 16M
 // (Wokwi's ILI9341 stand-in may render mirrored vs hardware — that's sim-only.)
 // ============================================================================
+#ifndef LGFX_USE_V1            // also set as a -D build flag; guard avoids a redefinition warning
 #define LGFX_USE_V1
+#endif
 #include <LovyanGFX.hpp>
 
 #ifdef WOKWI_SIMULATION
@@ -68,7 +70,8 @@ class LGFX : public lgfx::LGFX_Device {
 public:
     LGFX() {
         {   auto c = _bus.config();
-            c.freq_write = 20000000;     // 20 MHz; can try higher once verified
+            c.freq_write = 20000000;     // 20 MHz — verified-good on this panel.
+                                         // 40 MHz garbled the screen here, so keep 20.
             c.pin_wr = 8;
             c.pin_rd = 9;
             c.pin_rs = 7;                // D/C

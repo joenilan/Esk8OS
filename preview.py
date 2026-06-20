@@ -37,7 +37,7 @@ LABEL  = (170, 170, 170)
 WHITE  = (255, 255, 255)
 GREEN  = (0, 200, 100)
 RED    = (255, 51, 51)
-BLUE   = (68, 136, 255)
+ACCENT = (185, 80, 215)   # #b950d7 brand violet/purple (magenta-shifted so it reads purple, not blue, on the panel)
 YELLOW = (255, 205, 0)
 ORANGE = (255, 128, 0)
 
@@ -290,7 +290,7 @@ def draw_dots(p, s):
         dx = x0 + i * gap
         box = [dx - 2, 291, dx + 2, 295]
         if i == s.page:
-            p.d.ellipse(box, fill=BLUE)
+            p.d.ellipse(box, fill=ACCENT)
         else:
             p.d.ellipse(box, outline=BORDER)
 
@@ -481,7 +481,7 @@ def draw_toast(p, msg):
 def draw_bridge(p: Panel, s: State):
     """VESC Tool WiFi-TCP bridge screen."""
     p.fill_screen(BG)
-    p.set_datum(TC); p.set_color(BLUE)
+    p.set_datum(TC); p.set_color(ACCENT)
     p.draw_string("BRIDGE MODE", W // 2, 18, px=24)
     p.set_datum(TC); p.set_color(LABEL)
     p.draw_string("VESC TOOL CONFIG", W // 2, 56)
@@ -529,7 +529,7 @@ def draw_splash(p: Panel, s: State, progress=0.7):
     x = (W - (wmain + gap + wos)) / 2
     p.set_datum(TL); p.set_color(WHITE)
     p.draw_string("ESK8", int(x), top, px=main_px)
-    p.set_datum(TL); p.set_color(BLUE)          # superscript, top-aligned
+    p.set_datum(TL); p.set_color(ACCENT)          # superscript, top-aligned
     p.draw_string("OS", int(x + wmain + gap), top, px=os_px)
 
     # tagline
