@@ -5,9 +5,13 @@ Renders the dashboard at the EXACT physical resolution of the Lilygo
 T-Display S3 (170x320 portrait) so layout can be iterated without flashing
 the device or fighting Wokwi's 240x320 ILI9341 stand-in.
 
-It mimics just enough of the TFT_eSPI API (datum-based drawString, rects,
-fast h-lines, GFX free-fonts) that the layout math here can be ported 1:1
-to src/main.cpp. The Bebas free-fonts are rasterised from the same
+Note: this renders the logical 170x320 UI. Wokwi screenshots may appear mirrored
+or rotated relative to this preview because the simulator uses an ILI9341
+stand-in with different orientation behavior than the real ST7789 panel.
+
+It mimics just enough of the LovyanGFX drawing API (datum-based drawString,
+rects, fast h-lines, GFX fonts) that the layout math here can be ported 1:1
+to src/main.cpp. The Bebas GFX font is rasterised from the same
 BebasNeue.ttf at the same pixel sizes the GFX headers were generated at,
 so the hero number matches the device closely.
 
@@ -89,11 +93,20 @@ class Panel:
         # small UI text; the hero number uses the real Bebas TTF.
         self._small = ImageFont.load_default()
         self._bebas = {}
+        self._sans = {}
+        self._sans_bold = {}
 
     def bebas(self, px):
         if px not in self._bebas:
             self._bebas[px] = ImageFont.truetype(TTF, px)
         return self._bebas[px]
+
+    def sans(self, px, bold=False):
+        cache = self._sans_bold if bold else self._sans
+        if px not in cache:
+            name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+            cache[px] = ImageFont.truetype(name, px)
+        return cache[px]
 
     # -- state setters -------------------------------------------------------
     def set_datum(self, d): self.datum = d
@@ -264,6 +277,8 @@ def draw_cells(p, s):
         p.draw_rect(cx, 276, cw, ch, BORDER)
         if i < filled:
             p.fill_rect(cx + 1, 277, cw - 2, ch - 2, cc)
+        else:
+            p.hline(cx + 2, 286, cw - 4, BORDER)
 
 
 def draw_dots(p, s):
@@ -296,9 +311,9 @@ def draw_bottom(p, s):
 def draw_page_dash(p, s):
     # -- SPEED (y 16..78): number top-aligned, unit to its upper-left -------
     p.set_datum(TC); p.set_color(WHITE)
-    p.draw_string(str(s.speed), 96, 14, px=80)
+    p.draw_string(str(s.speed), 96, 17, px=80)
     p.set_datum(TL); p.set_color(LABEL)
-    p.draw_string(speed_unit(s), 10, 28, px=24)
+    p.draw_string(speed_unit(s), 10, 27, font=p.sans(17, bold=True))
 
     # -- VOLTS | WATTS panel (y 86..118) ------------------------------------
     bw, bh, by = 162, 32, 86
@@ -308,14 +323,16 @@ def draw_page_dash(p, s):
     p.d.line([midx, by + 5, midx, by + bh - 5], fill=BORDER)
     cy = by + bh // 2 - 1
 
-    def stat(cx, value, unit, vcol, npx=24, upx=18, g=3):
-        wn = p.text_w(value, px=npx)
-        wu = p.text_w(unit, px=upx)
+    def stat(cx, value, unit, vcol, npx=18, upx=17, g=3):
+        value_font = p.sans(npx, bold=True)
+        unit_font = p.sans(upx)
+        wn = p.text_w(value, font=value_font)
+        wu = p.text_w(unit, font=unit_font)
         gx = cx - (wn + g + wu) / 2
         p.set_datum(ML); p.set_color(vcol)
-        p.draw_string(value, int(gx), cy, px=npx)
+        p.draw_string(value, int(gx), cy, font=value_font)
         p.set_datum(ML); p.set_color(DIM)
-        p.draw_string(unit, int(gx + wn + g), cy, px=upx)
+        p.draw_string(unit, int(gx + wn + g), cy, font=unit_font)
 
     stat((bx + midx) // 2, "%.1f" % s.voltage, "V", batt_color(s.batt_pct))
     stat((midx + bx + bw) // 2, str(s.watts), "W", watt_color(s.watts))
@@ -335,6 +352,12 @@ def draw_page_dash(p, s):
         pw = p.text_w(pstr)
         p.set_datum(TR); p.set_color(WHITE)
         p.draw_string("%d°C" % t, int(158 - pw - 4), ry)
+        bar_x, bar_y, bar_w = 8, ry + 11, 154
+        fill_w = max(0, min(bar_w, bar_w * pct // 100))
+        bar_c = YELLOW if pct < 70 else GREEN
+        p.hline(bar_x, bar_y, bar_w, BORDER)
+        if fill_w:
+            p.hline(bar_x, bar_y, fill_w, bar_c)
         ry += 16
 
     # -- RANGE card (y 198..268) --------------------------------------------
@@ -439,9 +462,10 @@ def draw_fault_banner(p, s):
 def draw_crit_overlay(p, s):
     p.fill_rect(8, 108, W - 16, 92, RED)
     p.set_datum(MC); p.set_color(WHITE)
-    p.draw_string("LOW BATTERY", W // 2, 126, px=24)
-    p.draw_string("STOP & CHARGE", W // 2, 158)
-    p.draw_string("%d%%   %.1f V" % (s.batt_pct, s.voltage), W // 2, 182)
+    alert_font = p.sans(15, bold=True)
+    p.draw_string("LOW BATTERY", W // 2, 125, font=alert_font)
+    p.draw_string("STOP & CHARGE", W // 2, 157, font=alert_font)
+    p.draw_string("%d%%   %.1f V" % (s.batt_pct, s.voltage), W // 2, 181, font=alert_font)
 
 
 def draw_toast(p, msg):
@@ -584,6 +608,7 @@ def main():
             draw_toast(p, a.toast)
     p.save(a.out)
     print("wrote", a.out, "(%dx%d logical, x%d)" % (W, H, SCALE))
+    print("note: Wokwi screenshots may be mirrored/rotated relative to this logical preview")
 
 
 if __name__ == "__main__":

@@ -102,7 +102,7 @@ Critical rule: never allow dashboard polling and bridge forwarding to run at the
 Current bridge controls:
 * Hold both buttons for about 2 seconds to enter bridge mode.
 * Hold both buttons again for about 2 seconds to exit bridge mode.
-* Entry is blocked if `currentSpeedKmh > 1.0`; stop the board first.
+* Entry is blocked if `currentSpeedKmh > 1.0` during live telemetry; stop the board first. Demo/simulated telemetry does not block bridge entry.
 * Bridge AP: `ESK8-BRIDGE`
 * Bridge password: `esk8bridge`
 * TCP endpoint: `192.168.4.1:65102`

@@ -5,6 +5,7 @@
 #ifndef WOKWI_SIMULATION
 #include <VescUart.h>
 #endif
+#include "BebasNeue80.h"
 
 // ==========================================
 // USER CONFIG  — edit these to personalize
@@ -446,19 +447,19 @@ void drawSpeedReadout(int spdInt, bool clearZone) {
         GFX->fillRect(X0, 17, UI_W, 73, COL_BG);
     }
 
-    // Value: big numeric hero font (48 px, normal numerals — not 7-seg),
-    // vertically centered so it fills the speed band without overflowing it.
+    // Value: tall Bebas Neue hero number. Digits are 58 px high, so they fill
+    // the 73 px speed band without the overflow caused by scaled FreeSans.
     GFX->setTextColor(COL_WHITE);
-    GFX->setFont(&fonts::Font6);
-    GFX->setTextDatum(MC_DATUM);
-    GFX->drawString(String(spdInt), X0 + 96, 53);
+    GFX->setFont(&BebasNeue80pt7b);
+    GFX->setTextDatum(TC_DATUM);
+    GFX->drawString(String(spdInt), X0 + 96, 17);
 
-    // Unit: upper-left, top-aligned under the status bar. This is static
-    // page chrome and must appear even before the first successful VESC poll.
-    GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
+    // Unit: one step smaller than the old 12pt label so double-digit speeds do
+    // not collide with KM/H while the label still reads as dashboard chrome.
+    GFX->setFont(&fonts::FreeSansBold9pt7b);
     GFX->setTextDatum(TL_DATUM);
     GFX->setTextColor(COL_LABEL);
-    GFX->drawString(useMph ? "MPH" : "KM/H", X0 + 10, 28);
+    GFX->drawString(useMph ? "MPH" : "KM/H", X0 + 10, 27);
 }
 
 // ── PAGE 0: DASHBOARD static chrome ──
@@ -730,6 +731,16 @@ void drawTempRow(int y, float temp, int pct, bool hot) {
 
     GFX->setTextColor(hot ? COL_RED : COL_WHITE);
     GFX->drawString(tstr, X0 + 158 - pw - 4, y);
+
+    int barX = X0 + 8;
+    int barY = y + 11;
+    int barW = 154;
+    int fillW = constrain((barW * pct) / 100, 0, barW);
+    uint16_t c = hot ? COL_RED : (pct < 70 ? COL_YELLOW : COL_GREEN);
+    GFX->drawFastHLine(barX, barY, barW, COL_BORDER);
+    if (fillW > 0) {
+        GFX->drawFastHLine(barX, barY, fillW, c);
+    }
 }
 
 // ==========================================
@@ -812,7 +823,10 @@ void updateBatteryCells() {
             int cx = cellStartX + i * (cellW + cellGap);
             GFX->fillRect(cx + 1, 277, cellW - 2, cellH - 2, COL_BG); // Clear
             if (i < filled) {
-                GFX->fillRect(cx + 1, 277, cellW - 2, cellH - 2, battColor(currentBatteryPercent));
+                uint16_t c = battColor(currentBatteryPercent);
+                GFX->fillRect(cx + 1, 277, cellW - 2, cellH - 2, c);
+            } else {
+                GFX->drawFastHLine(cx + 2, 286, cellW - 4, COL_BORDER);
             }
         }
         lastPct = currentBatteryPercent;
@@ -1048,12 +1062,16 @@ void updateOverlays(int state) {
         GFX->fillRect(X0 + 8, by, UI_W - 16, bh, COL_RED);
         GFX->setTextDatum(MC_DATUM);
         GFX->setTextColor(COL_WHITE);
-        GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
-        GFX->drawString(line1, X0 + UI_W / 2, by + (crit ? 18 : 16));
-        GFX->setFont(&fonts::Font0);
-        GFX->drawString(line2, X0 + UI_W / 2, by + (crit ? 50 : 48));
         if (crit) {
-            GFX->drawString(line3, X0 + UI_W / 2, by + 74);
+            GFX->setFont(&fonts::FreeSansBold9pt7b);
+            GFX->drawString(line1, X0 + UI_W / 2, by + 17);
+            GFX->drawString(line2, X0 + UI_W / 2, by + 49);
+            GFX->drawString(line3, X0 + UI_W / 2, by + 73);
+        } else {
+            GFX->setFreeFont(&fonts::FreeSansBold12pt7b);
+            GFX->drawString(line1, X0 + UI_W / 2, by + 16);
+            GFX->setFont(&fonts::Font0);
+            GFX->drawString(line2, X0 + UI_W / 2, by + 48);
         }
         lastText = textKey;
         markDirty(by, bh);
@@ -1454,7 +1472,7 @@ void bridgeLoop() {
 }
 
 void enterBridgeMode() {
-    if (currentSpeedKmh > 1.0) {                 // safety: only when stopped
+    if (!DEMO_DATA && currentSpeedKmh > 1.0) {   // live safety: only when stopped
         GFX->fillRect(X0 + 8, 140, UI_W - 16, 40, COL_RED);
         GFX->setTextDatum(MC_DATUM);
         GFX->setTextColor(COL_WHITE);

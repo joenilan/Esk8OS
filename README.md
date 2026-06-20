@@ -46,7 +46,8 @@ Cycle with a short Left press:
 - Right short press: toggle MPH/KM-H, or cycle wheel profile on the Settings page
 - Both buttons held for about 2 seconds: enter/exit VESC bridge mode
 
-Bridge entry is blocked while speed is above 1 km/h. Stop the board first.
+Bridge entry is blocked during live telemetry while speed is above 1 km/h.
+Stop the board first. Demo/simulated telemetry does not block bridge entry.
 
 ## VESC Tool bridge mode
 

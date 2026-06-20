@@ -8,7 +8,7 @@
 #else
 #define PROGMEM
 #endif
-#include <Fonts/GFXFF/gfxfont.h>
+#include <lgfx/v1/lgfx_fonts.hpp>
 
 const uint8_t BebasNeue80pt7bBitmaps[] PROGMEM = {
     0x0F, 0xF8, 0x07, 0xFC, 0x03, 0xFE, 0x01, 0xFF, 0x00, 0xFF, 0x80, 0x7F,
