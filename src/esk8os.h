@@ -48,8 +48,43 @@ extern float         currentSpeedKmh;
 extern unsigned long lastVescOkMs;
 extern bool          gRedrawAll;
 
+// ---- branding (defined in main.cpp; external linkage const char*) ------------
+extern const char* PRODUCT_NAME;
+extern const char* RIDER_NAME;
+
+// ---- shared compile-time UI constants ---------------------------------------
+// Battery warning thresholds over the configured usable pack window (display
+// treats 0% as "stop riding", not absolute empty).
+const int   BATT_WARN_PCT = 50;          // below -> yellow
+const int   BATT_LOW_PCT  = 30;          // below -> orange
+const int   BATT_CRIT_PCT = 15;          // below -> red (stop / charge now)
+// Over-temp alert thresholds (deg C): past these the temp turns red + banner.
+const float MOTOR_TEMP_LIMIT = 80.0;
+const float ESC_TEMP_LIMIT   = 80.0;
+// Degree symbol in the GLCD font (LovyanGFX Font0, CP437): 0xF8.
+const char  DEG = (char)0xF8;
+
+// ---- settings page rows (cursor index -> SET_*; used by ui + checkButtons) ---
+enum { SET_PROFILE, SET_UNITS, SET_DEMO, SET_BRIGHT, SET_CELLS, SET_PACK_AH,
+       SET_STOP_CELL, SET_WHMI, SETTINGS_COUNT };
+
+// ---- UI runtime state (defined in main.cpp) ---------------------------------
+extern bool useMph;
+extern int  gBrightnessPct;
+extern int  settingsCursor;
+extern int  motorHealthPct, batteryHealthPct, escHealthPct;
+extern unsigned long gToastUntil;
+extern char gToastMsg[];
+
+// ---- canvas / diagnostics (defined in main.cpp) -----------------------------
+extern int           gCanvasH;       // canvas height (dirty-band clamp)
+extern uint16_t      gFps;           // frames pushed in the last second
+extern unsigned long gLastPushUs;    // duration of the last blit
+extern bool          gCanvasPsram;   // true if the frame buffer landed in PSRAM
+
 // ---- shared helpers (defined in main.cpp) -----------------------------------
 void pushCanvasFull();
+void markDirty(int y, int h);
 void drawStaticFrame();
 void saveOdo();
 
@@ -68,6 +103,17 @@ extern int   BATTERY_CELLS_COUNT;
 extern float BATTERY_MAX_V;
 extern float BATTERY_MIN_V;
 void recalcBatteryBounds();
+
+// ---- wheel/gearing profiles (display speed/distance math only; NOT VESC) -----
+struct WheelProfile {
+    const char* name;
+    float wheelDiameterM;
+    int   motorPulley;
+    int   wheelPulley;
+    float polePairs;
+};
+extern WheelProfile wheelProfiles[];
+extern int          activeWheelProfile;   // loaded from NVS in setup()
 
 // ---- wheel profile accessors (defined in main) ------------------------------
 float profileGearRatio();
