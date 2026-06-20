@@ -16,19 +16,22 @@ const char* FW_VERSION   = "v3.2";       // firmware version string
 const bool  USE_MPH_DEFAULT = true;      // true = MPH, false = KM/H at boot
 const int   STORAGE_SCHEMA_VERSION = 2;  // bump once to clear old demo trip/odo
 
-// DEMO_MODE feeds simulated telemetry even on the physical board, so you can
-// bench-test the UI on the device without the FSESC connected. Set false once
-// it's wired to the VESC to read real data.
-// TEMPORARY: re-enabled while the Flipsky Dual FSESC 6.7 Plus is out for
-// replacement — flip back to false once the new ESC is wired in.
-const bool  DEMO_MODE = true;
+// Demo mode feeds simulated telemetry even on the physical board, so you can
+// bench-test the UI on the device without the FSESC connected. This is now a
+// RUNTIME setting (persisted in NVS) you toggle from the Settings page — no
+// reflashing to switch between demo and live. DEMO_MODE_DEFAULT is the value
+// used on first boot / after a settings wipe.
+// TEMPORARY: defaulted ON while the Flipsky Dual FSESC 6.7 Plus is out for
+// replacement — set the default false once the new ESC is wired in.
+const bool DEMO_MODE_DEFAULT = true;
+bool gDemoMode = DEMO_MODE_DEFAULT;   // loaded from NVS in setup(); edited in Settings
 
-// True when telemetry is simulated — the Wokwi build, or DEMO_MODE on hardware.
-// Gates demo-only conveniences (fast range learn-in, the recharge gesture).
+// True when telemetry is simulated — the Wokwi build (always), or gDemoMode on
+// hardware. Gates demo-only conveniences (fast range learn-in, recharge gesture).
 #if defined(WOKWI_SIMULATION)
-const bool  DEMO_DATA = true;
+  #define DEMO_DATA true
 #else
-const bool  DEMO_DATA = DEMO_MODE;
+  #define DEMO_DATA gDemoMode
 #endif
 
 // Battery warning thresholds over the configured usable pack window. The display
@@ -246,6 +249,18 @@ int   escHealthPct = 75;
 bool useMph = USE_MPH_DEFAULT;
 unsigned long lastDataPoll = 0;
 
+// Display backlight, persisted, edited from the Settings page. Stepped through a
+// few fixed levels so it's adjustable with one button.
+int gBrightnessPct = 100;
+const int BRIGHTNESS_STEPS[] = { 25, 50, 75, 100 };
+const int BRIGHTNESS_STEP_COUNT = sizeof(BRIGHTNESS_STEPS) / sizeof(BRIGHTNESS_STEPS[0]);
+void applyBrightness() { tft.setBrightness((uint8_t)(gBrightnessPct * 255 / 100)); }
+
+// Settings page is an editable menu: a cursor selects a row, RIGHT changes its
+// value. Indices map to SET_* below (kept here so new settings are easy to add).
+enum { SET_PROFILE, SET_UNITS, SET_DEMO, SET_BRIGHT, SETTINGS_COUNT };
+int settingsCursor = 0;
+
 void updateRangeEstimate();
 
 // ==========================================
@@ -416,7 +431,7 @@ void waitForBootReady() {
     drawBootProgress(60, "UART READY", COL_DIM);
     delay(150);
 
-    if (DEMO_MODE) {
+    if (gDemoMode) {
         drawBootProgress(100, "DEMO TELEMETRY", COL_ACCENT);
         delay(500);
         return;
@@ -531,22 +546,37 @@ void drawStaticTrip() {
 }
 
 // ── PAGE 3: SETTINGS static chrome ──
+// An editable settings row label: highlighted in the accent with a ">" cursor
+// when it's the selected row, otherwise a plain dim label like the others.
+void drawSettingLabel(const char* label, int y, int idx) {
+    bool sel = (settingsCursor == idx);
+    GFX->setFont(&fonts::Font0);
+    GFX->setTextDatum(TL_DATUM);
+    if (sel) {
+        GFX->setTextColor(COL_ACCENT);
+        GFX->drawString(">", X0 + 4, y);
+    }
+    GFX->setTextColor(sel ? COL_ACCENT : COL_DIM);
+    GFX->drawString(label, X0 + 12, y);
+}
+
 void drawStaticSettings() {
     drawCard(4, 22, 162, 82, "WHEEL PROFILE");
-    drawRowLabel("PROFILE",  40);
+    drawSettingLabel("PROFILE", 40, SET_PROFILE);
     drawRowLabel("DIAMETER", 56);
     drawRowLabel("GEARING",  72);
     drawRowLabel("POLES",    88);
 
-    drawCard(4, 110, 162, 54, "DISPLAY");
-    drawRowLabel("UNITS", 128);
-    drawRowLabel("DEMO",  144);
+    drawCard(4, 110, 162, 70, "DISPLAY");
+    drawSettingLabel("UNITS",      128, SET_UNITS);
+    drawSettingLabel("DEMO",       144, SET_DEMO);
+    drawSettingLabel("BRIGHTNESS", 160, SET_BRIGHT);
 
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
-    GFX->drawString("R: change wheel", X0 + UI_W / 2, 176);
-    GFX->drawString("hold L+R: bridge", X0 + UI_W / 2, 190);
+    GFX->drawString("L: select   R: change", X0 + UI_W / 2, 192);
+    GFX->drawString("hold L+R: bridge",      X0 + UI_W / 2, 204);
 }
 
 // Human-readable last-reset cause for the SYSTEM page.
@@ -954,8 +984,9 @@ void updateSettings() {
     drawVal(72,  String(w.motorPulley) + ":" + String(w.wheelPulley), COL_WHITE);
     drawVal(88,  String((int)w.polePairs), COL_WHITE);
     drawVal(128, String(useMph ? "MPH" : "KM/H"), COL_WHITE);
-    drawVal(144, String(DEMO_MODE ? "ON" : "OFF"), DEMO_MODE ? COL_YELLOW : COL_WHITE);
-    markDirty(22, 142);
+    drawVal(144, String(gDemoMode ? "ON" : "OFF"), gDemoMode ? COL_YELLOW : COL_WHITE);
+    drawVal(160, String(gBrightnessPct) + "%", COL_WHITE);
+    markDirty(22, 160);
 }
 
 // ==========================================
@@ -1109,6 +1140,11 @@ void setup() {
     activeWheelProfile = prefs.getInt("wheelprof", 0);
     if (activeWheelProfile < 0 || activeWheelProfile >= WHEEL_PROFILE_COUNT) activeWheelProfile = 0;
 
+    // Restore Settings-page preferences (editable at runtime, persisted in NVS).
+    gDemoMode      = prefs.getBool("demo", DEMO_MODE_DEFAULT);
+    useMph         = prefs.getBool("mph", USE_MPH_DEFAULT);
+    gBrightnessPct = constrain(prefs.getInt("bright", 100), 10, 100);
+
     rideStartMs = millis();
     sessionTripStartKm = tripDistanceKm;
 
@@ -1165,7 +1201,7 @@ void setup() {
     #ifndef WOKWI_SIMULATION
     Serial1.begin(115200, SERIAL_8N1, VESC_RX_PIN, VESC_TX_PIN);
     UART.setSerialPort(&Serial1);
-    tft.setBrightness(255);
+    applyBrightness();          // light up at the persisted brightness level
     #endif
 
     waitForBootReady();
@@ -1187,7 +1223,7 @@ void saveOdo() {
     prefs.putFloat("trip", tripDistanceKm);
 }
 
-// Fake telemetry for bench testing (Wokwi or DEMO_MODE on hardware). Drives the
+// Fake telemetry for bench testing (Wokwi or gDemoMode on hardware). Drives the
 // SAME state a real VESC poll would: a speed ramp, load-proportional draw with
 // regen on braking, integrated energy (Wh used/regen), and first-order thermal
 // models for motor/ESC/battery — so every page animates as if wired to the ESC.
@@ -1290,7 +1326,7 @@ void updateRangeEstimate() {
 void pollVescData() {
     bool useSim = true;
     #ifndef WOKWI_SIMULATION
-    useSim = DEMO_MODE;
+    useSim = gDemoMode;
     if (!useSim && UART.getVescValues()) {
         float wheelRPM = (UART.data.rpm / profilePolePairs()) * profileGearRatio();
         currentSpeedKmh = (wheelRPM * profileCircumfM() * 60.0) / 1000.0;
@@ -1574,20 +1610,52 @@ void checkButtons() {
             showToast(DEMO_DATA ? "RECHARGED" : "TRIP RESET");
         }
     } else if (lastLeftBtn == LOW && !leftHandled && millis() - leftDownAt > 30) {
-        currentPage = (currentPage + 1) % PAGE_COUNT;        // short press: next page
-        drawStaticFrame();
-        gRedrawAll = true;
+        // Short press. On the Settings page LEFT steps the cursor down through the
+        // editable rows, then leaves to the next page after the last one.
+        if (currentPage == 3 && settingsCursor < SETTINGS_COUNT - 1) {
+            settingsCursor++;
+            drawStaticFrame();                               // move the highlight
+            gRedrawAll = true;
+        } else {
+            settingsCursor = 0;
+            currentPage = (currentPage + 1) % PAGE_COUNT;    // next page
+            drawStaticFrame();
+            gRedrawAll = true;
+        }
     }
     lastLeftBtn = left;
 
-    // RIGHT button: on Settings page cycles wheel profile, else toggles units
+    // RIGHT button: on the Settings page edits the highlighted setting; on any
+    // other page it toggles units (the common quick action).
     if (right == LOW && lastRightBtn == HIGH && millis() - lastRightPress > 200) {
         if (currentPage == 3) {
-            activeWheelProfile = (activeWheelProfile + 1) % WHEEL_PROFILE_COUNT;
-            prefs.putInt("wheelprof", activeWheelProfile);
-            gRedrawAll = true;             // refresh settings values
+            switch (settingsCursor) {
+                case SET_PROFILE:
+                    activeWheelProfile = (activeWheelProfile + 1) % WHEEL_PROFILE_COUNT;
+                    prefs.putInt("wheelprof", activeWheelProfile);
+                    break;
+                case SET_UNITS:
+                    useMph = !useMph;
+                    prefs.putBool("mph", useMph);
+                    break;
+                case SET_DEMO:
+                    gDemoMode = !gDemoMode;
+                    prefs.putBool("demo", gDemoMode);
+                    rideEnergyBaselineSet = false;   // re-baseline energy on the source switch
+                    break;
+                case SET_BRIGHT: {
+                    int i = 0;
+                    while (i < BRIGHTNESS_STEP_COUNT && BRIGHTNESS_STEPS[i] != gBrightnessPct) i++;
+                    gBrightnessPct = BRIGHTNESS_STEPS[(i + 1) % BRIGHTNESS_STEP_COUNT];
+                    prefs.putInt("bright", gBrightnessPct);
+                    applyBrightness();
+                    break;
+                }
+            }
+            gRedrawAll = true;                 // refresh the settings values
         } else {
             useMph = !useMph;
+            prefs.putBool("mph", useMph);
             drawStaticFrame();
             gRedrawAll = true;
         }

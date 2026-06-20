@@ -34,17 +34,25 @@ Cycle with a short Left press:
 2. **Power** — motor/battery amps, duty, peak watts, energy used/regen, max/avg
    speed, plus a session card (max power, min voltage)
 3. **Trip** — trip time/distance/avg/max/efficiency and the odometer
-4. **Settings** — wheel profile, units, demo flag
+4. **Settings** — an editable menu: wheel profile, units, demo on/off, and
+   display brightness. All settings persist in flash.
 5. **System** — live ESP32 stats: chip, firmware usage, free/min heap, PSRAM,
    internal temperature, uptime, refresh rate (FPS), and last reset cause
 
 ## Controls
 
-- Left short press: next page
+- Left short press: next page. On the **Settings** page it instead steps the
+  highlighted cursor down through the editable rows, then leaves to the next
+  page after the last one.
 - Left hold: reset trip (in demo mode this also recharges the pack and clears
   temps, so a bench session can run indefinitely)
-- Right short press: toggle MPH/KM-H, or cycle wheel profile on the Settings page
+- Right short press: toggle MPH/KM-H. On the **Settings** page it changes the
+  highlighted setting (cycle wheel profile, toggle units, toggle demo, or step
+  brightness).
 - Both buttons held for about 2 seconds: enter/exit VESC bridge mode
+
+Demo mode is now a runtime setting — toggle it from the Settings page instead of
+reflashing. It persists across reboots.
 
 Bridge entry is blocked during live telemetry while speed is above 1 km/h.
 Stop the board first. Demo/simulated telemetry does not block bridge entry.
@@ -70,7 +78,7 @@ VESC Tool owns the UART during that session.
 
 ## Data sources
 
-With `DEMO_MODE = false`, speed, voltage, ESC temp, motor temp, current, duty,
+With demo mode **off**, speed, voltage, ESC temp, motor temp, current, duty,
 Wh used, regen Wh, watts, and VESC faults come from the FSESC when dashboard
 mode is active.
 
@@ -79,12 +87,13 @@ saved in flash. Range estimates and health percentages are currently placeholder
 until those models/sensors are implemented. Battery temperature comes from the
 VESC only if a sensor is wired; otherwise it reads as a placeholder.
 
-With `DEMO_MODE = true` (or the Wokwi build), the full telemetry set is
+With demo mode **on** (or the Wokwi build), the full telemetry set is
 simulated — including load-proportional current with regen braking, integrated
 Wh, and thermal models for motor/ESC/battery — so every page animates without an
 ESC connected. Demo mode also shortens the range learn-in so the estimate moves
-on the bench. **This repo currently ships with `DEMO_MODE = true`** so it runs
-out of the box; set it to `false` once your VESC is wired in.
+on the bench. **This repo currently ships with demo mode on** so it runs out of
+the box; turn it off from the Settings page once your VESC is wired in (it's a
+runtime toggle now, persisted in flash — no reflashing needed).
 
 ## Build & flash
 
@@ -129,8 +138,9 @@ python preview.py --kmh      # metric units
 Rider name, product name, version, and default units live in the `USER CONFIG`
 block at the top of `src/main.cpp`.
 
-`DEMO_MODE` should be `false` for live FSESC telemetry. Set it to `true` only
-when bench-testing the UI without the FSESC connected.
+Demo mode is a runtime setting (toggle it on the Settings page); use it for
+bench-testing the UI without the FSESC connected, and turn it off for live
+telemetry. The first-boot default is `DEMO_MODE_DEFAULT` in that same block.
 
 Battery/range assumptions are also in `USER CONFIG`. The current default is a
 10S6P pack with 2800 mAh nominal cells and `BATTERY_EFFECTIVE_CAPACITY_AH =

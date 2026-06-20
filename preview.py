@@ -182,12 +182,14 @@ class State:
     # page-1 SESSION card
     max_watts = 1320
     min_voltage = 36.4
-    # page-3 wheel profile
+    # page-3 wheel profile + editable settings
     wheel_name = "8IN PNEU"
     wheel_diam_mm = 203
     motor_pulley = 16
     wheel_pulley = 72
     poles = 7
+    brightness = 100
+    settings_cursor = 2   # which editable row is highlighted (0 prof,1 units,2 demo,3 bright)
     # page-4 system (host-side mocks of the ESP32 stats)
     chip = "ESP32-S3"
     cores = 2
@@ -415,19 +417,30 @@ def draw_page_trip(p, s):
 
 
 def draw_page_settings(p, s):
-    card(p, "WHEEL PROFILE", 4, 22, 162, 82)
-    list_rows(p, [("PROFILE", s.wheel_name),
-                  ("DIAMETER", "%dmm" % s.wheel_diam_mm),
-                  ("GEARING", "%d:%d" % (s.motor_pulley, s.wheel_pulley)),
-                  ("POLES", "%d" % s.poles)], 40)
+    # editable rows highlighted in the accent with a ">" cursor when selected
+    def slabel(text, y, idx):
+        sel = (s.settings_cursor == idx)
+        if sel:
+            p.set_datum(TL); p.set_color(ACCENT); p.draw_string(">", 4, y)
+        p.set_datum(TL); p.set_color(ACCENT if sel else DIM); p.draw_string(text, 12, y)
 
-    card(p, "DISPLAY", 4, 110, 162, 54)
-    row(p, "UNITS", "MPH" if s.use_mph else "KM/H", 128)
-    row(p, "DEMO", "ON" if s.demo else "OFF", 144, YELLOW if s.demo else WHITE)
+    def value(val, y, vcol=WHITE):
+        p.set_datum(TR); p.set_color(vcol); p.draw_string(val, 158, y)
+
+    card(p, "WHEEL PROFILE", 4, 22, 162, 82)
+    slabel("PROFILE", 40, 0); value(s.wheel_name, 40)
+    list_rows(p, [("DIAMETER", "%dmm" % s.wheel_diam_mm),
+                  ("GEARING", "%d:%d" % (s.motor_pulley, s.wheel_pulley)),
+                  ("POLES", "%d" % s.poles)], 56)
+
+    card(p, "DISPLAY", 4, 110, 162, 70)
+    slabel("UNITS", 128, 1);      value("MPH" if s.use_mph else "KM/H", 128)
+    slabel("DEMO", 144, 2);       value("ON" if s.demo else "OFF", 144, YELLOW if s.demo else WHITE)
+    slabel("BRIGHTNESS", 160, 3); value("%d%%" % s.brightness, 160)
 
     p.set_datum(MC); p.set_color(DIM)
-    p.draw_string("R: change wheel", W // 2, 176)
-    p.draw_string("hold L+R: bridge", W // 2, 190)
+    p.draw_string("L: select   R: change", W // 2, 192)
+    p.draw_string("hold L+R: bridge", W // 2, 204)
 
 
 def draw_page_system(p, s):
