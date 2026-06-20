@@ -9,6 +9,8 @@
 #include "telemetry.h"     // VESC poll / demo sim / range / history / ride logs
 #include "ble_bridge.h"    // BLE (Nordic UART) backend for mobile VESC Tool
 #include "ui.h"            // boot splash, pages, status bars, overlays
+#include "ridelog.h"       // detailed per-second ride logging to LittleFS
+#include "console.h"       // USB-serial command console (log mgmt + diagnostics)
 
 // ==========================================
 // USER CONFIG  — edit these to personalize
@@ -293,6 +295,7 @@ void setup() {
 
     // Restore persisted odometer + trip
     prefs.begin("esk8os", false);
+    ridelogBegin();             // mount LittleFS for detailed ride logging
     int storedSchema = prefs.getInt("schema", 0);
     if (storedSchema != STORAGE_SCHEMA_VERSION) {
         totalDistanceKm = 0.0;
@@ -391,6 +394,8 @@ void setup() {
     updateBottomBar();
     pushCanvasFull();       // first complete frame -> panel
     gRedrawAll = false;
+
+    ridelogStartRide();     // open the CSV for this ride session
 }
 
 // ==========================================
@@ -460,6 +465,7 @@ void checkButtons() {
                 peakWatts = 0;
             }
             saveOdo();
+            ridelogStartRide();   // close the ended ride's CSV, begin a new one
             leftHandled = true;
             drawStaticFrame();
             gRedrawAll = true;
@@ -557,6 +563,7 @@ void dashboardLoop() {
     if (now - lastDataPoll > 100) {
         pollVescData();
         recordHistorySample();
+        ridelogTick();          // append a 1 Hz CSV sample while moving
         lastDataPoll = now;
     }
 
@@ -606,6 +613,7 @@ void dashboardLoop() {
 }
 
 void loop() {
+    consolePoll();      // serve serial commands (log mgmt) in any mode
     checkButtons();
 
     if (systemMode == MODE_VESC_BRIDGE) {

@@ -1,6 +1,7 @@
 #include "esk8os.h"        // shared core: types, enums, cross-module globals
 #include "ui.h"            // public UI entry points used by main.cpp
 #include "telemetry.h"     // getHistorySample() for the graph pages
+#include "ridelog.h"       // detailed-log status for the LOGS page warning
 #include "BebasNeue80.h"   // hero speed number (DASH page)
 #include "BebasNeue110.h"  // native crisp hero font for the Big HUD speed
 // FW_VERSION / FW_VERSION_FULL are stamped into version.h by the pre-build hook
@@ -630,6 +631,25 @@ static void drawStaticLogs() {
     GFX->drawString("saved on trip reset", X0 + UI_W / 2, 268);
 }
 
+// Detailed-log (LittleFS) status line at the bottom of the LOGS list: a low-space
+// failsafe warning, the off state, or free space. Drawn inside the cleared list
+// band so updateLogs()'s markDirty(40,210) covers it.
+static void drawLogStatus(int y) {
+    GFX->setFont(&fonts::Font0);
+    GFX->setTextDatum(MC_DATUM);
+    if (ridelogFull()) {
+        GFX->setTextColor(COL_RED);
+        GFX->drawString("! LOG STORAGE FULL", X0 + UI_W / 2, y);
+    } else if (!ridelogEnabled()) {
+        GFX->setTextColor(COL_YELLOW);
+        GFX->drawString("DETAIL LOGGING OFF", X0 + UI_W / 2, y);
+    } else {
+        GFX->setTextColor(COL_DIM);
+        GFX->drawString("log: " + String(ridelogFreeBytes() / 1024) + " KB free", X0 + UI_W / 2, y);
+    }
+    GFX->setTextDatum(TL_DATUM);   // restore for any following list draws
+}
+
 static void updateLogs() {
     static unsigned long lastMs = 0;
     if (!gRedrawAll && millis() - lastMs < 1000) return;
@@ -646,6 +666,7 @@ static void updateLogs() {
     if (count == 0) {
         GFX->setTextColor(COL_DIM);
         GFX->drawString("No saved rides yet.", X0 + 14, 48);
+        drawLogStatus(236);
         markDirty(40, 210);
         return;
     }
@@ -681,6 +702,7 @@ static void updateLogs() {
                         "  " + String((int)round(log.maxWatts)) + "W", X0 + 12, y + 24);
     }
 
+    drawLogStatus(236);
     markDirty(40, 210);
 }
 
