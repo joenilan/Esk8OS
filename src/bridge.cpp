@@ -1,18 +1,17 @@
 #include "bridge.h"
 #include "esk8os.h"
+#include "wifi_bridge.h"
 #include "ble_bridge.h"
-#include <WiFi.h>
 
-// VESC Tool WiFi-TCP bridge state. Forwards raw bytes between a TCP client
-// (desktop VESC Tool > TCP connection) and Serial1 (the ESC UART).
-static WiFiServer    bridgeServer(65102);
-static WiFiClient    bridgeClient;
-static const char*   BRIDGE_SSID     = "ESK8-BRIDGE";
-static const char*   BRIDGE_PASS     = "esk8bridge";   // must be >= 8 chars
-static const char*   BRIDGE_BLE_NAME = "ESK8-BLE";     // name mobile VESC Tool scans for
-static String        bridgeStatus    = "WAITING";
-static unsigned long bridgeRxBytes   = 0;   // VESC Tool -> ESC, bytes this session
-static unsigned long bridgeTxBytes   = 0;   // ESC -> VESC Tool, bytes this session
+// VESC Tool BRIDGE MODE coordinator. Bridge mode lets VESC Tool configure the
+// ESC wirelessly through the display. This file owns the mode itself — the
+// on-screen UI and the enter/exit transitions — and orchestrates the transport
+// backends: WiFi-TCP for desktop (wifi_bridge.{h,cpp}) and BLE NUS for mobile
+// (ble_bridge.{h,cpp}). Each loop it pumps both transports, reads the ESC UART
+// once, and fans the reply out to whichever transport(s) are connected.
+
+static const char* BRIDGE_BLE_NAME = "ESK8-BLE";   // name mobile VESC Tool scans for
+static String      bridgeStatus    = "WAITING";
 
 static void updateBridgeStatus(const char* status) {
     bridgeStatus = status;
@@ -35,8 +34,8 @@ static void updateBridgeStats() {
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
-    String s = "RX " + String(bridgeRxBytes / 1024) + "K  TX " + String(bridgeTxBytes / 1024) +
-               "K  STA " + String(WiFi.softAPgetStationNum());
+    String s = "RX " + String(wifiBridgeRxBytes() / 1024) + "K  TX " + String(wifiBridgeTxBytes() / 1024) +
+               "K  STA " + String(wifiBridgeStationNum());
     GFX->drawString(s, X0 + UI_W / 2, 260);
     pushCanvasFull();
 }
@@ -55,12 +54,12 @@ static void drawBridgeScreen() {
 
     GFX->setTextDatum(TL_DATUM);
     GFX->setTextColor(COL_DIM);  GFX->drawString("WiFi:",  X0 + 12, 80);
-    GFX->setTextColor(COL_WHITE); GFX->drawString(BRIDGE_SSID, X0 + 46, 80);
+    GFX->setTextColor(COL_WHITE); GFX->drawString(wifiBridgeSsid(), X0 + 46, 80);
     GFX->setTextColor(COL_DIM);  GFX->drawString("pass:",  X0 + 12, 94);
-    GFX->setTextColor(COL_WHITE); GFX->drawString(BRIDGE_PASS, X0 + 46, 94);
+    GFX->setTextColor(COL_WHITE); GFX->drawString(wifiBridgePass(), X0 + 46, 94);
     GFX->setTextColor(COL_DIM);  GFX->drawString("TCP:",   X0 + 12, 108);
     GFX->setTextColor(COL_WHITE);
-    GFX->drawString(WiFi.softAPIP().toString() + ":65102", X0 + 40, 108);
+    GFX->drawString(wifiBridgeIpPort(), X0 + 40, 108);
     GFX->setTextColor(COL_DIM);  GFX->drawString("BLE:",   X0 + 12, 122);
     GFX->setTextColor(COL_WHITE); GFX->drawString(BRIDGE_BLE_NAME, X0 + 40, 122);
 
@@ -77,55 +76,33 @@ static void drawBridgeScreen() {
 }
 
 static void bridgeStart() {
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(BRIDGE_SSID, BRIDGE_PASS);
-    bridgeServer.begin();
-    bridgeServer.setNoDelay(true);
     bridgeStatus = "WAITING";
-    bridgeRxBytes = 0;
-    bridgeTxBytes = 0;
+    wifiBridgeStart();
     // Also advertise the BLE (Nordic UART) backend for mobile VESC Tool. No-op
     // on builds without BLE_BRIDGE_ENABLED. Runs alongside the WiFi backend.
     bleBridgeStart(BRIDGE_BLE_NAME);
 }
 
 static void bridgeStop() {
-    if (bridgeClient) bridgeClient.stop();
-    bridgeServer.end();
-    WiFi.softAPdisconnect(true);
-    WiFi.mode(WIFI_OFF);
+    wifiBridgeStop();
     bleBridgeStop();
 }
 
-// Raw byte forwarding between the TCP client (VESC Tool) and Serial1 (FSESC).
+// Pump both transports + fan ESC replies out to whichever are connected.
 void bridgeLoop() {
-    if (!bridgeClient || !bridgeClient.connected()) {
-        WiFiClient nc = bridgeServer.available();
-        if (nc) { bridgeClient = nc; updateBridgeStatus("CONNECTED"); }
-    }
+    bool traffic = wifiBridgePoll();    // accept clients + app->ESC (WiFi)
 
-    uint8_t buf[256];
-    bool traffic = false;
-
-    // app -> ESC (WiFi). The BLE app->ESC path runs in the BLE write callback.
-    if (bridgeClient && bridgeClient.connected()) {
-        int n = bridgeClient.available();
-        if (n > 0) {
-            if (n > (int)sizeof(buf)) n = sizeof(buf);
-            int r = bridgeClient.read(buf, n);
-            if (r > 0) { Serial1.write(buf, r); bridgeRxBytes += r; traffic = true; }
-        }
-    }
-    // ESC -> app: read the UART once and fan out to whichever backend is live, so
+    // ESC -> app: read the UART once and fan out to every connected transport, so
     // a BLE-only client still gets ESC replies (and we never double-read Serial1).
-    bool wifiConn = bridgeClient && bridgeClient.connected();
-    int sa = Serial1.available();
-    if (sa > 0 && (wifiConn || bleBridgeConnected())) {
+    bool wifiConn = wifiBridgeConnected();
+    if (Serial1.available() > 0 && (wifiConn || bleBridgeConnected())) {
+        uint8_t buf[256];
+        int sa = Serial1.available();
         if (sa > (int)sizeof(buf)) sa = sizeof(buf);
         int r = Serial1.readBytes(buf, sa);
         if (r > 0) {
-            if (wifiConn) { bridgeClient.write(buf, r); bridgeTxBytes += r; }
-            bleBridgeNotify(buf, r);
+            wifiBridgeNotify(buf, r);   // no-ops internally if WiFi not connected
+            bleBridgeNotify(buf, r);    // no-ops internally if BLE not connected
             traffic = true;
         }
     }
@@ -137,7 +114,7 @@ void bridgeLoop() {
         updateBridgeStatus("TRAFFIC");
     }
     static bool wasConn = false;
-    bool nowConn = (bridgeClient && bridgeClient.connected()) || bleBridgeConnected();
+    bool nowConn = wifiBridgeConnected() || bleBridgeConnected();
     if (nowConn && !wasConn) updateBridgeStatus("CONNECTED");
     if (wasConn && !nowConn) updateBridgeStatus("WAITING");
     wasConn = nowConn;
