@@ -29,15 +29,24 @@ VESC UART logic is 3.3V, so no level shifter is expected.
 
 Cycle with a short Left press:
 
-1. **Dashboard** — speed, volts/watts (color-zoned by load), temps, range
+1. **Big HUD** — the default ride screen: huge speed, large battery cells +
+   percent, and watts/volts/range/temp. No footer chrome, so it stays glanceable.
+2. **Dashboard** — speed, volts/watts (color-zoned by load), temps, range
    (remaining distance also shows estimated time left)
-2. **Power** — motor/battery amps, duty, peak watts, energy used/regen, max/avg
+3. **Power** — motor/battery amps, duty, peak watts, energy used/regen, max/avg
    speed, plus a session card (max power, min voltage)
-3. **Trip** — trip time/distance/avg/max/efficiency and the odometer
-4. **Settings** — an editable menu: wheel profile, units, demo on/off, and
-   display brightness. All settings persist in flash.
-5. **System** — live ESP32 stats: chip, firmware usage, free/min heap, PSRAM,
-   internal temperature, uptime, refresh rate (FPS), and last reset cause
+4. **Trip** — trip time/distance/avg/max/efficiency and the odometer
+5. **Settings** — an editable menu: wheel profile, units, demo on/off, display
+   brightness, and battery setup (cells, pack Ah, stop-cell voltage, default
+   Wh/mi). All settings persist in flash. These are display-side only — they do
+   not change VESC cutoffs/limits.
+6. **System** — live ESP32 stats: chip, firmware usage, free/min heap, PSRAM,
+   internal temperature, uptime, refresh rate (FPS), last reset cause, and the
+   firmware version (with git hash)
+7. **Graphs** — four live mini line-graphs (speed, watts, volts, motor temp)
+   over a rolling 3-minute in-RAM history, with trend arrows
+8. **Logs** — the last 10 ride summaries (distance, max speed, Wh/dist, peak
+   watts), saved to flash on each trip reset — not continuously, to spare flash
 
 ## Controls
 
@@ -112,6 +121,31 @@ pio run -e wokwi-simulator                    # build for the simulator
 > Wokwi has no 8-bit-parallel ST7789 support, so the simulator substitutes an
 > SPI ILI9341 at 240×320. The UI is drawn in a centered 170px band, so what you
 > see in that band matches the device.
+
+### Running / updating the Wokwi simulator
+
+`wokwi.toml` points the [Wokwi VS Code extension](https://docs.wokwi.com/vscode/getting-started)
+at `.pio/build/wokwi-simulator/firmware.bin`. To see code changes in the sim you
+must **rebuild that env, then restart the simulation** — the sim loads the
+binary, so it won't update on its own:
+
+```bash
+pio run -e wokwi-simulator     # rebuild the sim binary
+```
+
+Then start/restart Wokwi (Command Palette → “Wokwi: Start Simulator”). Building
+only the `lilygo` env leaves the sim binary stale, so the sim keeps showing old
+code — a common gotcha.
+
+## Versioning
+
+The version is stamped at build time, so every build is traceable. The semantic
+version lives in `version.txt` (`MAJOR.MINOR.PATCH`); bump it as part of each
+meaningful change. A PlatformIO pre-build hook (`scripts/gen_version.py`) reads
+it and writes `src/version.h` (gitignored) with the git short hash, a `-dirty`
+flag when the tree has uncommitted changes, and the build date. The splash and
+top-corner show `FW_VERSION` (e.g. `v0.4.0`); the System page shows
+`FW_VERSION_FULL` (e.g. `v0.4.0 a1b2c3d`).
 
 ## Performance
 
