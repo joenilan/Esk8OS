@@ -1,5 +1,5 @@
 """
-Host-side design preview for the Longboard-Display UI.
+Host-side design preview for the Longboard-Display (ESK8OS) UI.
 
 Renders the dashboard at the EXACT physical resolution of the Lilygo
 T-Display S3 (170x320 portrait) so layout can be iterated without flashing
@@ -11,15 +11,21 @@ stand-in with different orientation behavior than the real ST7789 panel.
 
 It mimics just enough of the LovyanGFX drawing API (datum-based drawString,
 rects, fast h-lines, GFX fonts) that the layout math here can be ported 1:1
-to src/main.cpp. The Bebas GFX font is rasterised from the same
-BebasNeue.ttf at the same pixel sizes the GFX headers were generated at,
-so the hero number matches the device closely.
+to the firmware. The Bebas GFX font is rasterised from the same BebasNeue.ttf
+at the same pixel sizes the GFX headers were generated at, so the hero number
+matches the device closely.
+
+Pages match the firmware PageId enum:
+    0 HUD   1 DASH   2 POWER   3 TRIP   4 SETTINGS   5 SYSTEM   6 GRAPHS   7 LOGS
 
 Usage:  python preview.py                  -> writes preview.png (scaled x3)
-        python preview.py --speed 27 --kmh
-        python preview.py --page 4          -> system info page
-        python preview.py --bridge          -> VESC Tool bridge screen
+        python preview.py --page 6         -> graphs page
+        python preview.py --page 7         -> ride logs page
+        python preview.py --hud            -> Big HUD (same as --page 0)
+        python preview.py --theme ice      -> alternate color theme
+        python preview.py --bridge         -> VESC Tool bridge screen
         python preview.py --splash
+        python preview.py --all             -> dump every page to preview_<name>.png
 """
 import argparse
 from PIL import Image, ImageDraw, ImageFont
@@ -29,21 +35,56 @@ W, H = 170, 320
 SCALE = 3  # upscale factor for the saved PNG (nearest-neighbour, crisp pixels)
 TTF = "BebasNeue.ttf"
 
-# --- NZXT CAM palette (matches main.cpp) ------------------------------------
-BG     = (26, 26, 26)
-BORDER = (68, 68, 68)
-DIM    = (136, 136, 136)
-LABEL  = (170, 170, 170)
-WHITE  = (255, 255, 255)
-GREEN  = (0, 200, 100)
-RED    = (255, 51, 51)
-ACCENT = (185, 80, 215)   # #b950d7 brand violet/purple (magenta-shifted so it reads purple, not blue, on the panel)
-YELLOW = (255, 205, 0)
-ORANGE = (255, 128, 0)
+# --- pages (mirror the firmware PageId enum) --------------------------------
+HUD, DASH, POWER, TRIP, SETTINGS, SYSTEM, GRAPHS, LOGS = range(8)
+PAGE_COUNT = 8
+PAGE_NAMES = ["hud", "dash", "power", "trip", "settings", "system", "graphs", "logs"]
+
+# ---------------------------------------------------------------------------
+# THEMES — a palette table. Adding a theme here is all it takes host-side; the
+# firmware mirrors this idea (ten COL_* globals set in one place), so a device
+# theme is this same table + a Settings row + NVS persist. NOTE for the port:
+# the ST7789 reads blue-leaning purples as blue, so accents must be picked
+# on-device (the "cam" accent is magenta-shifted on purpose).
+# ---------------------------------------------------------------------------
+THEMES = {
+    "cam": {  # shipping look — NZXT CAM violet
+        "bg": (26, 26, 26), "border": (68, 68, 68), "dim": (136, 136, 136),
+        "label": (170, 170, 170), "white": (255, 255, 255), "green": (0, 200, 100),
+        "red": (255, 51, 51), "accent": (185, 80, 215), "yellow": (255, 205, 0),
+        "orange": (255, 128, 0),
+    },
+    "ember": {  # warm — amber/orange accent
+        "bg": (20, 16, 14), "border": (72, 58, 48), "dim": (150, 122, 100),
+        "label": (192, 162, 138), "white": (255, 246, 236), "green": (120, 200, 90),
+        "red": (255, 60, 48), "accent": (255, 140, 40), "yellow": (255, 205, 0),
+        "orange": (255, 120, 0),
+    },
+    "ice": {  # cool — true cyan accent (renders fine on the panel)
+        "bg": (18, 22, 26), "border": (54, 66, 74), "dim": (120, 140, 150),
+        "label": (162, 182, 192), "white": (240, 248, 255), "green": (0, 210, 150),
+        "red": (255, 70, 70), "accent": (0, 200, 230), "yellow": (255, 210, 90),
+        "orange": (255, 140, 40),
+    },
+}
+
+# Palette globals — populated by apply_theme() before any drawing happens.
+BG = BORDER = DIM = LABEL = WHITE = GREEN = RED = ACCENT = YELLOW = ORANGE = (0, 0, 0)
+
+
+def apply_theme(name):
+    global BG, BORDER, DIM, LABEL, WHITE, GREEN, RED, ACCENT, YELLOW, ORANGE
+    t = THEMES.get(name, THEMES["cam"])
+    BG, BORDER, DIM, LABEL = t["bg"], t["border"], t["dim"], t["label"]
+    WHITE, GREEN, RED = t["white"], t["green"], t["red"]
+    ACCENT, YELLOW, ORANGE = t["accent"], t["yellow"], t["orange"]
+
+
+apply_theme("cam")  # default; main() may override from --theme
 
 # Battery warning thresholds (percent). Tune to match your VESC cutoff.
 BATT_WARN = 50   # below this -> yellow
-BATT_LOW  = 30   # below this -> orange
+BATT_LOW = 30    # below this -> orange
 BATT_CRIT = 15   # below this -> red (stop / charge now)
 
 
@@ -125,6 +166,12 @@ class Panel:
     def hline(self, x, y, w, c):
         self.d.line([x, y, x + w - 1, y], fill=c)
 
+    def vline(self, x, y, h, c):
+        self.d.line([x, y, x, y + h - 1], fill=c)
+
+    def line(self, x0, y0, x1, y1, c):
+        self.d.line([x0, y0, x1, y1], fill=c)
+
     # -- text ----------------------------------------------------------------
     def _anchor(self, font):
         # Pillow text anchors: horizontal l/m/r, vertical a(top)/m/s(baseline)
@@ -146,13 +193,13 @@ class Panel:
 
 
 # ---------------------------------------------------------------------------
-# Telemetry sample (matches the mock values in image.png)
+# Telemetry sample (mock values for the preview)
 # ---------------------------------------------------------------------------
 class State:
-    speed = 42
+    speed = 27
     use_mph = True
     product = "ESK8OS"
-    version = "v3.2"
+    version = "v0.5.1"
     rider = "JOE"
     clock = "16:34"
     motor_t, motor_p = 38, 90
@@ -166,11 +213,10 @@ class State:
     odo_km = 615
     trip_km = 12.8
     watts = 540
-    # page system: 0 dash, 1 power, 2 trip, 3 settings, 4 system
-    page = 0
+    page = HUD
     fault = ""        # "" = none, else fault name -> banner
     demo = True       # ships in demo mode (Settings DEMO row + trip hint)
-    # page-1 / page-2 stats
+    # power / trip stats
     motor_amps = 28.4
     batt_amps = 14.2
     duty = 72
@@ -179,32 +225,44 @@ class State:
     max_kmh = 50.0
     avg_kmh = 29.0
     ride_time = "16:34"
-    # page-1 SESSION card
+    # SESSION card
     max_watts = 1320
     min_voltage = 36.4
-    # page-3 wheel profile + editable settings
+    # settings — wheel profile + display + battery (cursor 0..7 -> SET_* enum)
     wheel_name = "8IN PNEU"
     wheel_diam_mm = 203
     motor_pulley = 16
     wheel_pulley = 72
     poles = 7
     brightness = 100
-    settings_cursor = 2   # which editable row is highlighted (0 prof,1 units,2 demo,3 bright)
-    # page-4 system (host-side mocks of the ESP32 stats)
+    settings_cursor = 4   # 0 prof,1 units,2 demo,3 bright,4 cells,5 packAh,6 stopCell,7 whmi
+    cells = 10
+    pack_ah = 16.5
+    stop_cell = 3.30
+    wh_mi = 22
+    batt_min_v = 33.0
+    batt_max_v = 42.0
+    # system (host-side mocks of the ESP32 stats)
     chip = "ESP32-S3"
     cores = 2
     cpu_mhz = 240
-    fw_used = 0.8
+    fw_used = 1.0
     fw_tot = 6.3
-    heap = 168     # ~170 kB free after the 108 kB SRAM canvas
+    heap = 168
     heap_min = 150
     psram = 8100
     mcu_temp = 44.5
     uptime = "00:12:34"
-    fps = 26
-    blit_ms = 38
+    fps = 31
+    blit_ms = 5
     reset = "POWER-ON"
     canvas_psram = False
+    # detail-log (LittleFS) status line on the LOGS page
+    log_state = "on"      # "on" | "off" | "full"
+    log_free_kb = 3402
+    # saved ride summaries (newest first): (dist_km, max_kmh, wh_used, max_watts)
+    rides = [(12.8, 50.0, 232, 1320), (8.4, 47.0, 150, 1180),
+             (15.2, 52.0, 318, 1402), (3.1, 41.0, 64, 980)]
     # bridge screen
     bridge_status = "CONNECTED"
     bridge_ip = "192.168.4.1"
@@ -214,40 +272,46 @@ class State:
 
 
 # ---------------------------------------------------------------------------
-# THE LAYOUT  (logical 170x320 -- port these numbers straight into main.cpp)
+# THE LAYOUT  (logical 170x320 -- these numbers match the firmware)
 # ---------------------------------------------------------------------------
 def speed_unit(s): return "MPH" if s.use_mph else "KM/H"
 def dist_unit(s):  return "mi" if s.use_mph else "km"
 def dist_cv(s):    return 0.621371 if s.use_mph else 1.0
 
 
-def list_rows(p, rows, y0, step=16, lx=12, vx=158, vcol=WHITE):
+def list_rows(p, rows, y0, step=16, lx=12, vx=158, vcol=None):
     y = y0
     for label, val in rows:
         p.set_datum(TL); p.set_color(DIM); p.draw_string(label, lx, y)
-        p.set_datum(TR); p.set_color(vcol); p.draw_string(val, vx, y)
+        p.set_datum(TR); p.set_color(vcol or WHITE); p.draw_string(val, vx, y)
         y += step
 
 
-def row(p, label, val, y, vcol=WHITE):
+def row(p, label, val, y, vcol=None):
     """A single labeled value row with its own value color."""
     p.set_datum(TL); p.set_color(DIM); p.draw_string(label, 12, y)
-    p.set_datum(TR); p.set_color(vcol); p.draw_string(val, 158, y)
+    p.set_datum(TR); p.set_color(vcol or WHITE); p.draw_string(val, 158, y)
 
 
-def draw(p: Panel, s: State):
+def card(p, title, x, y, w, h):
+    """Bordered card with a centered header and an underline."""
+    p.draw_rect(x, y, w, h, BORDER)
+    p.set_datum(TC); p.set_color(LABEL)
+    p.draw_string(title, x + w // 2, y + 3)
+    p.hline(x + 4, y + 14, w - 8, BORDER)
+
+
+def draw(p, s):
+    # HUD is self-contained (its own top bar + bottom bar, no cells/dots).
+    if s.page == HUD:
+        draw_hud(p, s)
+        return
+
     p.fill_screen(BG)
     draw_topbar(p, s)
-    if s.page == 1:
-        draw_page_power(p, s)
-    elif s.page == 2:
-        draw_page_trip(p, s)
-    elif s.page == 3:
-        draw_page_settings(p, s)
-    elif s.page == 4:
-        draw_page_system(p, s)
-    else:
-        draw_page_dash(p, s)
+    {DASH: draw_page_dash, POWER: draw_page_power, TRIP: draw_page_trip,
+     SETTINGS: draw_page_settings, SYSTEM: draw_page_system,
+     GRAPHS: draw_page_graphs, LOGS: draw_page_logs}.get(s.page, draw_page_dash)(p, s)
     draw_cells(p, s)
     draw_dots(p, s)
     draw_bottom(p, s)
@@ -285,7 +349,7 @@ def draw_cells(p, s):
 
 def draw_dots(p, s):
     # Page-indicator dots in the gap between cells and the bottom bar.
-    n = 5
+    n = PAGE_COUNT
     gap = 8
     x0 = W // 2 - (n - 1) * gap // 2
     for i in range(n):
@@ -424,8 +488,8 @@ def draw_page_settings(p, s):
             p.set_datum(TL); p.set_color(ACCENT); p.draw_string(">", 4, y)
         p.set_datum(TL); p.set_color(ACCENT if sel else DIM); p.draw_string(text, 12, y)
 
-    def value(val, y, vcol=WHITE):
-        p.set_datum(TR); p.set_color(vcol); p.draw_string(val, 158, y)
+    def value(val, y, vcol=None):
+        p.set_datum(TR); p.set_color(vcol or WHITE); p.draw_string(val, 158, y)
 
     card(p, "WHEEL PROFILE", 4, 22, 162, 82)
     slabel("PROFILE", 40, 0); value(s.wheel_name, 40)
@@ -433,14 +497,20 @@ def draw_page_settings(p, s):
                   ("GEARING", "%d:%d" % (s.motor_pulley, s.wheel_pulley)),
                   ("POLES", "%d" % s.poles)], 56)
 
-    card(p, "DISPLAY", 4, 110, 162, 70)
+    card(p, "DISPLAY", 4, 110, 162, 58)
     slabel("UNITS", 128, 1);      value("MPH" if s.use_mph else "KM/H", 128)
     slabel("DEMO", 144, 2);       value("ON" if s.demo else "OFF", 144, YELLOW if s.demo else WHITE)
     slabel("BRIGHTNESS", 160, 3); value("%d%%" % s.brightness, 160)
 
+    card(p, "BATTERY", 4, 174, 162, 88)
+    slabel("CELLS", 192, 4);   value("%dS" % s.cells, 192)
+    slabel("PACK AH", 208, 5); value("%.1fAh" % s.pack_ah, 208)
+    slabel("STOP/C", 224, 6);  value("%.2fV" % s.stop_cell, 224)
+    slabel("WH/MI", 240, 7);   value("%d" % s.wh_mi, 240)
+    row(p, "WINDOW", "%.1f-%.1f" % (s.batt_min_v, s.batt_max_v), 256, DIM)
+
     p.set_datum(MC); p.set_color(DIM)
-    p.draw_string("L: select   R: change", W // 2, 192)
-    p.draw_string("hold L+R: bridge", W // 2, 204)
+    p.draw_string("L: select  R: change", W // 2, 268)
 
 
 def draw_page_system(p, s):
@@ -460,8 +530,86 @@ def draw_page_system(p, s):
     row(p, "REFRESH", "%df %dms" % (s.fps, s.blit_ms), 224, GREEN if s.fps >= 30 else WHITE)
 
     p.set_datum(MC); p.set_color(DIM)
-    p.draw_string("reset: " + s.reset, W // 2, 256)
-    p.draw_string("canvas: " + ("PSRAM" if s.canvas_psram else "SRAM"), W // 2, 268)
+    p.draw_string("reset: " + s.reset, W // 2, 252)
+    p.draw_string("canvas: " + ("PSRAM" if s.canvas_psram else "SRAM"), W // 2, 263)
+    p.draw_string(s.version + " preview", W // 2, 274)
+
+
+def _mini_graph(p, x, y, w, h, label, cur_text, trend, color, values, vmin, vmax):
+    """One mini line graph (mirrors firmware drawMiniGraph)."""
+    p.draw_rect(x, y, w, h, BORDER)
+    p.set_datum(TL); p.set_color(DIM)
+    p.draw_string(label, x + 4, y + 3)
+    p.set_datum(TR); p.set_color(color)
+    p.draw_string("%s %s" % (trend, cur_text), x + w - 4, y + 3)
+
+    gx, gy, gw, gh = x + 4, y + 17, w - 8, h - 21
+    p.hline(gx, gy + gh // 2, gw, BORDER)   # midline guide
+    if len(values) < 2 or vmax <= vmin:
+        return
+    last = None
+    n = len(values)
+    for i, v in enumerate(values):
+        v = max(vmin, min(vmax, v))
+        px = gx + (i * (gw - 1)) // max(1, n - 1)
+        py = gy + gh - 1 - int((v - vmin) * (gh - 1) / (vmax - vmin))
+        if last:
+            p.line(last[0], last[1], px, py, color)
+        last = (px, py)
+
+
+def draw_page_graphs(p, s):
+    import math
+    # Synthesize ~60 samples (3-min window) just for the preview shape.
+    n = 60
+    spd = [max(0, 22 + 14 * math.sin(i / 6.0)) for i in range(n)]
+    wts = [max(0, 900 + 800 * math.sin(i / 5.0 + 1)) for i in range(n)]
+    vlt = [40.5 - 0.05 * i for i in range(n)]
+    mtt = [30 + 18 * (i / n) + 4 * math.sin(i / 4.0) for i in range(n)]
+    su = "mph" if s.use_mph else "kmh"
+    smax = 40 if s.use_mph else 65
+    _mini_graph(p, 4, 22, 162, 56, "SPEED", "%d %s" % (s.speed, su), "^", ACCENT,
+                spd, 0, smax)
+    _mini_graph(p, 4, 82, 162, 56, "WATTS", "%d W" % s.watts, "v", watt_color(s.watts),
+                wts, 0, max(3000, s.max_watts * 1.15))
+    _mini_graph(p, 4, 142, 162, 56, "VOLTS", "%.1f V" % s.voltage, "-", batt_color(s.batt_pct),
+                vlt, s.batt_min_v, s.batt_max_v)
+    _mini_graph(p, 4, 202, 162, 56, "MOTOR TEMP", "%dC" % s.motor_t, "^", GREEN,
+                mtt, 20, 100)
+    p.set_datum(MC); p.set_color(DIM)
+    p.draw_string("3 MIN HISTORY", W // 2, 262)
+
+
+def _log_status_line(p, s, y):
+    """Detail-log (LittleFS) status line at the bottom of the LOGS list."""
+    p.set_datum(MC)
+    if s.log_state == "full":
+        p.set_color(RED); p.draw_string("! LOG STORAGE FULL", W // 2, y)
+    elif s.log_state == "off":
+        p.set_color(YELLOW); p.draw_string("DETAIL LOGGING OFF", W // 2, y)
+    else:
+        p.set_color(DIM); p.draw_string("log: %d KB free" % s.log_free_kb, W // 2, y)
+
+
+def draw_page_logs(p, s):
+    card(p, "RIDE LOGS", 4, 22, 162, 240)
+    cv, du = dist_cv(s), dist_unit(s)
+    su = "mph" if s.use_mph else "kmh"
+    if not s.rides:
+        p.set_datum(TL); p.set_color(DIM); p.draw_string("No saved rides yet.", 14, 48)
+    else:
+        for r, (dist_km, max_kmh, wh_used, max_w) in enumerate(s.rides[:5]):
+            dist = dist_km * cv
+            wh_per = (wh_used / dist) if dist > 0.01 else 0
+            y = 42 + r * 40
+            p.set_datum(TL); p.set_color(ACCENT); p.draw_string("#%d" % (r + 1), 12, y)
+            p.set_color(WHITE); p.draw_string("%.1f %s" % (dist, du), 34, y)
+            p.set_color(DIM)
+            p.draw_string("max %d %s" % (round(max_kmh * cv), su), 12, y + 12)
+            p.draw_string("%d Wh/%s  %dW" % (round(wh_per), du, round(max_w)), 12, y + 24)
+    _log_status_line(p, s, 236)
+    p.set_datum(MC); p.set_color(DIM)
+    p.draw_string("saved on trip reset", W // 2, 268)
 
 
 def draw_fault_banner(p, s):
@@ -491,8 +639,8 @@ def draw_toast(p, msg):
     p.draw_string(msg, W // 2, 165, px=18)
 
 
-def draw_bridge(p: Panel, s: State):
-    """VESC Tool WiFi-TCP bridge screen."""
+def draw_bridge(p, s):
+    """VESC Tool bridge screen (WiFi-TCP + BLE + ride-log web download)."""
     p.fill_screen(BG)
     p.set_datum(TC); p.set_color(ACCENT)
     p.draw_string("BRIDGE MODE", W // 2, 18, px=24)
@@ -500,15 +648,20 @@ def draw_bridge(p: Panel, s: State):
     p.draw_string("VESC TOOL CONFIG", W // 2, 56)
 
     p.set_datum(TL)
-    p.set_color(DIM);  p.draw_string("WiFi:", 12, 84)
-    p.set_color(WHITE); p.draw_string("ESK8-BRIDGE", 46, 84)
-    p.set_color(DIM);  p.draw_string("pass:", 12, 100)
-    p.set_color(WHITE); p.draw_string("esk8bridge", 46, 100)
-    p.set_color(DIM);  p.draw_string("TCP:", 12, 124)
-    p.set_color(WHITE); p.draw_string("%s:65102" % s.bridge_ip, 40, 124)
+    p.set_color(DIM);  p.draw_string("WiFi:", 12, 80)
+    p.set_color(WHITE); p.draw_string("ESK8-BRIDGE", 46, 80)
+    p.set_color(DIM);  p.draw_string("pass:", 12, 94)
+    p.set_color(WHITE); p.draw_string("esk8bridge", 46, 94)
+    p.set_color(DIM);  p.draw_string("TCP:", 12, 108)
+    p.set_color(WHITE); p.draw_string("%s:65102" % s.bridge_ip, 40, 108)
+    p.set_color(DIM);  p.draw_string("BLE:", 12, 122)
+    p.set_color(WHITE); p.draw_string("ESK8-BLE", 40, 122)
+
     p.set_color(DIM)
-    p.draw_string("VESC Tool > Connection", 12, 150)
-    p.draw_string("> TCP > connect", 12, 162)
+    p.draw_string("Desktop: TCP connection", 12, 146)
+    p.draw_string("Mobile: scan BLE in app", 12, 158)
+    p.set_color(DIM);  p.draw_string("logs:", 12, 174)
+    p.set_color(WHITE); p.draw_string("http://192.168.4.1", 44, 174)
 
     # status box
     p.fill_rect(8, 212, W - 16, 38, BG)
@@ -530,7 +683,7 @@ def draw_bridge(p: Panel, s: State):
     p.draw_string("hold L+R to exit", W // 2, 300)
 
 
-def draw_splash(p: Panel, s: State, progress=0.7):
+def draw_splash(p, s, progress=0.7):
     """Boot splash. `progress` 0..1 drives the loading bar."""
     p.fill_screen(BG)
 
@@ -576,15 +729,7 @@ def draw_splash(p: Panel, s: State, progress=0.7):
     p.draw_string("RIDER: " + s.rider, W // 2, 300)
 
 
-def card(p: Panel, title, x, y, w, h):
-    """Bordered card with a centered header and an underline."""
-    p.draw_rect(x, y, w, h, BORDER)
-    p.set_datum(TC); p.set_color(LABEL)
-    p.draw_string(title, x + w // 2, y + 3)
-    p.hline(x + 4, y + 14, w - 8, BORDER)
-
-
-def draw_hud(p: Panel, s: State):
+def draw_hud(p, s):
     """PAGE 0: Big HUD. Glanceable ride screen — huge speed, big battery, four
     key tiles. No page dots / mid-screen cell strip; the bottom status bar stays.
     Speed uses the native BebasNeue110 (~79px digits) drawn at scale 1.0 — crisp,
@@ -639,46 +784,74 @@ def draw_hud(p: Panel, s: State):
     draw_bottom(p, s)
 
 
+def _read_version():
+    try:
+        with open("version.txt") as f:
+            return "v" + f.read().strip()
+    except OSError:
+        return State.version
+
+
+def render(s, kind="page", progress=0.7, toast=""):
+    p = Panel()
+    if kind == "splash":
+        draw_splash(p, s, progress)
+    elif kind == "bridge":
+        draw_bridge(p, s)
+    else:
+        draw(p, s)
+        if toast:
+            draw_toast(p, toast)
+    return p
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--speed", type=int, default=State.speed)
     ap.add_argument("--kmh", action="store_true", help="metric (default is MPH)")
     ap.add_argument("--splash", action="store_true", help="render the boot splash")
-    ap.add_argument("--hud", action="store_true", help="render the Big HUD page")
+    ap.add_argument("--hud", action="store_true", help="render the Big HUD (page 0)")
     ap.add_argument("--bridge", action="store_true", help="render the VESC bridge screen")
     ap.add_argument("--toast", default="", help="overlay a confirmation banner, e.g. RECHARGED")
     ap.add_argument("--progress", type=float, default=0.7)
     ap.add_argument("--batt", type=int, default=State.batt_pct, help="battery %% for color test")
     ap.add_argument("--watts", type=int, default=State.watts)
     ap.add_argument("--page", type=int, default=0,
-                    help="0 dash, 1 power, 2 trip, 3 settings, 4 system")
+                    help="0 hud 1 dash 2 power 3 trip 4 settings 5 system 6 graphs 7 logs")
+    ap.add_argument("--theme", default="cam", choices=list(THEMES), help="color theme")
+    ap.add_argument("--logstate", default=State.log_state, choices=["on", "off", "full"],
+                    help="LOGS-page detail-logging status")
     ap.add_argument("--fault", default="", help="fault name -> show banner")
+    ap.add_argument("--all", action="store_true", help="dump every page to preview_<name>.png")
     ap.add_argument("-o", "--out", default="preview.png")
     a = ap.parse_args()
 
+    apply_theme(a.theme)
+
     s = State()
+    s.version = _read_version()
     s.speed = a.speed
     s.use_mph = not a.kmh
     s.batt_pct = a.batt
     s.watts = a.watts
-    s.page = a.page
+    s.page = 0 if a.hud else a.page
     s.fault = a.fault
+    s.log_state = a.logstate
     # keep test voltage consistent with the battery level (3.2-4.2 V/cell)
     s.voltage = round(32.0 + (42.0 - 32.0) * a.batt / 100.0, 1)
 
-    p = Panel()
-    if a.splash:
-        draw_splash(p, s, a.progress)
-    elif a.hud:
-        draw_hud(p, s)
-    elif a.bridge:
-        draw_bridge(p, s)
-    else:
-        draw(p, s)
-        if a.toast:
-            draw_toast(p, a.toast)
-    p.save(a.out)
-    print("wrote", a.out, "(%dx%d logical, x%d)" % (W, H, SCALE))
+    if a.all:
+        for i, name in enumerate(PAGE_NAMES):
+            s.page = i
+            render(s).save("preview_%s.png" % name)
+        render(s, "bridge").save("preview_bridge.png")
+        render(s, "splash", a.progress).save("preview_splash.png")
+        print("wrote preview_<page>.png for all %d pages + bridge + splash" % PAGE_COUNT)
+        return
+
+    kind = "splash" if a.splash else ("bridge" if a.bridge else "page")
+    render(s, kind, a.progress, a.toast).save(a.out)
+    print("wrote", a.out, "(%dx%d logical, x%d, theme=%s)" % (W, H, SCALE, a.theme))
     print("note: Wokwi screenshots may be mirrored/rotated relative to this logical preview")
 
 
