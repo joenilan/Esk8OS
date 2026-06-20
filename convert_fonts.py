@@ -86,7 +86,9 @@ def ttf_to_gfx(font_path, font_size, font_name):
     out.append("#else")
     out.append("#define PROGMEM")
     out.append("#endif")
-    out.append("#include <Fonts/GFXFF/gfxfont.h>")
+    # LovyanGFX-compatible GFXfont/GFXglyph typedefs (NOT the Adafruit gfxfont.h,
+    # which is not binary-compatible with LovyanGFX's font path).
+    out.append("#include <lgfx/v1/lgfx_fonts.hpp>")
     out.append("")
     
     # Bitmap array

@@ -584,11 +584,67 @@ def card(p: Panel, title, x, y, w, h):
     p.hline(x + 4, y + 14, w - 8, BORDER)
 
 
+def draw_hud(p: Panel, s: State):
+    """PAGE 0: Big HUD. Glanceable ride screen — huge speed, big battery, four
+    key tiles. No page dots / mid-screen cell strip; the bottom status bar stays.
+    Speed uses the native BebasNeue110 (~79px digits) drawn at scale 1.0 — crisp,
+    no fractional scaling — so positioning is predictable."""
+    p.fill_screen(BG)
+    draw_topbar(p, s)
+
+    # SPEED — big, top-anchored just below the status bar so it can't bleed up.
+    # NOTE: the firmware's hudSpeedY is tuned separately (LovyanGFX places this
+    # tall font lower than PIL does), so this Y won't match the device exactly.
+    p.set_datum(TC); p.set_color(WHITE)
+    p.draw_string(str(s.speed), W // 2, 22, px=110)
+
+    # unit, centered under the number
+    p.set_datum(MC); p.set_color(LABEL)
+    p.draw_string(speed_unit(s), W // 2, 128, font=p.sans(15, bold=True))
+
+    p.hline(8, 146, W - 16, BORDER)   # separator
+
+    # battery cells — larger than the shared strip, centered; the secondary
+    # cluster is pushed toward the bottom to fill the space under the hero speed.
+    cells, cw, ch, gap = 10, 13, 18, 2
+    total = cells * cw + (cells - 1) * gap
+    sx = (W - total) // 2
+    filled = round(s.batt_pct * cells / 100)
+    cc = batt_color(s.batt_pct)
+    cy = 158
+    for i in range(cells):
+        cx = sx + i * (cw + gap)
+        p.draw_rect(cx, cy, cw, ch, BORDER)
+        if i < filled:
+            p.fill_rect(cx + 1, cy + 1, cw - 2, ch - 2, cc)
+        else:
+            p.hline(cx + 2, cy + ch - 2, cw - 4, BORDER)
+
+    p.set_datum(MC); p.set_color(WHITE)
+    p.draw_string("%d%%" % s.batt_pct, W // 2, 192, font=p.sans(16, bold=True))
+
+    # four key tiles (2x2), sitting just above the bottom status bar
+    def tile(x, y, w, label, val, vcol):
+        p.draw_rect(x, y, w, 44, BORDER)
+        p.set_datum(TC); p.set_color(DIM); p.draw_string(label, x + w // 2, y + 5)
+        p.set_datum(MC); p.set_color(vcol)
+        p.draw_string(val, x + w // 2, y + 29, font=p.sans(14, bold=True))
+
+    cv, du = dist_cv(s), dist_unit(s)
+    tile(4, 202, 78, "WATTS", str(s.watts), watt_color(s.watts))
+    tile(88, 202, 78, "VOLTS", "%.1f" % s.voltage, batt_color(s.batt_pct))
+    tile(4, 250, 78, "RANGE", "%.1f%s" % (s.rem_km * cv, du), WHITE)
+    tile(88, 250, 78, "TEMP", "%dC" % int(round(max(s.motor_t, s.esc_t))), GREEN)
+
+    draw_bottom(p, s)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--speed", type=int, default=State.speed)
     ap.add_argument("--kmh", action="store_true", help="metric (default is MPH)")
     ap.add_argument("--splash", action="store_true", help="render the boot splash")
+    ap.add_argument("--hud", action="store_true", help="render the Big HUD page")
     ap.add_argument("--bridge", action="store_true", help="render the VESC bridge screen")
     ap.add_argument("--toast", default="", help="overlay a confirmation banner, e.g. RECHARGED")
     ap.add_argument("--progress", type=float, default=0.7)
@@ -613,6 +669,8 @@ def main():
     p = Panel()
     if a.splash:
         draw_splash(p, s, a.progress)
+    elif a.hud:
+        draw_hud(p, s)
     elif a.bridge:
         draw_bridge(p, s)
     else:
