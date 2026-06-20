@@ -2,6 +2,8 @@
 #include "esk8os.h"
 #include "wifi_bridge.h"
 #include "ble_bridge.h"
+#include "webexport.h"
+#include "ridelog.h"
 
 // VESC Tool BRIDGE MODE coordinator. Bridge mode lets VESC Tool configure the
 // ESC wirelessly through the display. This file owns the mode itself — the
@@ -67,6 +69,10 @@ static void drawBridgeScreen() {
     GFX->drawString("Desktop: TCP connection", X0 + 12, 146);
     GFX->drawString("Mobile: scan BLE in app", X0 + 12, 158);
 
+    // Ride-log download over the same AP.
+    GFX->setTextColor(COL_DIM);   GFX->drawString("logs:", X0 + 12, 174);
+    GFX->setTextColor(COL_WHITE); GFX->drawString("http://192.168.4.1", X0 + 44, 174);
+
     GFX->setTextDatum(TC_DATUM);
     GFX->setTextColor(COL_DIM);
     GFX->drawString("hold L+R to exit", X0 + UI_W / 2, 300);
@@ -81,9 +87,12 @@ static void bridgeStart() {
     // Also advertise the BLE (Nordic UART) backend for mobile VESC Tool. No-op
     // on builds without BLE_BRIDGE_ENABLED. Runs alongside the WiFi backend.
     bleBridgeStart(BRIDGE_BLE_NAME);
+    // Serve the ride-log CSVs for download on the same AP (http://192.168.4.1/).
+    webExportStart();
 }
 
 static void bridgeStop() {
+    webExportStop();
     wifiBridgeStop();
     bleBridgeStop();
 }
@@ -107,6 +116,7 @@ void bridgeLoop() {
         }
     }
     bleBridgePoll();
+    webExportHandle();          // serve any pending ride-log download requests
 
     static unsigned long lastTrafficShown = 0;
     if (traffic && millis() - lastTrafficShown > 300) {
@@ -139,6 +149,7 @@ void enterBridgeMode() {
         return;
     }
     saveOdo();
+    ridelogEndRide();           // flush + close the active ride so it downloads whole
     systemMode = MODE_VESC_BRIDGE;
     bridgeStart();
     drawBridgeScreen();
@@ -150,6 +161,7 @@ void exitBridgeMode() {
     systemMode = MODE_DASHBOARD;
     lastVescOkMs = millis();
     currentPage = PAGE_HUD;
+    ridelogStartRide();         // resume logging on a fresh ride file
     drawStaticFrame();
     gRedrawAll = true;
 }
