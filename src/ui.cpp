@@ -66,17 +66,26 @@ static void drawBatteryCellsRow(int y, int cellH, bool drawFill) {
     int cellW = batteryCellW();
     int cellGap = batteryCellGap();
     int cellStartX = batteryCellsStartX();
-    int filled = (currentBatteryPercent * BATTERY_CELLS_COUNT + 50) / 100;
+    // Continuous level so the gauge depletes smoothly: whole cells fill solid and
+    // the boundary cell fills a fractional WIDTH instead of popping on/off, so the
+    // bar shrinks ~1px at a time while staying segmented.
+    float level = currentBatteryPercent * BATTERY_CELLS_COUNT / 100.0f;
+    int   full  = (int)level;
+    float frac  = level - full;
+    uint16_t fillCol = battColor(currentBatteryPercent);
     for (int i = 0; i < BATTERY_CELLS_COUNT; i++) {
         int cx = cellStartX + i * (cellW + cellGap);
         GFX->drawRect(cx, y, cellW, cellH, COL_BORDER);
-        if (drawFill) {
-            GFX->fillRect(cx + 1, y + 1, cellW - 2, cellH - 2, COL_BG);
-            if (i < filled) {
-                GFX->fillRect(cx + 1, y + 1, cellW - 2, cellH - 2, battColor(currentBatteryPercent));
-            } else {
-                GFX->drawFastHLine(cx + 2, y + cellH - 2, max(0, cellW - 4), COL_BORDER);
-            }
+        if (!drawFill) continue;
+        GFX->fillRect(cx + 1, y + 1, cellW - 2, cellH - 2, COL_BG);   // clear interior
+        if (i < full) {
+            GFX->fillRect(cx + 1, y + 1, cellW - 2, cellH - 2, fillCol);
+        } else if (i == full && frac > 0.0f) {
+            int fw = (int)round((cellW - 2) * frac);
+            if (fw > 0) GFX->fillRect(cx + 1, y + 1, fw, cellH - 2, fillCol);
+            else        GFX->drawFastHLine(cx + 2, y + cellH - 2, max(0, cellW - 4), COL_BORDER);
+        } else {
+            GFX->drawFastHLine(cx + 2, y + cellH - 2, max(0, cellW - 4), COL_BORDER);
         }
     }
 }
@@ -312,29 +321,33 @@ static void drawSettingLabel(const char* label, int y, int idx) {
     GFX->drawString(label, X0 + 12, y);
 }
 
+// Settings is the tallest page; it hides the shared bottom strip + dots (see
+// drawStaticFrame) and spreads its rows across the full reclaimed height with
+// 17px spacing so every row sits inside its card and nothing tucks under the
+// bottom bar. Keep these Y's in sync with updateSettings() below.
 static void drawStaticSettings() {
-    drawCard(4, 22, 162, 82, "WHEEL PROFILE");
+    drawCard(4, 22, 162, 84, "WHEEL PROFILE");
     drawSettingLabel("PROFILE", 40, SET_PROFILE);
-    drawRowLabel("DIAMETER", 56);
-    drawRowLabel("GEARING",  72);
-    drawRowLabel("POLES",    88);
+    drawRowLabel("DIAMETER", 57);
+    drawRowLabel("GEARING",  74);
+    drawRowLabel("POLES",    91);
 
-    drawCard(4, 110, 162, 58, "DISPLAY");
+    drawCard(4, 110, 162, 84, "DISPLAY");
     drawSettingLabel("UNITS",      128, SET_UNITS);
-    drawSettingLabel("DEMO",       144, SET_DEMO);
-    drawSettingLabel("BRIGHTNESS", 160, SET_BRIGHT);
+    drawSettingLabel("DEMO",       145, SET_DEMO);
+    drawSettingLabel("BRIGHTNESS", 162, SET_BRIGHT);
+    drawSettingLabel("THEME",      179, SET_THEME);
 
-    drawCard(4, 174, 162, 88, "BATTERY");
-    drawSettingLabel("CELLS",   192, SET_CELLS);
-    drawSettingLabel("PACK AH", 208, SET_PACK_AH);
-    drawSettingLabel("STOP/C",  224, SET_STOP_CELL);
-    drawSettingLabel("WH/MI",   240, SET_WHMI);
-    drawRowLabel("WINDOW", 256);
+    drawCard(4, 198, 162, 84, "BATTERY");
+    drawSettingLabel("CELLS",   216, SET_CELLS);
+    drawSettingLabel("PACK AH", 233, SET_PACK_AH);
+    drawSettingLabel("STOP/C",  250, SET_STOP_CELL);
+    drawSettingLabel("WH/MI",   267, SET_WHMI);
 
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
-    GFX->drawString("L: select  R: change", X0 + UI_W / 2, 268);
+    GFX->drawString("L: select  R: change", X0 + UI_W / 2, 288);
 }
 
 // Human-readable last-reset cause for the SYSTEM page.
@@ -370,12 +383,15 @@ static void drawStaticSystem() {
     drawRowLabel("UPTIME",  208);
     drawRowLabel("REFRESH", 224);
 
+    // Footer spread into the reclaimed bottom strip (SYSTEM hides cells+dots) so
+    // the version line clears everything instead of colliding with the battery bar.
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
-    GFX->drawString(String("reset: ") + resetReasonStr(), X0 + UI_W / 2, 252);
-    GFX->drawString(String("canvas: ") + (gCanvasPsram ? "PSRAM" : "SRAM"), X0 + UI_W / 2, 263);
-    GFX->drawString(FW_VERSION_FULL, X0 + UI_W / 2, 274);
+    GFX->drawString(String("reset: ") + resetReasonStr(), X0 + UI_W / 2, 258);
+    GFX->drawString(String("canvas: ") + (gCanvasPsram ? "PSRAM" : "SRAM"), X0 + UI_W / 2, 272);
+    GFX->setTextColor(COL_LABEL);
+    GFX->drawString(FW_VERSION_FULL, X0 + UI_W / 2, 286);
 }
 
 // ==========================================
@@ -395,7 +411,10 @@ static void drawHudSmallMetric(int x, int y, int w, const char* label, String va
     GFX->setTextColor(COL_DIM);
     GFX->drawString(label, X0 + x + w / 2, y + 5);
 
+    // Auto-fit: drop to the smaller bold font if the value would overflow the
+    // tile (e.g. a 3-digit range like "132mi"), so it never bleeds past the box.
     GFX->setFont(&fonts::FreeSansBold12pt7b);
+    if (GFX->textWidth(value) > w - 6) GFX->setFont(&fonts::FreeSansBold9pt7b);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(color);
     GFX->drawString(value, X0 + x + w / 2, y + 29);
@@ -732,16 +751,18 @@ void drawStaticFrame() {
     else if (currentPage == PAGE_LOGS)     drawStaticLogs();
 
     // ── BATTERY CELLS OUTLINE (common, y=276..288) ──
-    // The Big HUD has its own larger cell row under the speed readout, so hide
-    // the shared bottom cell strip on PAGE_HUD to avoid duplicate batteries.
-    if (currentPage != PAGE_HUD) {
+    // Hidden on the Big HUD (it has its own larger cell row) and on SETTINGS
+    // (the menu is tall — reclaim this strip so the last rows don't tuck under
+    // the bottom chrome). The bottom status bar still shows battery % there.
+    bool ownsFullHeight = (currentPage == PAGE_HUD || currentPage == PAGE_SETTINGS ||
+                           currentPage == PAGE_SYSTEM);
+    if (!ownsFullHeight) {
         drawBatteryCellsRow(276, 12, false);
     }
 
     // ── PAGE INDICATOR DOTS (in the gap between cells and bottom bar) ──
-    // Hide these on the Big HUD so that page can use the reclaimed vertical
-    // space for speed/battery/metrics instead of footer chrome.
-    if (currentPage != PAGE_HUD) {
+    // Hidden on the pages that use the reclaimed vertical space (HUD, SETTINGS).
+    if (!ownsFullHeight) {
         int dotGap = 8;
         int dotsW = (PAGE_COUNT - 1) * dotGap;
         int dotX0 = X0 + UI_W / 2 - dotsW / 2;
@@ -943,9 +964,9 @@ void updateBatteryCells() {
     static int lastPct = -1;
     static int lastCells = -1;
 
-    // The Big HUD owns its own larger cell row, so do not draw/update the
-    // shared bottom strip on PAGE_HUD.
-    if (currentPage == PAGE_HUD) {
+    // No shared bottom strip on the pages that reclaim it (HUD has its own larger
+    // cell row; SETTINGS/SYSTEM use the space for their content).
+    if (currentPage == PAGE_HUD || currentPage == PAGE_SETTINGS || currentPage == PAGE_SYSTEM) {
         lastPct = -1;
         lastCells = -1;
         return;
@@ -1067,23 +1088,24 @@ static void updateSettings() {
     if (!gRedrawAll && millis() - lastMs < 400) return;
     lastMs = millis();
 
+    // Y's mirror drawStaticSettings() above (17px spacing, 4/4/4 cards).
     WheelProfile &w = wheelProfiles[activeWheelProfile];
     drawVal(40,  String(w.name), COL_WHITE);
-    drawVal(56,  String((int)round(w.wheelDiameterM * 1000)) + "mm", COL_WHITE);
-    drawVal(72,  String(w.motorPulley) + ":" + String(w.wheelPulley), COL_WHITE);
-    drawVal(88,  String((int)w.polePairs), COL_WHITE);
+    drawVal(57,  String((int)round(w.wheelDiameterM * 1000)) + "mm", COL_WHITE);
+    drawVal(74,  String(w.motorPulley) + ":" + String(w.wheelPulley), COL_WHITE);
+    drawVal(91,  String((int)w.polePairs), COL_WHITE);
 
     drawVal(128, String(useMph ? "MPH" : "KM/H"), COL_WHITE);
-    drawVal(144, String(gDemoMode ? "ON" : "OFF"), gDemoMode ? COL_YELLOW : COL_WHITE);
-    drawVal(160, String(gBrightnessPct) + "%", COL_WHITE);
+    drawVal(145, String(gDemoMode ? "ON" : "OFF"), gDemoMode ? COL_YELLOW : COL_WHITE);
+    drawVal(162, String(gBrightnessPct) + "%", COL_WHITE);
+    drawVal(179, String(THEMES[gThemeIdx].name), COL_ACCENT);
 
-    drawVal(192, String(BATTERY_CELLS_COUNT) + "S", COL_WHITE);
-    drawVal(208, String(BATTERY_EFFECTIVE_CAPACITY_AH, 1) + "Ah", COL_WHITE);
-    drawVal(224, String(BATTERY_STOP_CELL_V, 2) + "V", COL_WHITE);
-    drawVal(240, String((int)round(RANGE_DEFAULT_WH_PER_MILE)), COL_WHITE);
-    drawVal(256, String(BATTERY_MIN_V, 1) + "-" + String(BATTERY_MAX_V, 1), COL_DIM);
+    drawVal(216, String(BATTERY_CELLS_COUNT) + "S", COL_WHITE);
+    drawVal(233, String(BATTERY_EFFECTIVE_CAPACITY_AH, 1) + "Ah", COL_WHITE);
+    drawVal(250, String(BATTERY_STOP_CELL_V, 2) + "V", COL_WHITE);
+    drawVal(267, String((int)round(RANGE_DEFAULT_WH_PER_MILE)), COL_WHITE);
 
-    markDirty(22, 246);
+    markDirty(22, 274);
 }
 
 // ==========================================

@@ -78,14 +78,36 @@ THEMES = {
         "red": (255, 42, 120), "accent": (255, 44, 204), "yellow": (255, 238, 60),
         "orange": (255, 120, 200),
     },
+    "synthwave": {  # retro sunset — magenta + cyan, warm grid vibe
+        "bg": (22, 12, 34), "border": (70, 40, 90), "dim": (150, 110, 170),
+        "label": (210, 150, 200), "white": (250, 240, 255), "green": (60, 240, 200),
+        "red": (255, 80, 110), "accent": (255, 90, 170), "yellow": (255, 210, 100),
+        "orange": (255, 150, 90),
+    },
+    "mono": {  # monochrome — grayscale UI, single white accent
+        "bg": (16, 16, 16), "border": (64, 64, 64), "dim": (130, 130, 130),
+        "label": (180, 180, 180), "white": (245, 245, 245), "green": (200, 200, 200),
+        "red": (235, 235, 235), "accent": (255, 255, 255), "yellow": (210, 210, 210),
+        "orange": (225, 225, 225),
+    },
+    "forest": {  # earthy greens
+        "bg": (14, 22, 16), "border": (48, 70, 52), "dim": (110, 140, 116),
+        "label": (160, 190, 164), "white": (236, 246, 238), "green": (90, 220, 120),
+        "red": (240, 90, 70), "accent": (120, 210, 110), "yellow": (220, 200, 90),
+        "orange": (235, 150, 70),
+    },
 }
 
 # Palette globals — populated by apply_theme() before any drawing happens.
 BG = BORDER = DIM = LABEL = WHITE = GREEN = RED = ACCENT = YELLOW = ORANGE = (0, 0, 0)
 
 
+CURRENT_THEME = "cam"
+
+
 def apply_theme(name):
-    global BG, BORDER, DIM, LABEL, WHITE, GREEN, RED, ACCENT, YELLOW, ORANGE
+    global BG, BORDER, DIM, LABEL, WHITE, GREEN, RED, ACCENT, YELLOW, ORANGE, CURRENT_THEME
+    CURRENT_THEME = name if name in THEMES else "cam"
     t = THEMES.get(name, THEMES["cam"])
     BG, BORDER, DIM, LABEL = t["bg"], t["border"], t["dim"], t["label"]
     WHITE, GREEN, RED = t["white"], t["green"], t["red"]
@@ -324,8 +346,10 @@ def draw(p, s):
     {DASH: draw_page_dash, POWER: draw_page_power, TRIP: draw_page_trip,
      SETTINGS: draw_page_settings, SYSTEM: draw_page_system,
      GRAPHS: draw_page_graphs, LOGS: draw_page_logs}.get(s.page, draw_page_dash)(p, s)
-    draw_cells(p, s)
-    draw_dots(p, s)
+    # SETTINGS + SYSTEM reclaim the bottom strip + dots (tall pages), like the HUD.
+    if s.page not in (SETTINGS, SYSTEM):
+        draw_cells(p, s)
+        draw_dots(p, s)
     draw_bottom(p, s)
     # safety overlays (drawn on top of everything)
     if s.fault:
@@ -344,19 +368,32 @@ def draw_topbar(p, s):
     p.hline(0, 16, W, BORDER)
 
 
-def draw_cells(p, s):
-    cells, cw, ch, gap = 10, 13, 12, 2
+def _cells(p, s, y, ch):
+    """Segmented battery gauge with a smooth (fractional) boundary cell."""
+    cells, cw, gap = 10, 13, 2
     total = cells * cw + (cells - 1) * gap
     sx = (W - total) // 2
-    filled = round(s.batt_pct * cells / 100)
+    level = s.batt_pct * cells / 100.0
+    full = int(level)
+    frac = level - full
     cc = batt_color(s.batt_pct)
     for i in range(cells):
         cx = sx + i * (cw + gap)
-        p.draw_rect(cx, 276, cw, ch, BORDER)
-        if i < filled:
-            p.fill_rect(cx + 1, 277, cw - 2, ch - 2, cc)
+        p.draw_rect(cx, y, cw, ch, BORDER)
+        if i < full:
+            p.fill_rect(cx + 1, y + 1, cw - 2, ch - 2, cc)
+        elif i == full and frac > 0:
+            fw = round((cw - 2) * frac)
+            if fw > 0:
+                p.fill_rect(cx + 1, y + 1, fw, ch - 2, cc)
+            else:
+                p.hline(cx + 2, y + ch - 2, cw - 4, BORDER)
         else:
-            p.hline(cx + 2, 286, cw - 4, BORDER)
+            p.hline(cx + 2, y + ch - 2, cw - 4, BORDER)
+
+
+def draw_cells(p, s):
+    _cells(p, s, 276, 12)
 
 
 def draw_dots(p, s):
@@ -503,26 +540,28 @@ def draw_page_settings(p, s):
     def value(val, y, vcol=None):
         p.set_datum(TR); p.set_color(vcol or WHITE); p.draw_string(val, 158, y)
 
-    card(p, "WHEEL PROFILE", 4, 22, 162, 82)
+    # Settings hides the bottom strip/dots (see draw) and spreads rows across the
+    # reclaimed height with 17px spacing. Keep in sync with firmware drawStaticSettings.
+    card(p, "WHEEL PROFILE", 4, 22, 162, 84)
     slabel("PROFILE", 40, 0); value(s.wheel_name, 40)
     list_rows(p, [("DIAMETER", "%dmm" % s.wheel_diam_mm),
                   ("GEARING", "%d:%d" % (s.motor_pulley, s.wheel_pulley)),
-                  ("POLES", "%d" % s.poles)], 56)
+                  ("POLES", "%d" % s.poles)], 57, step=17)
 
-    card(p, "DISPLAY", 4, 110, 162, 58)
+    card(p, "DISPLAY", 4, 110, 162, 84)
     slabel("UNITS", 128, 1);      value("MPH" if s.use_mph else "KM/H", 128)
-    slabel("DEMO", 144, 2);       value("ON" if s.demo else "OFF", 144, YELLOW if s.demo else WHITE)
-    slabel("BRIGHTNESS", 160, 3); value("%d%%" % s.brightness, 160)
+    slabel("DEMO", 145, 2);       value("ON" if s.demo else "OFF", 145, YELLOW if s.demo else WHITE)
+    slabel("BRIGHTNESS", 162, 3); value("%d%%" % s.brightness, 162)
+    slabel("THEME", 179, 4);      value(CURRENT_THEME.upper(), 179, ACCENT)
 
-    card(p, "BATTERY", 4, 174, 162, 88)
-    slabel("CELLS", 192, 4);   value("%dS" % s.cells, 192)
-    slabel("PACK AH", 208, 5); value("%.1fAh" % s.pack_ah, 208)
-    slabel("STOP/C", 224, 6);  value("%.2fV" % s.stop_cell, 224)
-    slabel("WH/MI", 240, 7);   value("%d" % s.wh_mi, 240)
-    row(p, "WINDOW", "%.1f-%.1f" % (s.batt_min_v, s.batt_max_v), 256, DIM)
+    card(p, "BATTERY", 4, 198, 162, 84)
+    slabel("CELLS", 216, 5);   value("%dS" % s.cells, 216)
+    slabel("PACK AH", 233, 6); value("%.1fAh" % s.pack_ah, 233)
+    slabel("STOP/C", 250, 7);  value("%.2fV" % s.stop_cell, 250)
+    slabel("WH/MI", 267, 8);   value("%d" % s.wh_mi, 267)
 
     p.set_datum(MC); p.set_color(DIM)
-    p.draw_string("L: select  R: change", W // 2, 268)
+    p.draw_string("L: select  R: change", W // 2, 288)
 
 
 def draw_page_system(p, s):
@@ -541,12 +580,12 @@ def draw_page_system(p, s):
                   ("UPTIME", s.uptime)], 192)
     row(p, "REFRESH", "%df %dms" % (s.fps, s.blit_ms), 224, GREEN if s.fps >= 30 else WHITE)
 
-    # Footer pulled up so the version line clears the battery cells (y=276).
+    # Footer spread into the reclaimed bottom strip (SYSTEM hides cells+dots).
     p.set_datum(MC); p.set_color(DIM)
-    p.draw_string("reset: " + s.reset, W // 2, 246)
-    p.draw_string("canvas: " + ("PSRAM" if s.canvas_psram else "SRAM"), W // 2, 257)
+    p.draw_string("reset: " + s.reset, W // 2, 258)
+    p.draw_string("canvas: " + ("PSRAM" if s.canvas_psram else "SRAM"), W // 2, 272)
     p.set_color(LABEL)
-    p.draw_string(s.version + " a1b2c3d", W // 2, 268)
+    p.draw_string(s.version + " a1b2c3d", W // 2, 286)
 
 
 def _mini_graph(p, x, y, w, h, label, cur_text, trend, color, values, vmin, vmax):
@@ -765,19 +804,7 @@ def draw_hud(p, s):
 
     # battery cells — larger than the shared strip, centered; the secondary
     # cluster is pushed toward the bottom to fill the space under the hero speed.
-    cells, cw, ch, gap = 10, 13, 18, 2
-    total = cells * cw + (cells - 1) * gap
-    sx = (W - total) // 2
-    filled = round(s.batt_pct * cells / 100)
-    cc = batt_color(s.batt_pct)
-    cy = 158
-    for i in range(cells):
-        cx = sx + i * (cw + gap)
-        p.draw_rect(cx, cy, cw, ch, BORDER)
-        if i < filled:
-            p.fill_rect(cx + 1, cy + 1, cw - 2, ch - 2, cc)
-        else:
-            p.hline(cx + 2, cy + ch - 2, cw - 4, BORDER)
+    _cells(p, s, 158, 18)
 
     p.set_datum(MC); p.set_color(WHITE)
     p.draw_string("%d%%" % s.batt_pct, W // 2, 192, font=p.sans(16, bold=True))
@@ -786,8 +813,11 @@ def draw_hud(p, s):
     def tile(x, y, w, label, val, vcol):
         p.draw_rect(x, y, w, 44, BORDER)
         p.set_datum(TC); p.set_color(DIM); p.draw_string(label, x + w // 2, y + 5)
+        vf = p.sans(14, bold=True)                       # auto-fit: shrink wide values
+        if p.text_w(val, font=vf) > w - 6:
+            vf = p.sans(11, bold=True)
         p.set_datum(MC); p.set_color(vcol)
-        p.draw_string(val, x + w // 2, y + 29, font=p.sans(14, bold=True))
+        p.draw_string(val, x + w // 2, y + 29, font=vf)
 
     cv, du = dist_cv(s), dist_unit(s)
     tile(4, 202, 78, "WATTS", str(s.watts), watt_color(s.watts))

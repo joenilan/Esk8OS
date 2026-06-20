@@ -65,8 +65,19 @@ const float ESC_TEMP_LIMIT   = 80.0;
 const char  DEG = (char)0xF8;
 
 // ---- settings page rows (cursor index -> SET_*; used by ui + checkButtons) ---
-enum { SET_PROFILE, SET_UNITS, SET_DEMO, SET_BRIGHT, SET_CELLS, SET_PACK_AH,
-       SET_STOP_CELL, SET_WHMI, SETTINGS_COUNT };
+enum { SET_PROFILE, SET_UNITS, SET_DEMO, SET_BRIGHT, SET_THEME, SET_CELLS,
+       SET_PACK_AH, SET_STOP_CELL, SET_WHMI, SETTINGS_COUNT };
+
+// ---- color themes (palette table; applied to the COL_* globals in main) ------
+struct RGB { uint8_t r, g, b; };
+struct Theme {
+    const char* name;
+    RGB bg, border, dim, label, white, green, red, accent, yellow, orange;
+};
+extern const Theme THEMES[];
+extern const int   THEME_COUNT;
+extern int         gThemeIdx;     // selected theme (NVS-persisted; Settings > THEME)
+void applyTheme(int idx);         // recompute COL_* from THEMES[idx] (defined in main)
 
 // ---- UI runtime state (defined in main.cpp) ---------------------------------
 extern bool useMph;
