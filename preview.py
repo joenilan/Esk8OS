@@ -66,6 +66,18 @@ THEMES = {
         "red": (255, 70, 70), "accent": (0, 200, 230), "yellow": (255, 210, 90),
         "orange": (255, 140, 40),
     },
+    "light": {  # light mode — "white" is the PRIMARY TEXT color, so it goes dark.
+        "bg": (236, 236, 240), "border": (176, 176, 182), "dim": (120, 120, 126),
+        "label": (74, 74, 80), "white": (24, 24, 28), "green": (0, 150, 72),
+        "red": (210, 32, 32), "accent": (150, 44, 190), "yellow": (190, 140, 0),
+        "orange": (214, 96, 0),
+    },
+    "cyber": {  # cyberpunk — neon magenta/cyan on near-black
+        "bg": (10, 8, 18), "border": (62, 30, 84), "dim": (124, 92, 162),
+        "label": (186, 142, 224), "white": (228, 230, 255), "green": (0, 255, 180),
+        "red": (255, 42, 120), "accent": (255, 44, 204), "yellow": (255, 238, 60),
+        "orange": (255, 120, 200),
+    },
 }
 
 # Palette globals — populated by apply_theme() before any drawing happens.
@@ -529,10 +541,12 @@ def draw_page_system(p, s):
                   ("UPTIME", s.uptime)], 192)
     row(p, "REFRESH", "%df %dms" % (s.fps, s.blit_ms), 224, GREEN if s.fps >= 30 else WHITE)
 
+    # Footer pulled up so the version line clears the battery cells (y=276).
     p.set_datum(MC); p.set_color(DIM)
-    p.draw_string("reset: " + s.reset, W // 2, 252)
-    p.draw_string("canvas: " + ("PSRAM" if s.canvas_psram else "SRAM"), W // 2, 263)
-    p.draw_string(s.version + " preview", W // 2, 274)
+    p.draw_string("reset: " + s.reset, W // 2, 246)
+    p.draw_string("canvas: " + ("PSRAM" if s.canvas_psram else "SRAM"), W // 2, 257)
+    p.set_color(LABEL)
+    p.draw_string(s.version + " a1b2c3d", W // 2, 268)
 
 
 def _mini_graph(p, x, y, w, h, label, cur_text, trend, color, values, vmin, vmax):
