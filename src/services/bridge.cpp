@@ -4,6 +4,7 @@
 #include "ble_bridge.h"
 #include "webexport.h"
 #include "logging/ridelog.h"
+#include "transports/VescUartTransport.h"
 #include "ui/BebasNeue18.h"
 #include "ui/BebasNeue24.h"
 
@@ -188,6 +189,7 @@ void enterBridgeMode() {
     ridelogEndRide();           // flush + close the active ride so it downloads whole
     while (Serial1.available()) Serial1.read();   // drop stale VESC poll bytes so the
                                                   // first bridged packet starts clean
+    Esk8OS::Transports::setVescPollPaused(true);  // STOP the background polling task
     systemMode = MODE_VESC_BRIDGE;
     bridgeStart();
     drawBridgeScreen();
@@ -202,4 +204,5 @@ void exitBridgeMode() {
     ridelogStartRide();         // resume logging on a fresh ride file
     drawStaticFrame();
     gRedrawAll = true;
+    Esk8OS::Transports::setVescPollPaused(false); // RESUME background polling
 }
