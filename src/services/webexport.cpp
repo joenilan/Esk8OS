@@ -1,6 +1,12 @@
 #include "webexport.h"
 #include <WebServer.h>
 #include <LittleFS.h>
+#include <Update.h>
+#include "esk8os.h"
+
+// Instantiate OTA state globals
+bool gOtaInProgress = false;
+int  gOtaProgressPct = 0;
 
 static WebServer   server(80);
 static const char* RIDES_DIR = "/rides";
@@ -14,10 +20,16 @@ static void handleIndex() {
            "<meta name=viewport content='width=device-width,initial-scale=1'>"
            "<title>ESK8OS ride logs</title><style>"
            "body{font-family:system-ui,sans-serif;background:#1a1a1a;color:#eee;margin:0;padding:18px}"
+           ".btn{display:inline-block;padding:10px 16px;background:#b950d7;color:#fff;border-radius:4px;text-decoration:none;border:none;cursor:pointer;font-size:16px;font-weight:bold;}"
            "h2{color:#b950d7;margin:0 0 12px}ul{list-style:none;padding:0}"
            "li{padding:10px 0;border-bottom:1px solid #333}a{color:#b950d7;text-decoration:none;font-size:18px}"
            ".s{color:#888;font-size:13px;margin-left:8px}.f{color:#888;margin-top:14px;font-size:13px}"
-           "</style></head><body><h2>ESK8OS ride logs</h2><ul>");
+           ".s{color:#888;font-size:13px;margin-left:8px}.f{color:#888;margin-top:14px;font-size:13px}"
+           "</style></head><body><h2>ESK8OS Update</h2>"
+           "<form method='POST' action='/update' enctype='multipart/form-data' onsubmit='document.getElementById(\"sb\").value=\"Updating...\"'>"
+           "<input type='file' name='update' accept='.bin' style='margin-bottom:12px'><br>"
+           "<input type='submit' value='Update Firmware' class='btn' id='sb'></form>"
+           "<hr style='border:1px solid #333;margin:20px 0'><h2>Ride logs</h2><ul>");
 
     int n = 0;
     File dir = LittleFS.open(RIDES_DIR);
@@ -55,10 +67,50 @@ static void handleDownload() {
     f.close();
 }
 
+static void handleUpdateComplete() {
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/plain", Update.hasError() ? "Update Failed" : "Update Success! Rebooting...");
+    if (!Update.hasError()) {
+        delay(1000);
+        ESP.restart();
+    }
+}
+
+static void handleUpdateUpload() {
+    HTTPUpload& upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+        gOtaInProgress = true;
+        gOtaProgressPct = 0;
+        gRedrawAll = true;
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+            Update.printError(Serial);
+        }
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+        if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+            Update.printError(Serial);
+        } else {
+            gOtaProgressPct = (int)((upload.totalSize * 100) / server.client().available());
+            // rough estimation if Content-Length isn't fully reliable
+            // We just let the UI draw UPDATING.
+        }
+    } else if (upload.status == UPLOAD_FILE_END) {
+        if (Update.end(true)) {
+            gOtaProgressPct = 100;
+        } else {
+            Update.printError(Serial);
+        }
+    } else if (upload.status == UPLOAD_FILE_ABORTED) {
+        Update.end();
+        gOtaInProgress = false;
+        gRedrawAll = true;
+    }
+}
+
 void webExportStart() {
     if (g_running) return;
-    server.on("/", handleIndex);
-    server.on("/dl", handleDownload);
+    server.on("/", HTTP_GET, handleIndex);
+    server.on("/dl", HTTP_GET, handleDownload);
+    server.on("/update", HTTP_POST, handleUpdateComplete, handleUpdateUpload);
     server.onNotFound([]() { server.send(404, "text/plain", "not found"); });
     server.begin();
     g_running = true;

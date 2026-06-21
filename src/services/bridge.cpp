@@ -4,6 +4,7 @@
 #include "ble_bridge.h"
 #include "webexport.h"
 #include "logging/ridelog.h"
+#include "ui/BebasNeue24.h"
 
 // VESC Tool BRIDGE MODE coordinator. Bridge mode lets VESC Tool configure the
 // ESC wirelessly through the display. This file owns the mode itself — the
@@ -142,6 +143,23 @@ void bridgeLoop() {
     // Refresh the throughput / station-count line a couple times a second.
     static unsigned long lastStats = 0;
     if (millis() - lastStats > 500) { lastStats = millis(); updateBridgeStats(); }
+
+    if (gOtaInProgress) {
+        static unsigned long lastOta = 0;
+        if (millis() - lastOta > 100) {
+            lastOta = millis();
+            GFX->fillRect(X0 + 8, 140, UI_W - 16, 60, COL_ACCENT);
+            GFX->setTextDatum(MC_DATUM);
+            GFX->setTextColor(COL_BG);
+            GFX->setFont(&BebasNeue24pt7b);
+            GFX->drawString("UPDATING...", X0 + UI_W / 2, 154);
+            GFX->setFont(&fonts::FreeSansBold9pt7b);
+            GFX->drawString(String(gOtaProgressPct) + "%", X0 + UI_W / 2, 184);
+            pushCanvasFull();
+        }
+        bridgeLastActive = millis(); // Prevent timeout
+        return;
+    }
 
     // Auto-timeout if idle for 3 minutes
     if (nowConn || traffic) bridgeLastActive = millis();

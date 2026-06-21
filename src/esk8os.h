@@ -53,6 +53,10 @@ extern float         currentSpeedKmh;
 extern unsigned long lastVescOkMs;
 extern bool          gRedrawAll;
 
+// OTA Update State
+extern bool       gOtaInProgress;
+extern int        gOtaProgressPct;
+
 // ---- branding (defined in main.cpp; external linkage const char*) ------------
 extern const char* PRODUCT_NAME;
 extern const char* RIDER_NAME;
