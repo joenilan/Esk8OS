@@ -14,6 +14,7 @@
 
 static const char* BRIDGE_BLE_NAME = "ESK8-BLE";   // name mobile VESC Tool scans for
 static String      bridgeStatus    = "WAITING";
+static unsigned long bridgeLastActive = 0;
 
 static void updateBridgeStatus(const char* status) {
     bridgeStatus = status;
@@ -91,6 +92,7 @@ static void drawBridgeScreen() {
 
 static void bridgeStart() {
     bridgeStatus = "WAITING";
+    bridgeLastActive = millis();
     wifiBridgeStart();
     // Also advertise the BLE (Nordic UART) backend for mobile VESC Tool. No-op
     // on builds without BLE_BRIDGE_ENABLED. Runs alongside the WiFi backend.
@@ -140,6 +142,13 @@ void bridgeLoop() {
     // Refresh the throughput / station-count line a couple times a second.
     static unsigned long lastStats = 0;
     if (millis() - lastStats > 500) { lastStats = millis(); updateBridgeStats(); }
+
+    // Auto-timeout if idle for 3 minutes
+    if (nowConn || traffic) bridgeLastActive = millis();
+
+    if (millis() - bridgeLastActive > 3 * 60 * 1000) {
+        exitBridgeMode();
+    }
 }
 
 void enterBridgeMode() {

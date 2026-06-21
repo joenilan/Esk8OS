@@ -26,7 +26,11 @@ enum PageId {
     PAGE_HUD = 0, PAGE_DASH, PAGE_POWER, PAGE_TRIP,
     PAGE_SETTINGS, PAGE_SYSTEM, PAGE_GRAPHS, PAGE_LOGS, PAGE_COUNT
 };
-enum SystemMode { MODE_DASHBOARD, MODE_VESC_BRIDGE };
+enum SystemMode {
+    MODE_DASHBOARD,
+    MODE_VESC_BRIDGE,
+    MODE_BRIDGE_CONFIRM
+};
 extern int        currentPage;
 extern SystemMode systemMode;
 

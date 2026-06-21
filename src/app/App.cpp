@@ -42,8 +42,12 @@ void checkButtons() {
         if (bothDownAt == 0) { bothDownAt = millis(); bothHandled = false; }
         if (!bothHandled && millis() - bothDownAt > 2000) {
             bothHandled = true;
-            if (systemMode == MODE_DASHBOARD) enterBridgeMode();
-            else                              exitBridgeMode();
+            if (systemMode == MODE_DASHBOARD) {
+                systemMode = MODE_BRIDGE_CONFIRM;
+                gRedrawAll = true;
+            } else if (systemMode == MODE_VESC_BRIDGE) {
+                exitBridgeMode();
+            }
         }
         lastLeftBtn = left; lastRightBtn = right;
         return;
@@ -56,6 +60,18 @@ void checkButtons() {
         return;
     }
     if (systemMode == MODE_VESC_BRIDGE) { lastLeftBtn = left; lastRightBtn = right; return; }
+
+    // BRIDGE CONFIRMATION logic
+    if (systemMode == MODE_BRIDGE_CONFIRM) {
+        if (left == LOW && lastLeftBtn == HIGH) {
+            enterBridgeMode();
+        } else if (right == LOW && lastRightBtn == HIGH) {
+            systemMode = MODE_DASHBOARD;
+            gRedrawAll = true;
+        }
+        lastLeftBtn = left; lastRightBtn = right;
+        return;
+    }
 
     // LEFT button: short-press cycles pages, hold ~1.5s resets the trip
     static unsigned long leftDownAt = 0;

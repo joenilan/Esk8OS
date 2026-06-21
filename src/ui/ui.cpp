@@ -1183,6 +1183,7 @@ static const char* faultName(int f) {
 
 // Highest-priority alert: 1 fault, 2 link-lost, 3 over-temp, 4 crit battery.
 int alertState() {
+    if (systemMode == MODE_BRIDGE_CONFIRM) return 5;
     if (vescFault != 0) return 1;
     if (!vescLinkOk) return 2;
     if (currentMotorTemp > MOTOR_TEMP_LIMIT || currentEscTemp > ESC_TEMP_LIMIT) return 3;
@@ -1213,6 +1214,9 @@ void updateOverlays(int state) {
         line2 = (currentMotorTemp > MOTOR_TEMP_LIMIT)
                 ? "MOTOR " + String((int)round(currentMotorTemp)) + "C"
                 : "ESC " + String((int)round(currentEscTemp)) + "C";
+    } else if (state == 5) {
+        line1 = "START BRIDGE?";
+        line2 = "L=YES    R=NO";
     } else {
         line1 = "LOW BATTERY";
         line2 = "STOP & CHARGE";
@@ -1221,9 +1225,11 @@ void updateOverlays(int state) {
 
     String textKey = line1 + "|" + line2 + "|" + line3;
     if (state != lastState || textKey != lastText || gRedrawAll) {
-        GFX->fillRect(X0 + 8, by, UI_W - 16, bh, COL_RED);
+        uint16_t bgColor = (state == 5) ? COL_ACCENT : COL_RED;
+        uint16_t fgColor = (state == 5) ? COL_BG : COL_WHITE;
+        GFX->fillRect(X0 + 8, by, UI_W - 16, bh, bgColor);
         GFX->setTextDatum(MC_DATUM);
-        GFX->setTextColor(COL_WHITE);
+        GFX->setTextColor(fgColor);
         if (crit) {
             GFX->setFont(&fonts::FreeSansBold9pt7b);
             GFX->drawString(line1, X0 + UI_W / 2, by + 17);
