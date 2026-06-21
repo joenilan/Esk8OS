@@ -1,6 +1,7 @@
 #include "app/App.h"
 #include "esk8os.h"
 #include "ui/ui.h"
+#include "ui/BebasNeue18.h"
 #include "board/BoardLilyGoTDisplayS3.h"
 #include "services/bridge.h"
 #include "util/console.h"
@@ -227,7 +228,7 @@ void dashboardLoop() {
     static bool toastWasUp = false;
     bool toastUp = (long)(gToastUntil - millis()) > 0;
     if (toastUp) {
-        GFX->setFont(&fonts::FreeSans12pt7b);
+        GFX->setFont(&BebasNeue18pt7b);
         int tw = GFX->textWidth(gToastMsg) + 28;
         int tx = X0 + (UI_W - tw) / 2;
         GFX->fillRect(tx, 150, tw, 30, COL_GREEN);

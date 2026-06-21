@@ -240,9 +240,8 @@ static void drawSpeedReadout(int spdInt, bool clearZone) {
     GFX->setTextDatum(TC_DATUM);
     GFX->drawString(String(spdInt), X0 + 96, 17);
 
-    // Unit: one step smaller than the old 12pt label so double-digit speeds do
-    // not collide with KM/H while the label still reads as dashboard chrome.
-    GFX->setFont(&fonts::FreeSansBold9pt7b);
+    // Unit: Bebas24 is smaller than the hero number, so it reads as secondary label.
+    GFX->setFont(&BebasNeue24pt7b);
     GFX->setTextDatum(TL_DATUM);
     GFX->setTextColor(COL_LABEL);
     GFX->drawString(useMph ? "MPH" : "KM/H", X0 + 10, 27);
@@ -1231,28 +1230,28 @@ void updateOverlays(int state) {
         uint16_t bgColor = (state == 5) ? COL_ACCENT : COL_RED;
         uint16_t fgColor = (state == 5) ? COL_BG : COL_WHITE;
         GFX->fillRect(X0 + 8, by, UI_W - 16, bh, bgColor);
-        GFX->setTextDatum(MC_DATUM);
+        GFX->setTextDatum(TC_DATUM);
         GFX->setTextColor(fgColor);
         if (crit) {
             // LOW BATTERY: big line1 in Bebas40, line2 in Bebas24, line3 (pct/V) in Bebas18
             GFX->setFont(&BebasNeue40pt7b);
-            GFX->drawString(line1, X0 + UI_W / 2, by + 10);
+            GFX->drawString(line1, X0 + UI_W / 2, by + 4);
             GFX->setFont(&BebasNeue24pt7b);
-            GFX->drawString(line2, X0 + UI_W / 2, by + 52);
+            GFX->drawString(line2, X0 + UI_W / 2, by + 44);
             GFX->setFont(&BebasNeue18pt7b);
-            GFX->drawString(line3, X0 + UI_W / 2, by + 76);
+            GFX->drawString(line3, X0 + UI_W / 2, by + 68);
         } else if (state == 5) {
             // BRIDGE CONFIRM: already Bebas
             GFX->setFont(&BebasNeue24pt7b);
-            GFX->drawString(line1, X0 + UI_W / 2, by + 12);
+            GFX->drawString(line1, X0 + UI_W / 2, by + 6);
             GFX->setFont(&BebasNeue18pt7b);
-            GFX->drawString(line2, X0 + UI_W / 2, by + 46);
+            GFX->drawString(line2, X0 + UI_W / 2, by + 34);
         } else {
             // FAULT / LINK LOST / HOT: line1 big, line2 medium
             GFX->setFont(&BebasNeue40pt7b);
-            GFX->drawString(line1, X0 + UI_W / 2, by + 14);
+            GFX->drawString(line1, X0 + UI_W / 2, by + 4);
             GFX->setFont(&BebasNeue24pt7b);
-            GFX->drawString(line2, X0 + UI_W / 2, by + 48);
+            GFX->drawString(line2, X0 + UI_W / 2, by + 40);
         }
         lastText = textKey;
         markDirty(by, bh);
