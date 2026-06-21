@@ -30,15 +30,23 @@ static void updateBridgeStatus(const char* status) {
     pushCanvasFull();
 }
 
-// Live throughput + connected-station count, just under the status box.
+// Live throughput per transport, just under the status box. The BLE line is a
+// diagnostic: RX climbs as the phone's requests reach the ESC, TX as replies are
+// forwarded back — so you can see exactly where a bridge session stalls.
 static void updateBridgeStats() {
-    GFX->fillRect(X0 + 8, 254, UI_W - 16, 12, COL_BG);
+    GFX->fillRect(X0 + 8, 254, UI_W - 16, 26, COL_BG);
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
+
     GFX->setTextColor(COL_DIM);
-    String s = "RX " + String(wifiBridgeRxBytes() / 1024) + "K  TX " + String(wifiBridgeTxBytes() / 1024) +
-               "K  STA " + String(wifiBridgeStationNum());
-    GFX->drawString(s, X0 + UI_W / 2, 260);
+    String wln = "WiFi RX " + String(wifiBridgeRxBytes() / 1024) + "K TX " +
+                 String(wifiBridgeTxBytes() / 1024) + "K STA " + String(wifiBridgeStationNum());
+    GFX->drawString(wln, X0 + UI_W / 2, 258);
+
+    GFX->setTextColor(bleBridgeConnected() ? COL_GREEN : COL_DIM);
+    String bln = String("BLE ") + (bleBridgeConnected() ? "ON" : "--") +
+                 "  RX " + String(bleBridgeRxBytes()) + " TX " + String(bleBridgeTxBytes());
+    GFX->drawString(bln, X0 + UI_W / 2, 270);
     pushCanvasFull();
 }
 
@@ -150,6 +158,8 @@ void enterBridgeMode() {
     }
     saveOdo();
     ridelogEndRide();           // flush + close the active ride so it downloads whole
+    while (Serial1.available()) Serial1.read();   // drop stale VESC poll bytes so the
+                                                  // first bridged packet starts clean
     systemMode = MODE_VESC_BRIDGE;
     bridgeStart();
     drawBridgeScreen();

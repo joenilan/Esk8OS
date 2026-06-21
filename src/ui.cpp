@@ -650,9 +650,9 @@ static void drawStaticLogs() {
     GFX->drawString("saved on trip reset", X0 + UI_W / 2, 268);
 }
 
-// Detailed-log (LittleFS) status line at the bottom of the LOGS list: a low-space
-// failsafe warning, the off state, or free space. Drawn inside the cleared list
-// band so updateLogs()'s markDirty(40,210) covers it.
+// Detailed-log (LittleFS) status line near the bottom of the LOGS card: a
+// low-space failsafe warning, the off state, or free space. Bottom-aligned so it
+// never collides with the ride summaries above it.
 static void drawLogStatus(int y) {
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
@@ -674,7 +674,7 @@ static void updateLogs() {
     if (!gRedrawAll && millis() - lastMs < 1000) return;
     lastMs = millis();
 
-    GFX->fillRect(X0 + 8, 40, UI_W - 16, 210, COL_BG);
+    GFX->fillRect(X0 + 8, 40, UI_W - 16, 220, COL_BG);
 
     uint8_t head = prefs.getUChar("logHead", 0);
     uint8_t count = prefs.getUChar("logCount", 0);
@@ -685,8 +685,8 @@ static void updateLogs() {
     if (count == 0) {
         GFX->setTextColor(COL_DIM);
         GFX->drawString("No saved rides yet.", X0 + 14, 48);
-        drawLogStatus(236);
-        markDirty(40, 210);
+        drawLogStatus(252);
+        markDirty(40, 222);
         return;
     }
 
@@ -721,8 +721,8 @@ static void updateLogs() {
                         "  " + String((int)round(log.maxWatts)) + "W", X0 + 12, y + 24);
     }
 
-    drawLogStatus(236);
-    markDirty(40, 210);
+    drawLogStatus(252);
+    markDirty(40, 222);
 }
 
 // ==========================================

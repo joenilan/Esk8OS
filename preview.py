@@ -660,7 +660,7 @@ def draw_page_logs(p, s):
             p.set_color(DIM)
             p.draw_string("max %d %s" % (round(max_kmh * cv), su), 12, y + 12)
             p.draw_string("%d Wh/%s  %dW" % (round(wh_per), du, round(max_w)), 12, y + 24)
-    _log_status_line(p, s, 236)
+    _log_status_line(p, s, 252)
     p.set_datum(MC); p.set_color(DIM)
     p.draw_string("saved on trip reset", W // 2, 268)
 

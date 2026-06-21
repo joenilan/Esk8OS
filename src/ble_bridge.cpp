@@ -69,8 +69,13 @@ void bleBridgeStop() {
 
 void bleBridgeNotify(const uint8_t* data, size_t len) {
     if (!g_tx || !g_connected || len == 0) return;
-    // Notify payloads are MTU-limited; chunk so long VESC replies get through.
-    const size_t chunk = 180;
+    // Chunk at 20 bytes — the universally safe BLE notify size. A client that
+    // doesn't negotiate a larger ATT_MTU caps notify payloads at MTU-3 = 20, so
+    // anything bigger SILENTLY TRUNCATES and the app (VESC Tool / Floaty) sees
+    // corrupt packets and shows nothing. VESC's own BLE modules chunk at 20 for
+    // exactly this reason; the VESC protocol is a byte stream, so the app's
+    // parser reassembles the chunks transparently.
+    const size_t chunk = 20;
     for (size_t off = 0; off < len; off += chunk) {
         size_t n = (len - off < chunk) ? (len - off) : chunk;
         g_tx->setValue(data + off, n);
