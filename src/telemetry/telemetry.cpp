@@ -1,4 +1,5 @@
 #include "telemetry.h"
+#include "transports/VescUartTransport.h"
 
 // ============================================================================
 // Telemetry data layer. Reads the VESC over UART (or a demo simulation), then
@@ -177,30 +178,33 @@ void pollVescData() {
     bool useSim = true;
     #ifndef WOKWI_SIMULATION
     useSim = gDemoMode;
-    if (!useSim && UART.getVescValues()) {
-        float wheelRPM = (UART.data.rpm / profilePolePairs()) * profileGearRatio();
-        currentSpeedKmh = (wheelRPM * profileCircumfM() * 60.0) / 1000.0;
-        currentSpeedMph = currentSpeedKmh * 0.621371;
+    if (!useSim) {
+        Esk8OS::Transports::RawVescData raw;
+        if (Esk8OS::Transports::getLatestVescData(&raw)) {
+            float wheelRPM = (raw.rpm / profilePolePairs()) * profileGearRatio();
+            currentSpeedKmh = (wheelRPM * profileCircumfM() * 60.0) / 1000.0;
+            currentSpeedMph = currentSpeedKmh * 0.621371;
 
-        currentVoltage = UART.data.inpVoltage;
-        float pct = ((currentVoltage - BATTERY_MIN_V) / (BATTERY_MAX_V - BATTERY_MIN_V)) * 100.0;
-        currentBatteryPercent = constrain((int)pct, 0, 100);
+            currentVoltage = raw.inpVoltage;
+            float pct = ((currentVoltage - BATTERY_MIN_V) / (BATTERY_MAX_V - BATTERY_MIN_V)) * 100.0;
+            currentBatteryPercent = constrain((int)pct, 0, 100);
 
-        currentMotorTemp = UART.data.tempMotor;
-        currentEscTemp = UART.data.tempMosfet;
-        currentAmps = UART.data.avgInputCurrent;
-        currentMotorAmps = UART.data.avgMotorCurrent;
-        currentDuty = UART.data.dutyCycleNow * 100.0;
-        if (!rideEnergyBaselineSet) {
-            rideStartVescWh = UART.data.wattHours;
-            rideStartVescWhRegen = UART.data.wattHoursCharged;
-            rideEnergyBaselineSet = true;
+            currentMotorTemp = raw.tempMotor;
+            currentEscTemp = raw.tempMosfet;
+            currentAmps = raw.avgInputCurrent;
+            currentMotorAmps = raw.avgMotorCurrent;
+            currentDuty = raw.dutyCycleNow * 100.0;
+            if (!rideEnergyBaselineSet) {
+                rideStartVescWh = raw.wattHours;
+                rideStartVescWhRegen = raw.wattHoursCharged;
+                rideEnergyBaselineSet = true;
+            }
+            currentWattHours = max(0.0f, raw.wattHours - rideStartVescWh);
+            currentWhRegen = max(0.0f, raw.wattHoursCharged - rideStartVescWhRegen);
+            currentWatts = currentVoltage * currentAmps;
+            vescFault = raw.error;
+            lastVescOkMs = millis();
         }
-        currentWattHours = max(0.0f, UART.data.wattHours - rideStartVescWh);
-        currentWhRegen = max(0.0f, UART.data.wattHoursCharged - rideStartVescWhRegen);
-        currentWatts = currentVoltage * currentAmps;
-        vescFault = (int)UART.data.error;
-        lastVescOkMs = millis();
     }
     #endif
     if (useSim) simulateTelemetry();
