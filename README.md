@@ -58,7 +58,7 @@ Cycle with a short Left press:
 - Right short press: toggle MPH/KM-H. On the **Settings** page it changes the
   highlighted setting (cycle wheel profile, toggle units, toggle demo, or step
   brightness).
-- Both buttons held for about 2 seconds: enter/exit VESC bridge mode
+- Both buttons held for about 2 seconds: prompts the VESC bridge mode confirmation overlay (`L = YES`, `R = CANCEL`).
 
 Demo mode is now a runtime setting — toggle it from the Settings page instead of
 reflashing. It persists across reboots.
@@ -73,23 +73,29 @@ desktop VESC Tool and the FSESC UART.
 
 - WiFi AP: `ESK8-BRIDGE`
 - Password: `esk8bridge`
-- TCP endpoint: `192.168.4.1:65102`
+- TCP endpoint: `192.168.4.1:65102` (Desktop VESC Tool)
+- BLE endpoint: `ESK8-BLE` (Mobile VESC Tool / Floaty App)
 
-The TCP endpoint IP is also shown on-screen, and the bridge screen displays
-live link status, throughput (RX/TX bytes), and the connected client count.
+The active connection endpoints are shown on-screen. The bridge screen continuously displays
+live link status, throughput (RX/TX bytes), and the connected client count for diagnostics.
 
-In desktop VESC Tool, connect to the AP, then use a TCP connection to that
-endpoint. This is the first bridge backend; mobile VESC Tool will likely need a
-BLE backend in a later pass.
+> **Safety Timeout:** If the bridge is started but left idle with zero active clients and traffic for 3 minutes, it will automatically shut down the network radios and return to the dashboard to prevent battery drain and secure the board.
 
-While bridge mode is active, dashboard telemetry is paused by design. Desktop
-VESC Tool owns the UART during that session.
+In desktop VESC Tool, connect to the AP, then use a TCP connection to that endpoint. For mobile (VESC Tool / Floaty), scan for the BLE device. The ESP32 handles transparently multiplexing both transports.
+
+While bridge mode is active, dashboard telemetry is paused by design. The VESC Tool owns the UART during that session.
+
+### Local Web Portal & OTA Updates
+
+While in Bridge Mode, the ESP32 also spins up a local web server at `http://192.168.4.1`. From a connected phone or laptop, you can:
+- **Download Ride Logs:** View a list of all your `.csv` ride logs and download them directly over Wi-Fi.
+- **OTA Updates:** Upload a new `firmware.bin` directly through the browser. The display will show an `UPDATING...` progress bar and automatically reboot into the new firmware when complete. No USB cable required!
 
 ## Data sources
 
 With demo mode **off**, speed, voltage, ESC temp, motor temp, current, duty,
 Wh used, regen Wh, watts, and VESC faults come from the FSESC when dashboard
-mode is active.
+mode is active. The dashboard also supports listening for **ESP-NOW** packets on Core 0 for external auxiliary sensors (e.g. smart BMS modules) without blocking the display loop.
 
 Trip and odometer are calculated locally on the ESP32 from speed over time and
 saved in flash. Range estimates and health percentages are currently placeholders
