@@ -9,7 +9,6 @@ const int   STORAGE_SCHEMA_VERSION = 2;
 const bool  DEMO_MODE_DEFAULT = true;
 
 bool gDemoMode = DEMO_MODE_DEFAULT;
-bool gEspnowEnabled = false;
 
 const int BATTERY_PARALLEL_COUNT = 6;
 const int BATTERY_CELL_CAPACITY_MAH = 2800;
@@ -66,7 +65,6 @@ void begin() {
     if (activeWheelProfile < 0 || activeWheelProfile >= 2) activeWheelProfile = 0;
 
     gDemoMode      = prefs.getBool("demo", DEMO_MODE_DEFAULT);
-    gEspnowEnabled = prefs.getBool("espnowEna", false);
     useMph         = prefs.getBool("mph", USE_MPH_DEFAULT);
     gBrightnessPct = constrain(prefs.getInt("bright", 100), 10, 100);
     gThemeIdx      = constrain(prefs.getInt("theme", 0), 0, THEME_COUNT - 1);

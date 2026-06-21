@@ -36,7 +36,6 @@ extern SystemMode systemMode;
 
 // ---- demo flag --------------------------------------------------------------
 extern bool gDemoMode;
-extern bool gEspnowEnabled;             // runtime demo toggle (Settings page)
 #if defined(WOKWI_SIMULATION)
   #define DEMO_DATA true
 #else

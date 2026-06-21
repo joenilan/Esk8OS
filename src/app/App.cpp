@@ -9,7 +9,6 @@
 #include "ui/BebasNeue24.h"
 #include "util/console.h"
 #include "transports/VescUartTransport.h"
-#include "transports/EspNowTransport.h"
 #include "telemetry/telemetry.h"
 #include "logging/ridelog.h"
 
