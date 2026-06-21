@@ -147,16 +147,16 @@ static void drawBootSplashFrame() {
     // Wordmark: big "ESK8" with a small superscript "OS" -> "ESK8 OS"
     const int topY = 60, gap = 4;
     GFX->setTextDatum(TL_DATUM);
-    GFX->setFont(&BebasNeue80pt7b);
+    GFX->setFont(&BebasNeue110pt7b);
     int wMain = GFX->textWidth("ESK8");
-    GFX->setFont(&BebasNeue24pt7b);
+    GFX->setFont(&BebasNeue34pt7b);
     int wOs = GFX->textWidth("OS");
     int startX = X0 + (UI_W - (wMain + gap + wOs)) / 2;
 
-    GFX->setFont(&BebasNeue80pt7b);
+    GFX->setFont(&BebasNeue110pt7b);
     GFX->setTextColor(COL_WHITE);
     GFX->drawString("ESK8", startX, topY);
-    GFX->setFont(&BebasNeue24pt7b);
+    GFX->setFont(&BebasNeue34pt7b);
     GFX->setTextColor(COL_ACCENT);                 // superscript, top-aligned
     GFX->drawString("OS", startX + wMain + gap, topY);
 
@@ -456,7 +456,7 @@ static void updateHud() {
     // Big battery cells (dynamic to the configured cell count) + percent. The
     // secondary cluster is pushed toward the bottom to fill the space under the
     // hero speed instead of leaving it empty.
-    drawBatteryCellsRow(158, 18, true);
+    drawBatteryCellsRow(150, 18, true);
     GFX->setFont(&BebasNeue34pt7b);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_WHITE);
