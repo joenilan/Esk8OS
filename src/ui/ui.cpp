@@ -2,9 +2,12 @@
 #include "ui.h"            // public UI entry points used by main.cpp
 #include "telemetry/telemetry.h"     // getHistorySample() for the graph pages
 #include "logging/ridelog.h"       // detailed-log status for the LOGS page warning
+#include "BebasNeue18.h"   // condensed small labels
+#include "BebasNeue24.h"   // condensed medium — overlays, units
+#include "BebasNeue34.h"   // condensed large — panel values, battery %
+#include "BebasNeue40.h"   // condensed hero — splash wordmark
 #include "BebasNeue80.h"   // hero speed number (DASH page)
 #include "BebasNeue110.h"  // native crisp hero font for the Big HUD speed
-#include "BebasNeue24.h"   // condensed font for tight UI elements
 // FW_VERSION / FW_VERSION_FULL are stamped into version.h by the pre-build hook
 // (see main.cpp). Same __has_include fallback so this TU compiles standalone.
 #if __has_include("version.h")
@@ -144,16 +147,16 @@ static void drawBootSplashFrame() {
     // Wordmark: big "ESK8" with a small superscript "OS" -> "ESK8 OS"
     const int topY = 86, gap = 3;
     GFX->setTextDatum(TL_DATUM);
-    GFX->setFont(&fonts::FreeSansBold24pt7b);
+    GFX->setFont(&BebasNeue40pt7b);
     int wMain = GFX->textWidth("ESK8");
-    GFX->setFont(&fonts::FreeSansBold12pt7b);
+    GFX->setFont(&BebasNeue18pt7b);
     int wOs = GFX->textWidth("OS");
     int startX = X0 + (UI_W - (wMain + gap + wOs)) / 2;
 
-    GFX->setFont(&fonts::FreeSansBold24pt7b);
+    GFX->setFont(&BebasNeue40pt7b);
     GFX->setTextColor(COL_WHITE);
     GFX->drawString("ESK8", startX, topY);
-    GFX->setFont(&fonts::FreeSansBold12pt7b);
+    GFX->setFont(&BebasNeue18pt7b);
     GFX->setTextColor(COL_ACCENT);                 // superscript, top-aligned
     GFX->drawString("OS", startX + wMain + gap, topY);
 
@@ -412,10 +415,9 @@ static void drawHudSmallMetric(int x, int y, int w, const char* label, String va
     GFX->setTextColor(COL_DIM);
     GFX->drawString(label, X0 + x + w / 2, y + 5);
 
-    // Auto-fit: drop to the smaller bold font if the value would overflow the
-    // tile (e.g. a 3-digit range like "132mi"), so it never bleeds past the box.
-    GFX->setFont(&fonts::FreeSansBold12pt7b);
-    if (GFX->textWidth(value) > w - 6) GFX->setFont(&fonts::FreeSansBold9pt7b);
+    // Auto-fit: drop to the smaller Bebas if the value would overflow the tile.
+    GFX->setFont(&BebasNeue24pt7b);
+    if (GFX->textWidth(value) > w - 6) GFX->setFont(&BebasNeue18pt7b);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(color);
     GFX->drawString(value, X0 + x + w / 2, y + 29);
@@ -444,7 +446,7 @@ static void updateHud() {
     GFX->setTextColor(COL_WHITE);
     GFX->drawString(String(spdInt), X0 + UI_W / 2, hudSpeedY);
 
-    GFX->setFont(&fonts::FreeSansBold12pt7b);
+    GFX->setFont(&BebasNeue24pt7b);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_LABEL);
     GFX->drawString(useMph ? "MPH" : "KM/H", X0 + UI_W / 2, 128);
@@ -455,7 +457,7 @@ static void updateHud() {
     // secondary cluster is pushed toward the bottom to fill the space under the
     // hero speed instead of leaving it empty.
     drawBatteryCellsRow(158, 18, true);
-    GFX->setFont(&fonts::FreeSansBold12pt7b);
+    GFX->setFont(&BebasNeue34pt7b);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_WHITE);
     GFX->drawString(String(currentBatteryPercent) + "%", X0 + UI_W / 2, 192);
@@ -824,17 +826,17 @@ static void updateSpeed() {
 static void drawStat(int cx, String value, const char* unit, uint16_t vcol) {
     const int cy = 103;   // vertical middle of the panel (86 + 32/2), nudged
     const int g = 3;
-    GFX->setFont(&fonts::FreeSansBold12pt7b);
+    GFX->setFont(&BebasNeue34pt7b);
     int wn = GFX->textWidth(value);
-    GFX->setFont(&fonts::FreeSans12pt7b);
+    GFX->setFont(&BebasNeue18pt7b);
     int wu = GFX->textWidth(unit);
     int gx = cx - (wn + g + wu) / 2;
 
     GFX->setTextDatum(ML_DATUM);
-    GFX->setFont(&fonts::FreeSansBold12pt7b);
+    GFX->setFont(&BebasNeue34pt7b);
     GFX->setTextColor(vcol);
     GFX->drawString(value, gx, cy);
-    GFX->setFont(&fonts::FreeSans12pt7b);
+    GFX->setFont(&BebasNeue18pt7b);
     GFX->setTextColor(COL_DIM);
     GFX->drawString(unit, gx + wn + g, cy);
 }
