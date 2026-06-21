@@ -6,6 +6,7 @@
 #include "ui/ui.h"
 #include "app/App.h"
 #include "transports/VescUartTransport.h"
+#include "transports/EspNowTransport.h"
 #include "telemetry/telemetry.h"
 #include "logging/ridelog.h"
 
@@ -31,6 +32,7 @@ void setup() {
     
     Esk8OS::Board::begin();
     Esk8OS::Transports::beginVescUart();
+    Esk8OS::Transports::beginEspNow();
 
     #ifndef WOKWI_SIMULATION
     applyBrightness();

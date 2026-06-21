@@ -4,6 +4,8 @@
 #include "board/BoardLilyGoTDisplayS3.h"
 #include "services/bridge.h"
 #include "util/console.h"
+#include "transports/VescUartTransport.h"
+#include "transports/EspNowTransport.h"
 #include "telemetry/telemetry.h"
 #include "logging/ridelog.h"
 
