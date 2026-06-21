@@ -215,6 +215,18 @@ void dashboardLoop() {
     int alert = alertState();
     updateClock();
 
+    // -- Dynamic Low Power Mode --
+    // Dim the backlight to 10% (25/255) when battery is low to squeeze out range.
+    static bool lowPowerActive = false;
+    bool needsLowPower = (currentBatteryPercent <= 15);
+    if (needsLowPower && !lowPowerActive) {
+        lowPowerActive = true;
+        Esk8OS::Board::setBacklight(25);
+    } else if (!needsLowPower && lowPowerActive) {
+        lowPowerActive = false;
+        applyBrightness(); // restore user's setting
+    }
+
     if (alert == 0 || gRedrawAll) {   
         updateCurrentPageContent();
     }

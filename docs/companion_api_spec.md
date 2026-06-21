@@ -1,0 +1,83 @@
+# ESK8OS Companion App - BLE API Specification
+
+This document details the custom Bluetooth Low Energy (BLE) protocol that the ESP32 firmware will expose. You can hand this document to any future agent or Android developer to instantly build a companion app that natively syncs with your longboard.
+
+## 1. Overview
+Instead of multiplexing the raw VESC UART protocol, the ESP32 acts as the single "master" querying the VESC. The ESP32 parses the data, runs the math (speed, range, battery limits), and broadcasts the final display-ready values over a custom BLE service using lightweight JSON. 
+
+The Android app acts as a read/write client to this custom service.
+
+## 2. BLE UUIDs
+
+**Base Service UUID:** `5043697A-0000-4682-93CB-33BB0A149F7E`
+
+| Characteristic | UUID | Properties | Purpose |
+| :--- | :--- | :--- | :--- |
+| **Telemetry** | `5043697A-0001-4682-93CB-33BB0A149F7E` | `NOTIFY` | High-frequency ride data (Speed, Battery, etc) |
+| **Settings** | `5043697A-0002-4682-93CB-33BB0A149F7E` | `READ`, `WRITE` | Board configuration (Theme, Wheel size, MPH/KMH) |
+| **Command** | `5043697A-0003-4682-93CB-33BB0A149F7E` | `WRITE` | Triggers for actions (Trip Reset, Change Page) |
+
+---
+
+## 3. Telemetry (Characteristic `0001`)
+The ESP32 pushes a JSON payload at **5Hz (every 200ms)** while the board is on. 
+The companion app simply subscribes to notifications on this characteristic and parses the JSON to update its UI.
+
+**Example Payload:**
+```json
+{
+  "spd": 24.5,       // Current speed (in whatever unit the board is configured for)
+  "bat": 85,         // Battery percentage (0-100)
+  "v": 45.2,         // Battery voltage
+  "w": 650,          // Current power in Watts
+  "mtr_t": 45,       // Motor temp (Celsius)
+  "esc_t": 38,       // ESC temp (Celsius)
+  "rng": 12.4,       // Estimated remaining range
+  "max_s": 40.1,     // Session Max Speed
+  "wh": 120          // Session Watt-Hours used
+}
+```
+
+---
+
+## 4. Settings (Characteristic `0002`)
+Allows the companion app to remotely configure the ESP32 without touching the physical buttons.
+
+### Read
+When the Android app connects, it reads this characteristic to get the board's current configuration.
+```json
+{
+  "mph": true,
+  "theme": "cam",
+  "poles": 14,
+  "wheel": 105,
+  "gear": 2.4,
+  "bat_s": 12
+}
+```
+
+### Write
+The Android app writes a JSON object to this characteristic to change settings. The ESP32 parses it, saves to non-volatile storage (NVS), and immediately repaints the display. *You can send partial updates.*
+```json
+{
+  "theme": "cyber",
+  "mph": false
+}
+```
+
+---
+
+## 5. Commands (Characteristic `0003`)
+Writing a raw ASCII string to this characteristic triggers immediate physical actions on the ESP32. This allows your phone to act as a remote control for the dashboard UI.
+
+| Command String | Action |
+| :--- | :--- |
+| `"TRIP_RESET"` | Resets the current session/trip distance and max metrics. |
+| `"PAGE_NEXT"` | Swipes the physical ESP32 display to the next page. |
+| `"PAGE_PREV"` | Swipes the physical ESP32 display to the previous page. |
+| `"BRIDGE_MODE"` | Halts telemetry and forces the board into VESC Tool Bridge Mode. |
+| `"REBOOT"` | Reboots the ESP32 display. |
+
+## 6. Implementation Notes for Android Devs
+- **MTU Negotiation:** Ensure the Android BLE client requests a high MTU (e.g., `512` bytes) upon connection. JSON payloads are small, but they will exceed the default `20` byte BLE limit.
+- **Connection Loss:** If the Android app disconnects, the ESP32 will automatically resume advertising in the background.
