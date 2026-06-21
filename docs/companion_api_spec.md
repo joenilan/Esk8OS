@@ -76,8 +76,19 @@ Writing a raw ASCII string to this characteristic triggers immediate physical ac
 | `"PAGE_NEXT"` | Swipes the physical ESP32 display to the next page. |
 | `"PAGE_PREV"` | Swipes the physical ESP32 display to the previous page. |
 | `"BRIDGE_MODE"` | Halts telemetry and forces the board into VESC Tool Bridge Mode. |
+| `"WIFI_EXPORT_START"`| Turns on the ESP32's WiFi AP and HTTP server for bulk log downloading. |
 | `"REBOOT"` | Reboots the ESP32 display. |
 
-## 6. Implementation Notes for Android Devs
+## 6. Hybrid WiFi Log Transfer (Bulk Data)
+Because the ESP32 logs 1 line of CSV per second, historical ride logs can easily exceed 500 KB. Attempting to download files this large over BLE is mathematically slow and prone to timeout errors. 
+
+To download historical logs, the Android app should use a **Hybrid Transfer**:
+1. The app writes `"WIFI_EXPORT_START"` to the Command characteristic (`0003`).
+2. The ESP32 immediately spins up its `ESK8-BRIDGE` WiFi Access Point.
+3. The Android app prompts the user to join the `ESK8-BRIDGE` network (Password: `esk8bridge`).
+4. The Android app hits the ESP32's internal HTTP Web Server (`http://192.168.4.1/`) to download the raw CSV files over fast TCP.
+5. Once downloaded, the user disconnects from the WiFi, and the board seamlessly resumes BLE telemetry.
+
+## 7. Implementation Notes for Android Devs
 - **MTU Negotiation:** Ensure the Android BLE client requests a high MTU (e.g., `512` bytes) upon connection. JSON payloads are small, but they will exceed the default `20` byte BLE limit.
 - **Connection Loss:** If the Android app disconnects, the ESP32 will automatically resume advertising in the background.
