@@ -4,6 +4,7 @@
 #include "logging/ridelog.h"       // detailed-log status for the LOGS page warning
 #include "BebasNeue80.h"   // hero speed number (DASH page)
 #include "BebasNeue110.h"  // native crisp hero font for the Big HUD speed
+#include "BebasNeue24.h"   // condensed font for tight UI elements
 // FW_VERSION / FW_VERSION_FULL are stamped into version.h by the pre-build hook
 // (see main.cpp). Same __has_include fallback so this TU compiles standalone.
 #if __has_include("version.h")
@@ -1235,6 +1236,11 @@ void updateOverlays(int state) {
             GFX->drawString(line1, X0 + UI_W / 2, by + 17);
             GFX->drawString(line2, X0 + UI_W / 2, by + 49);
             GFX->drawString(line3, X0 + UI_W / 2, by + 73);
+        } else if (state == 5) {
+            GFX->setFont(&BebasNeue24pt7b);
+            GFX->drawString(line1, X0 + UI_W / 2, by + 12);
+            GFX->setFont(&fonts::FreeSansBold9pt7b);
+            GFX->drawString(line2, X0 + UI_W / 2, by + 46);
         } else {
             GFX->setFont(&fonts::FreeSansBold12pt7b);
             GFX->drawString(line1, X0 + UI_W / 2, by + 16);
