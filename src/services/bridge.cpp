@@ -4,6 +4,7 @@
 #include "ble_bridge.h"
 #include "webexport.h"
 #include "logging/ridelog.h"
+#include "ui/BebasNeue18.h"
 #include "ui/BebasNeue24.h"
 
 // VESC Tool BRIDGE MODE coordinator. Bridge mode lets VESC Tool configure the
@@ -26,7 +27,7 @@ static void updateBridgeStatus(const char* status) {
     else if (strcmp(status, "ERROR") == 0) c = COL_RED;
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(c);
-    GFX->setFont(&fonts::FreeSansBold12pt7b);
+    GFX->setFont(&BebasNeue24pt7b);
     GFX->drawString(status, X0 + UI_W / 2, 232);
     GFX->setFont(&fonts::Font0);
     pushCanvasFull();
@@ -57,7 +58,7 @@ static void drawBridgeScreen() {
 
     GFX->setTextDatum(TC_DATUM);
     GFX->setTextColor(COL_ACCENT);
-    GFX->setFont(&fonts::FreeSansBold12pt7b);
+    GFX->setFont(&BebasNeue24pt7b);
     GFX->drawString("BRIDGE MODE", X0 + UI_W / 2, 18);
 
     GFX->setFont(&fonts::Font0);
@@ -153,7 +154,7 @@ void bridgeLoop() {
             GFX->setTextColor(COL_BG);
             GFX->setFont(&BebasNeue24pt7b);
             GFX->drawString("UPDATING...", X0 + UI_W / 2, 154);
-            GFX->setFont(&fonts::FreeSansBold9pt7b);
+            GFX->setFont(&BebasNeue18pt7b);
             GFX->drawString(String(gOtaProgressPct) + "%", X0 + UI_W / 2, 184);
             pushCanvasFull();
         }
@@ -174,7 +175,7 @@ void enterBridgeMode() {
         GFX->fillRect(X0 + 8, 140, UI_W - 16, 40, COL_RED);
         GFX->setTextDatum(MC_DATUM);
         GFX->setTextColor(COL_WHITE);
-        GFX->setFont(&fonts::FreeSans12pt7b);
+        GFX->setFont(&BebasNeue24pt7b);
         GFX->drawString("STOP BOARD FIRST", X0 + UI_W / 2, 160);
         GFX->setFont(&fonts::Font0);
         pushCanvasFull();

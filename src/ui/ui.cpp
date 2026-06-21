@@ -145,25 +145,25 @@ static void drawBootSplashFrame() {
     GFX->drawString(FW_VERSION, X0 + UI_W - 6, 6);
 
     // Wordmark: big "ESK8" with a small superscript "OS" -> "ESK8 OS"
-    const int topY = 86, gap = 3;
+    const int topY = 60, gap = 4;
     GFX->setTextDatum(TL_DATUM);
-    GFX->setFont(&BebasNeue40pt7b);
+    GFX->setFont(&BebasNeue80pt7b);
     int wMain = GFX->textWidth("ESK8");
-    GFX->setFont(&BebasNeue18pt7b);
+    GFX->setFont(&BebasNeue24pt7b);
     int wOs = GFX->textWidth("OS");
     int startX = X0 + (UI_W - (wMain + gap + wOs)) / 2;
 
-    GFX->setFont(&BebasNeue40pt7b);
+    GFX->setFont(&BebasNeue80pt7b);
     GFX->setTextColor(COL_WHITE);
     GFX->drawString("ESK8", startX, topY);
-    GFX->setFont(&BebasNeue18pt7b);
+    GFX->setFont(&BebasNeue24pt7b);
     GFX->setTextColor(COL_ACCENT);                 // superscript, top-aligned
     GFX->drawString("OS", startX + wMain + gap, topY);
 
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
-    GFX->drawString("RIDE DASHBOARD", X0 + UI_W / 2, 168);
+    GFX->drawString("RIDE DASHBOARD", X0 + UI_W / 2, 188);
 
     // Controls legend (boot-time reference; keeps the dashboard itself uncluttered)
     GFX->setFont(&fonts::Font0);
@@ -460,7 +460,7 @@ static void updateHud() {
     GFX->setFont(&BebasNeue34pt7b);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_WHITE);
-    GFX->drawString(String(currentBatteryPercent) + "%", X0 + UI_W / 2, 192);
+    GFX->drawString(String(currentBatteryPercent) + "%", X0 + UI_W / 2, 184);
 
     // Four key ride tiles (2x2), sitting just above the bottom status bar.
     int watts = (int)round(max(0.0f, peakWatts));
@@ -1234,19 +1234,24 @@ void updateOverlays(int state) {
         GFX->setTextDatum(MC_DATUM);
         GFX->setTextColor(fgColor);
         if (crit) {
-            GFX->setFont(&fonts::FreeSansBold9pt7b);
-            GFX->drawString(line1, X0 + UI_W / 2, by + 17);
-            GFX->drawString(line2, X0 + UI_W / 2, by + 49);
-            GFX->drawString(line3, X0 + UI_W / 2, by + 73);
+            // LOW BATTERY: big line1 in Bebas40, line2 in Bebas24, line3 (pct/V) in Bebas18
+            GFX->setFont(&BebasNeue40pt7b);
+            GFX->drawString(line1, X0 + UI_W / 2, by + 10);
+            GFX->setFont(&BebasNeue24pt7b);
+            GFX->drawString(line2, X0 + UI_W / 2, by + 52);
+            GFX->setFont(&BebasNeue18pt7b);
+            GFX->drawString(line3, X0 + UI_W / 2, by + 76);
         } else if (state == 5) {
+            // BRIDGE CONFIRM: already Bebas
             GFX->setFont(&BebasNeue24pt7b);
             GFX->drawString(line1, X0 + UI_W / 2, by + 12);
-            GFX->setFont(&fonts::FreeSansBold9pt7b);
+            GFX->setFont(&BebasNeue18pt7b);
             GFX->drawString(line2, X0 + UI_W / 2, by + 46);
         } else {
-            GFX->setFont(&fonts::FreeSansBold12pt7b);
-            GFX->drawString(line1, X0 + UI_W / 2, by + 16);
-            GFX->setFont(&fonts::Font0);
+            // FAULT / LINK LOST / HOT: line1 big, line2 medium
+            GFX->setFont(&BebasNeue40pt7b);
+            GFX->drawString(line1, X0 + UI_W / 2, by + 14);
+            GFX->setFont(&BebasNeue24pt7b);
             GFX->drawString(line2, X0 + UI_W / 2, by + 48);
         }
         lastText = textKey;
