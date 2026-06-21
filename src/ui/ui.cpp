@@ -145,18 +145,18 @@ static void drawBootSplashFrame() {
     GFX->drawString(FW_VERSION, X0 + UI_W - 6, 6);
 
     // Wordmark: big "ESK8" with a small superscript "OS" -> "ESK8 OS"
-    const int topY = 60, gap = 4;
+    const int topY = 70, gap = 4;
     GFX->setTextDatum(TL_DATUM);
-    GFX->setFont(&BebasNeue110pt7b);
+    GFX->setFont(&BebasNeue80pt7b);
     int wMain = GFX->textWidth("ESK8");
-    GFX->setFont(&BebasNeue34pt7b);
+    GFX->setFont(&BebasNeue24pt7b);
     int wOs = GFX->textWidth("OS");
     int startX = X0 + (UI_W - (wMain + gap + wOs)) / 2;
 
-    GFX->setFont(&BebasNeue110pt7b);
+    GFX->setFont(&BebasNeue80pt7b);
     GFX->setTextColor(COL_WHITE);
     GFX->drawString("ESK8", startX, topY);
-    GFX->setFont(&BebasNeue34pt7b);
+    GFX->setFont(&BebasNeue24pt7b);
     GFX->setTextColor(COL_ACCENT);                 // superscript, top-aligned
     GFX->drawString("OS", startX + wMain + gap, topY);
 

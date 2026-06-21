@@ -152,7 +152,7 @@ def duty_color(d):
     return WHITE
 
 # datum constants (subset of TFT_eSPI)
-TL, TC, TR, ML, MC, MR = "TL", "TC", "TR", "ML", "MC", "MR"
+TL, TC, TR, ML, MC, MR, BL, BC, BR = "TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"
 
 
 class Panel:
@@ -208,9 +208,9 @@ class Panel:
 
     # -- text ----------------------------------------------------------------
     def _anchor(self, font):
-        # Pillow text anchors: horizontal l/m/r, vertical a(top)/m/s(baseline)
+        # Pillow text anchors: horizontal l/m/r, vertical a(top)/m/s(baseline)/d(bottom)
         h = {"L": "l", "C": "m", "R": "r"}[self.datum[1]]
-        v = {"T": "a", "M": "m"}[self.datum[0]]
+        v = {"T": "a", "M": "m", "B": "d"}[self.datum[0]]
         return h + v
 
     def draw_string(self, text, x, y, font=None, px=None):
@@ -428,7 +428,7 @@ def draw_page_dash(p, s):
     p.set_datum(TC); p.set_color(WHITE)
     p.draw_string(str(s.speed), 96, 17, px=80)
     p.set_datum(TL); p.set_color(LABEL)
-    p.draw_string(speed_unit(s), 10, 27, font=p.sans(17, bold=True))
+    p.draw_string(speed_unit(s), 10, 27, px=24)
 
     # -- VOLTS | WATTS panel (y 86..118) ------------------------------------
     bw, bh, by = 162, 32, 86
@@ -438,16 +438,14 @@ def draw_page_dash(p, s):
     p.d.line([midx, by + 5, midx, by + bh - 5], fill=BORDER)
     cy = by + bh // 2 - 1
 
-    def stat(cx, value, unit, vcol, npx=18, upx=17, g=3):
-        value_font = p.sans(npx, bold=True)
-        unit_font = p.sans(upx)
-        wn = p.text_w(value, font=value_font)
-        wu = p.text_w(unit, font=unit_font)
+    def stat(cx, value, unit, vcol, g=3):
+        wn = p.text_w(value, px=34)
+        wu = p.text_w(unit, px=18)
         gx = cx - (wn + g + wu) / 2
         p.set_datum(ML); p.set_color(vcol)
-        p.draw_string(value, int(gx), cy, font=value_font)
+        p.draw_string(value, int(gx), cy, px=34)
         p.set_datum(ML); p.set_color(DIM)
-        p.draw_string(unit, int(gx + wn + g), cy, font=unit_font)
+        p.draw_string(unit, int(gx + wn + g), cy, px=18)
 
     stat((bx + midx) // 2, "%.1f" % s.voltage, "V", batt_color(s.batt_pct))
     stat((midx + bx + bw) // 2, str(s.watts), "W", watt_color(s.watts))
@@ -667,19 +665,18 @@ def draw_page_logs(p, s):
 
 def draw_fault_banner(p, s):
     p.fill_rect(8, 118, W - 16, 64, RED)
-    p.set_datum(MC); p.set_color(WHITE)
-    p.draw_string("! FAULT", W // 2, 134, px=24)
-    p.set_datum(MC); p.set_color(WHITE)
-    p.draw_string(s.fault, W // 2, 166)
+    p.set_datum(TC); p.set_color(WHITE)
+    p.draw_string("! FAULT", W // 2, 118 + 4, px=40)
+    p.set_datum(TC); p.set_color(WHITE)
+    p.draw_string(s.fault, W // 2, 118 + 40, px=24)
 
 
 def draw_crit_overlay(p, s):
     p.fill_rect(8, 108, W - 16, 92, RED)
-    p.set_datum(MC); p.set_color(WHITE)
-    alert_font = p.sans(15, bold=True)
-    p.draw_string("LOW BATTERY", W // 2, 125, font=alert_font)
-    p.draw_string("STOP & CHARGE", W // 2, 157, font=alert_font)
-    p.draw_string("%d%%   %.1f V" % (s.batt_pct, s.voltage), W // 2, 181, font=alert_font)
+    p.set_datum(TC); p.set_color(WHITE)
+    p.draw_string("LOW BATTERY", W // 2, 108 + 4, px=40)
+    p.draw_string("STOP & CHARGE", W // 2, 108 + 44, px=24)
+    p.draw_string("%d%%   %.1f V" % (s.batt_pct, s.voltage), W // 2, 108 + 68, px=18)
 
 
 def draw_toast(p, msg):
@@ -741,8 +738,8 @@ def draw_splash(p, s, progress=0.7):
     p.fill_screen(BG)
 
     # wordmark: big "ESK8" with a small superscript "OS" -> "ESK8 OS"
-    main_px, os_px, gap = 80, 34, 3
-    top = 86
+    main_px, os_px, gap = 80, 24, 4
+    top = 70
     wmain = p.text_w("ESK8", px=main_px)
     wos = p.text_w("OS", px=os_px)
     x = (W - (wmain + gap + wos)) / 2
@@ -753,7 +750,7 @@ def draw_splash(p, s, progress=0.7):
 
     # tagline
     p.set_datum(MC); p.set_color(DIM)
-    p.draw_string("RIDE DASHBOARD", W // 2, 168)
+    p.draw_string("RIDE DASHBOARD", W // 2, 188)
 
     # controls legend
     p.set_datum(MC); p.set_color(DIM)
@@ -798,26 +795,23 @@ def draw_hud(p, s):
 
     # unit, centered under the number
     p.set_datum(MC); p.set_color(LABEL)
-    p.draw_string(speed_unit(s), W // 2, 128, font=p.sans(15, bold=True))
+    p.draw_string(speed_unit(s), W // 2, 128, px=24)
 
     p.hline(8, 146, W - 16, BORDER)   # separator
 
     # battery cells — larger than the shared strip, centered; the secondary
     # cluster is pushed toward the bottom to fill the space under the hero speed.
-    _cells(p, s, 158, 18)
+    _cells(p, s, 150, 18)
 
     p.set_datum(MC); p.set_color(WHITE)
-    p.draw_string("%d%%" % s.batt_pct, W // 2, 192, font=p.sans(16, bold=True))
+    p.draw_string("%d%%" % s.batt_pct, W // 2, 184, px=34)
 
     # four key tiles (2x2), sitting just above the bottom status bar
     def tile(x, y, w, label, val, vcol):
         p.draw_rect(x, y, w, 44, BORDER)
         p.set_datum(TC); p.set_color(DIM); p.draw_string(label, x + w // 2, y + 5)
-        vf = p.sans(14, bold=True)                       # auto-fit: shrink wide values
-        if p.text_w(val, font=vf) > w - 6:
-            vf = p.sans(11, bold=True)
-        p.set_datum(MC); p.set_color(vcol)
-        p.draw_string(val, x + w // 2, y + 29, font=vf)
+        p.set_datum(BC); p.set_color(vcol)
+        p.draw_string(val, x + w // 2, y + 42, px=24)
 
     cv, du = dist_cv(s), dist_unit(s)
     tile(4, 202, 78, "WATTS", str(s.watts), watt_color(s.watts))
