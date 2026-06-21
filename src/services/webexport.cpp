@@ -1,4 +1,5 @@
 #include "webexport.h"
+#include "wifi_bridge.h"
 #include <WebServer.h>
 #include <LittleFS.h>
 #include <Update.h>
@@ -11,6 +12,11 @@ int  gOtaProgressPct = 0;
 static WebServer   server(80);
 static const char* RIDES_DIR = "/rides";
 static bool        g_running = false;
+
+// Standalone web-service state (the AP-owning variant; see webServiceStart).
+static bool          g_service       = false;
+static unsigned long g_svcLastActive = 0;
+static const unsigned long WEB_SVC_TIMEOUT_MS = 10UL * 60 * 1000;  // auto-drop AP after 10 min idle
 
 // Index: a small dark page listing every ride CSV with a download link + size.
 static void handleIndex() {
@@ -124,4 +130,34 @@ void webExportStop() {
 
 void webExportHandle() {
     if (g_running) server.handleClient();
+}
+
+// ── Standalone web service ──────────────────────────────────────────────────
+// Raises its own AP (so it works unbridged) and serves the same routes. Mutually
+// exclusive with VESC bridge mode, which raises its own AP + serves these pages
+// itself — enterBridgeMode() stops this first if it's running.
+void webServiceStart() {
+    if (g_service) return;
+    wifiApStart();
+    webExportStart();
+    g_service = true;
+    g_svcLastActive = millis();
+}
+
+void webServiceStop() {
+    if (!g_service) return;
+    webExportStop();
+    wifiApStop();
+    g_service = false;
+}
+
+bool webServiceActive() { return g_service; }
+
+void webServiceTick() {
+    if (!g_service) return;
+    server.handleClient();
+    // Keep the AP up while a client is joined or an update is mid-flight; drop it
+    // after a stretch of idle so we don't burn battery advertising forever.
+    if (wifiBridgeStationNum() > 0 || gOtaInProgress) g_svcLastActive = millis();
+    if (millis() - g_svcLastActive > WEB_SVC_TIMEOUT_MS) webServiceStop();
 }

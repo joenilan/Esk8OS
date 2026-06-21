@@ -1,6 +1,7 @@
 #include "console.h"
 #include "esk8os.h"
 #include "logging/ridelog.h"
+#include "services/webexport.h"
 #include <LittleFS.h>
 
 static const char* RIDES_DIR = "/rides";
@@ -65,6 +66,21 @@ static void cmdLog(const char* arg) {
                   (unsigned)(ridelogFreeBytes() / 1024));
 }
 
+// Toggle the standalone log/OTA web service from USB serial — a test path for
+// the unbridged "hybrid" flow (otherwise only reachable via the BLE command).
+static void cmdWifi(const char* arg) {
+    String a = arg; a.trim();
+    if (a == "on") {
+        if (systemMode != MODE_DASHBOARD) { Serial.println("can't: exit bridge mode first"); return; }
+        if (webServiceActive()) { Serial.println("wifi export already ON"); return; }
+        webServiceStart();
+        Serial.println("wifi export ON - join ESK8-BRIDGE / esk8bridge, then http://192.168.4.1");
+        return;
+    }
+    if (a == "off") { webServiceStop(); Serial.println("wifi export OFF"); return; }
+    Serial.printf("wifi export %s\n", webServiceActive() ? "ON" : "OFF");
+}
+
 static void cmdHelp() {
     Serial.println(F("commands:"));
     Serial.println(F("  help            this list"));
@@ -72,6 +88,7 @@ static void cmdHelp() {
     Serial.println(F("  cat <file>      dump a ride CSV (e.g. cat r0001.csv)"));
     Serial.println(F("  rm <file|all>   delete one ride file, or all"));
     Serial.println(F("  log [on|off]    logging switch / status"));
+    Serial.println(F("  wifi [on|off]   standalone log/OTA web service (http://192.168.4.1)"));
     Serial.println(F("  free            partition usage"));
     Serial.println(F("  odo             odometer + trip distance"));
 }
@@ -86,6 +103,7 @@ static void dispatch(char* line) {
     else if (!strcmp(line, "cat"))  cmdCat(arg);
     else if (!strcmp(line, "rm"))   cmdRm(arg);
     else if (!strcmp(line, "log"))  cmdLog(arg);
+    else if (!strcmp(line, "wifi")) cmdWifi(arg);
     else if (!strcmp(line, "free")) Serial.printf("FS %u/%u B used\n",
                  (unsigned)LittleFS.usedBytes(), (unsigned)LittleFS.totalBytes());
     else if (!strcmp(line, "odo")) {

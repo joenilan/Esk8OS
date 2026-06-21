@@ -30,6 +30,18 @@ void wifiBridgeStop() {
     WiFi.mode(WIFI_OFF);
 }
 
+// AP only — no TCP bridge server. Used by the standalone web service so the
+// log/OTA pages are reachable without entering VESC bridge mode.
+void wifiApStart() {
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(WIFI_SSID, WIFI_PASS);
+}
+
+void wifiApStop() {
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_OFF);
+}
+
 // Accept a pending client + pump app->ESC. Returns true if bytes were forwarded.
 bool wifiBridgePoll() {
     if (!g_client || !g_client.connected()) {

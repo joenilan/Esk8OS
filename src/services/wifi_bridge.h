@@ -14,8 +14,14 @@
 // reply out to every connected transport (so the two never double-read Serial1).
 // ============================================================================
 
-void          wifiBridgeStart();   // bring up the AP + TCP server
+void          wifiBridgeStart();   // bring up the AP + TCP server (VESC bridge)
 void          wifiBridgeStop();    // tear down the server + AP
+
+// AP-only lifecycle (no VESC TCP server) for the standalone web service — same
+// SSID/pass as the bridge, so the log/OTA web server is reachable at the same
+// 192.168.4.1 whether the AP was raised by bridge mode or by the web service.
+void          wifiApStart();
+void          wifiApStop();
 bool          wifiBridgePoll();    // accept clients + pump app->ESC; true if forwarded
 void          wifiBridgeNotify(const uint8_t* data, size_t len);  // ESC -> app
 bool          wifiBridgeConnected();

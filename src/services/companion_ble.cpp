@@ -9,6 +9,7 @@
 #include "esk8os.h"
 #include "ble_bridge.h"
 #include "bridge.h"
+#include "webexport.h"
 #include "ui/ui.h"
 #include "app/App.h"
 #include "telemetry/telemetry.h"
@@ -120,7 +121,8 @@ static void dispatchCommand(const char* cmd) {
     else if (!strcmp(cmd, "PAGE_NEXT"))       { settingsCursor = 0; currentPage = (currentPage + 1) % PAGE_COUNT; drawStaticFrame(); gRedrawAll = true; }
     else if (!strcmp(cmd, "PAGE_PREV"))       { settingsCursor = 0; currentPage = (currentPage + PAGE_COUNT - 1) % PAGE_COUNT; drawStaticFrame(); gRedrawAll = true; }
     else if (!strcmp(cmd, "BRIDGE_MODE"))       enterBridgeMode();         // safety-checks speed internally
-    else if (!strcmp(cmd, "WIFI_EXPORT_START")) enterBridgeMode();         // same AP + http log server (spec §6)
+    else if (!strcmp(cmd, "WIFI_EXPORT_START")) { if (!webServiceActive()) { webServiceStart(); showToast("WIFI EXPORT"); } }  // standalone AP + http (logs/OTA); telemetry stays live
+    else if (!strcmp(cmd, "WIFI_EXPORT_STOP"))  { if (webServiceActive())  { webServiceStop();  showToast("WIFI OFF"); } }
     else if (!strcmp(cmd, "REBOOT"))          { delay(100); ESP.restart(); }
 }
 

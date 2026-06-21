@@ -76,7 +76,8 @@ Writing a raw ASCII string to this characteristic triggers immediate physical ac
 | `"PAGE_NEXT"` | Swipes the physical ESP32 display to the next page. |
 | `"PAGE_PREV"` | Swipes the physical ESP32 display to the previous page. |
 | `"BRIDGE_MODE"` | Halts telemetry and forces the board into VESC Tool Bridge Mode. |
-| `"WIFI_EXPORT_START"`| Turns on the ESP32's WiFi AP and HTTP server for bulk log downloading. |
+| `"WIFI_EXPORT_START"`| Turns on the ESP32's WiFi AP and HTTP server (logs + OTA) without entering VESC bridge mode — telemetry/BLE keep streaming. |
+| `"WIFI_EXPORT_STOP"` | Drops the standalone WiFi AP / HTTP server started by `WIFI_EXPORT_START`. |
 | `"REBOOT"` | Reboots the ESP32 display. |
 
 ## 6. Hybrid WiFi Log Transfer (Bulk Data)
@@ -99,5 +100,5 @@ The ESP32 side of this spec is implemented in `src/services/companion_ble.cpp` (
 - **Always-on service.** The companion service initializes in `setup()` and advertises 100% of the time. The device name is **`ESK8-BLE`** (the companion service UUID is in the primary advertisement; the name + VESC-Tool NUS UUID are in the scan response). Use **active scanning** and filter by the service UUID `5043697A-0000-…`.
 - **Co-existence with VESC Bridge mode.** The VESC-Tool NUS bridge shares the *same* NimBLE server. Entering Bridge mode (physically, or via the `BRIDGE_MODE` command) does not tear down the companion service — but **telemetry notifications pause** while bridging (consistent with §6), and queued Settings/Command writes are applied once the dashboard resumes.
 - **Settings writes (§4):** `mph` (bool), `theme` (string, case-insensitive), and `bat_s` (int, clamped 6–14) are honored and persisted to NVS. `poles`, `wheel`, and `gear` are **read-only** — they are derived from the selected wheel preset, not independently settable. To change them, write **`profile`** (int index) to select a preset. `gear` is reported as the firmware's motor:wheel pulley ratio.
-- **`WIFI_EXPORT_START` (§5/§6):** currently routes through full VESC Bridge mode, which brings up the `ESK8-BRIDGE` AP + the `http://192.168.4.1/` log server exactly as §6 describes.
+- **`WIFI_EXPORT_START` / `WIFI_EXPORT_STOP` (§5/§6):** runs a *standalone* web service — it raises the `ESK8-BRIDGE` AP + `http://192.168.4.1/` (ride-log download **and** OTA firmware upload) **without** entering VESC Bridge mode, so the dashboard keeps running and BLE telemetry keeps streaming (true "hybrid" transfer). The same pages are also served while in VESC Bridge mode (over the bridge's own AP), so logs/OTA are reachable in either state — bridged or unbridged. The standalone AP auto-drops after 10 min idle. On-device, the same service can be toggled over USB serial with `wifi on` / `wifi off`.
 - **Settings/Command writes** are processed on the firmware's UI thread (BLE callbacks only enqueue), so display repaints triggered by a write are race-free.

@@ -5,6 +5,8 @@
 #include "board/BoardLilyGoTDisplayS3.h"
 #include "services/bridge.h"
 #include "services/companion_ble.h"
+#include "services/webexport.h"
+#include "ui/BebasNeue24.h"
 #include "util/console.h"
 #include "transports/VescUartTransport.h"
 #include "transports/EspNowTransport.h"
@@ -221,6 +223,9 @@ void dashboardLoop() {
 
     // Stream telemetry to the companion app + apply any queued settings/commands.
     companionBleTick();
+    // Serve the standalone log/OTA web service (if running) without leaving the
+    // dashboard — telemetry/BLE keep flowing. No-op unless WIFI_EXPORT_START ran.
+    webServiceTick();
 
     int alert = alertState();
     updateClock();
@@ -245,7 +250,22 @@ void dashboardLoop() {
     updateBottomBar();
     updateOverlays(alert);
 
-    gRedrawAll = false;   
+    gRedrawAll = false;
+
+    // OTA via the standalone web service: show progress over the dashboard the
+    // same way bridge mode does (the upload itself blocks handleClient, so this
+    // mainly covers the start/finish and a stuck-failed update).
+    if (gOtaInProgress) {
+        GFX->fillRect(X0 + 8, 140, UI_W - 16, 60, COL_ACCENT);
+        GFX->setTextDatum(MC_DATUM);
+        GFX->setTextColor(COL_BG);
+        GFX->setFont(&BebasNeue24pt7b);
+        GFX->drawString("UPDATING...", X0 + UI_W / 2, 154);
+        GFX->setFont(&BebasNeue18pt7b);
+        GFX->drawString(String(gOtaProgressPct) + "%", X0 + UI_W / 2, 184);
+        GFX->setFont(&fonts::Font0);
+        markDirty(140, 60);
+    }
 
     static bool toastWasUp = false;
     bool toastUp = (long)(gToastUntil - millis()) > 0;

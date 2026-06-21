@@ -186,6 +186,9 @@ void enterBridgeMode() {
         gRedrawAll = true;
         return;
     }
+    // If the standalone log/OTA web service is up, drop it first — bridge mode
+    // raises its own AP and serves the same pages, and two APs must not co-exist.
+    if (webServiceActive()) webServiceStop();
     saveOdo();
     ridelogEndRide();           // flush + close the active ride so it downloads whole
     while (Serial1.available()) Serial1.read();   // drop stale VESC poll bytes so the
