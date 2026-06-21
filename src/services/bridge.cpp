@@ -15,7 +15,7 @@
 // (ble_bridge.{h,cpp}). Each loop it pumps both transports, reads the ESC UART
 // once, and fans the reply out to whichever transport(s) are connected.
 
-static const char* BRIDGE_BLE_NAME = "ESK8-BLE";   // name mobile VESC Tool scans for
+static const char* BRIDGE_BLE_NAME = "VESC-BLE";   // name mobile VESC Tool scans for
 static String      bridgeStatus    = "WAITING";
 static unsigned long bridgeLastActive = 0;
 
@@ -75,7 +75,7 @@ static void drawBridgeScreen() {
     GFX->setTextColor(COL_WHITE);
     GFX->drawString(wifiBridgeIpPort(), X0 + 40, 108);
     GFX->setTextColor(COL_DIM);  GFX->drawString("BLE:",   X0 + 12, 122);
-    GFX->setTextColor(COL_WHITE); GFX->drawString(BRIDGE_BLE_NAME, X0 + 40, 122);
+    GFX->setTextColor(COL_WHITE); GFX->drawString("VESC-BLE", X0 + 40, 122);
 
     GFX->setTextColor(COL_DIM);
     GFX->drawString("Desktop: TCP connection", X0 + 12, 146);
