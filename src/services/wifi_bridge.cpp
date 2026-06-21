@@ -39,6 +39,9 @@ void wifiApStart() {
 
 void wifiApStop() {
     WiFi.softAPdisconnect(true);
+    // WIFI_OFF here (and in wifiBridgeStop) emits benign IDF noise while BLE is
+    // live: "netstack cb reg failed" / "timeout when WiFi un-init". Verified
+    // cosmetic on-device — WiFi recovers cleanly on the next start. Not a fault.
     WiFi.mode(WIFI_OFF);
 }
 
