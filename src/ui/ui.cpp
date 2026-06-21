@@ -1,7 +1,7 @@
 #include "esk8os.h"        // shared core: types, enums, cross-module globals
 #include "ui.h"            // public UI entry points used by main.cpp
-#include "telemetry.h"     // getHistorySample() for the graph pages
-#include "ridelog.h"       // detailed-log status for the LOGS page warning
+#include "telemetry/telemetry.h"     // getHistorySample() for the graph pages
+#include "logging/ridelog.h"       // detailed-log status for the LOGS page warning
 #include "BebasNeue80.h"   // hero speed number (DASH page)
 #include "BebasNeue110.h"  // native crisp hero font for the Big HUD speed
 // FW_VERSION / FW_VERSION_FULL are stamped into version.h by the pre-build hook

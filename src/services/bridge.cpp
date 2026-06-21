@@ -3,7 +3,7 @@
 #include "wifi_bridge.h"
 #include "ble_bridge.h"
 #include "webexport.h"
-#include "ridelog.h"
+#include "logging/ridelog.h"
 
 // VESC Tool BRIDGE MODE coordinator. Bridge mode lets VESC Tool configure the
 // ESC wirelessly through the display. This file owns the mode itself — the

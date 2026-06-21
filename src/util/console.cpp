@@ -1,6 +1,6 @@
 #include "console.h"
 #include "esk8os.h"
-#include "ridelog.h"
+#include "logging/ridelog.h"
 #include <LittleFS.h>
 
 static const char* RIDES_DIR = "/rides";
