@@ -1140,7 +1140,7 @@ static void updateSystem() {
     snprintf(ub, sizeof(ub), "%02lu:%02lu:%02lu", up / 3600, (up / 60) % 60, up % 60);
     drawVal(208, String(ub), COL_WHITE);
 
-    drawVal(224, String(gFps) + "f " + String(gLastPushUs / 1000) + "ms",
+    drawVal(224, String(gFps) + " FPS | " + String(gLastPushUs / 1000) + "ms",
             gFps >= 30 ? COL_GREEN : COL_WHITE);
     markDirty(22, 210);
 }
