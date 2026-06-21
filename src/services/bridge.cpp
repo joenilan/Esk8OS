@@ -97,9 +97,10 @@ static void bridgeStart() {
     bridgeStatus = "WAITING";
     bridgeLastActive = millis();
     wifiBridgeStart();
-    // Also advertise the BLE (Nordic UART) backend for mobile VESC Tool. No-op
-    // on builds without BLE_BRIDGE_ENABLED. Runs alongside the WiFi backend.
-    bleBridgeStart(BRIDGE_BLE_NAME);
+    // Enable BLE byte forwarding for mobile VESC Tool. The NUS service is already
+    // live on the shared NimBLE server (built at boot by companion_ble); this just
+    // flips its forwarding flag on. No-op on builds without BLE_BRIDGE_ENABLED.
+    bleBridgeStart();
     // Serve the ride-log CSVs for download on the same AP (http://192.168.4.1/).
     webExportStart();
 }

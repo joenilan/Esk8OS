@@ -90,5 +90,14 @@ To download historical logs, the Android app should use a **Hybrid Transfer**:
 5. Once downloaded, the user disconnects from the WiFi, and the board seamlessly resumes BLE telemetry.
 
 ## 7. Implementation Notes for Android Devs
-- **MTU Negotiation:** Ensure the Android BLE client requests a high MTU (e.g., `512` bytes) upon connection. JSON payloads are small, but they will exceed the default `20` byte BLE limit.
+- **MTU Negotiation:** Ensure the Android BLE client requests a high MTU (e.g., `512` bytes) upon connection. JSON payloads are small, but they will exceed the default `20` byte BLE limit. **The telemetry notify is sent as one JSON object** — without a negotiated MTU it will silently truncate.
 - **Connection Loss:** If the Android app disconnects, the ESP32 will automatically resume advertising in the background.
+
+## 8. Firmware Implementation Status (as built)
+The ESP32 side of this spec is implemented in `src/services/companion_ble.cpp` (NimBLE + ArduinoJson). Notes on what is live and where reality differs from the draft above:
+
+- **Always-on service.** The companion service initializes in `setup()` and advertises 100% of the time. The device name is **`ESK8-BLE`** (the companion service UUID is in the primary advertisement; the name + VESC-Tool NUS UUID are in the scan response). Use **active scanning** and filter by the service UUID `5043697A-0000-…`.
+- **Co-existence with VESC Bridge mode.** The VESC-Tool NUS bridge shares the *same* NimBLE server. Entering Bridge mode (physically, or via the `BRIDGE_MODE` command) does not tear down the companion service — but **telemetry notifications pause** while bridging (consistent with §6), and queued Settings/Command writes are applied once the dashboard resumes.
+- **Settings writes (§4):** `mph` (bool), `theme` (string, case-insensitive), and `bat_s` (int, clamped 6–14) are honored and persisted to NVS. `poles`, `wheel`, and `gear` are **read-only** — they are derived from the selected wheel preset, not independently settable. To change them, write **`profile`** (int index) to select a preset. `gear` is reported as the firmware's motor:wheel pulley ratio.
+- **`WIFI_EXPORT_START` (§5/§6):** currently routes through full VESC Bridge mode, which brings up the `ESK8-BRIDGE` AP + the `http://192.168.4.1/` log server exactly as §6 describes.
+- **Settings/Command writes** are processed on the firmware's UI thread (BLE callbacks only enqueue), so display repaints triggered by a write are race-free.

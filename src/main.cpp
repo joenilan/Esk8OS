@@ -7,6 +7,7 @@
 #include "app/App.h"
 #include "transports/VescUartTransport.h"
 #include "transports/EspNowTransport.h"
+#include "services/companion_ble.h"
 #include "telemetry/telemetry.h"
 #include "logging/ridelog.h"
 
@@ -33,6 +34,10 @@ void setup() {
     Esk8OS::Board::begin();
     Esk8OS::Transports::beginVescUart();
     Esk8OS::Transports::beginEspNow();
+
+    // Bring up the companion BLE service now so it advertises 100% of the time.
+    // It owns the NimBLE stack; the VESC-Tool bridge co-hosts on the same server.
+    companionBleBegin();
 
     #ifndef WOKWI_SIMULATION
     applyBrightness();

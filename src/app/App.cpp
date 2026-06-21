@@ -4,6 +4,7 @@
 #include "ui/BebasNeue18.h"
 #include "board/BoardLilyGoTDisplayS3.h"
 #include "services/bridge.h"
+#include "services/companion_ble.h"
 #include "util/console.h"
 #include "transports/VescUartTransport.h"
 #include "transports/EspNowTransport.h"
@@ -29,6 +30,40 @@ void pollVescData();
 
 namespace Esk8OS {
 namespace App {
+
+// Zero the session/trip metrics and repaint. Shared by the LEFT long-press and
+// the companion app's TRIP_RESET command — both run on the UI thread.
+void resetTrip() {
+    saveRideSummaryLog();
+    tripDistanceKm = 0;
+    sessionTripStartKm = 0;
+    rideStartMs = millis();
+    avgSpeedKmh = 0;
+    maxSpeedKmh = 0;
+    currentWattHours = 0;
+    currentWhRegen = 0;
+    avgWhPerKm = 0;
+    estimatedRangeKm = 0;
+    remainingRangeKm = 0;
+    rangeEstimateReady = false;
+    rideEnergyBaselineSet = false;
+    maxWattsSession = 0;
+    minVoltageSession = BATTERY_MAX_V;
+    maxMotorAmpsSession = 0;
+    if (DEMO_DATA) {
+        currentBatteryPercent = 100;
+        currentVoltage = BATTERY_MAX_V;
+        currentMotorTemp = 0;
+        currentEscTemp = 0;
+        currentBatteryTemp = 0;
+        peakWatts = 0;
+    }
+    saveOdo();
+    ridelogStartRide();
+    drawStaticFrame();
+    gRedrawAll = true;
+    showToast(DEMO_DATA ? "RECHARGED" : "TRIP RESET");
+}
 
 void checkButtons() {
     bool left = Esk8OS::Board::buttonA() ? LOW : HIGH;
@@ -80,36 +115,8 @@ void checkButtons() {
     if (left == LOW) {
         if (lastLeftBtn == HIGH) { leftDownAt = millis(); leftHandled = false; }
         if (!leftHandled && millis() - leftDownAt > 1500) {     // long press: reset trip
-            saveRideSummaryLog();
-            tripDistanceKm = 0;
-            sessionTripStartKm = 0;
-            rideStartMs = millis();
-            avgSpeedKmh = 0;
-            maxSpeedKmh = 0;
-            currentWattHours = 0;
-            currentWhRegen = 0;
-            avgWhPerKm = 0;
-            estimatedRangeKm = 0;
-            remainingRangeKm = 0;
-            rangeEstimateReady = false;
-            rideEnergyBaselineSet = false;
-            maxWattsSession = 0;
-            minVoltageSession = BATTERY_MAX_V;
-            maxMotorAmpsSession = 0;
-            if (DEMO_DATA) {
-                currentBatteryPercent = 100;
-                currentVoltage = BATTERY_MAX_V;
-                currentMotorTemp = 0;
-                currentEscTemp = 0;
-                currentBatteryTemp = 0;
-                peakWatts = 0;
-            }
-            saveOdo();
-            ridelogStartRide();   
             leftHandled = true;
-            drawStaticFrame();
-            gRedrawAll = true;
-            showToast(DEMO_DATA ? "RECHARGED" : "TRIP RESET");
+            resetTrip();
         }
     } else if (lastLeftBtn == LOW && !leftHandled && millis() - leftDownAt > 30) {
         if (currentPage == PAGE_SETTINGS && settingsCursor < SETTINGS_COUNT - 1) {
@@ -208,9 +215,12 @@ void dashboardLoop() {
     if (now - lastDataPoll > 100) {
         pollVescData();
         recordHistorySample();
-        ridelogTick();          
+        ridelogTick();
         lastDataPoll = now;
     }
+
+    // Stream telemetry to the companion app + apply any queued settings/commands.
+    companionBleTick();
 
     int alert = alertState();
     updateClock();
