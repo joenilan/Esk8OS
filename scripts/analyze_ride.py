@@ -51,6 +51,7 @@ if len(pts) >= 5:
         intercept = (sy - slope*sx) / n           # ~ rest voltage
         r_milliohm = -slope * 1000.0
         print(f"V-vs-I fit  : Vrest~{intercept:.2f} V, slope {slope*1000:.1f} mV/A")
-        print(f"source R    : ~{r_milliohm:.0f} mohm  (pack + wiring + connectors), n={n} loaded pts")
+        print(f"~source R   : ~{r_milliohm:.0f} mohm  -- ROUGH ONLY (confounded by SoC drift and")
+        print(f"              single-vs-dual-motor current scaling). Use transient_r.py for real ohmic R.")
 else:
     print(f"source R    : not enough loaded points (got {len(pts)}, need >=5)")
