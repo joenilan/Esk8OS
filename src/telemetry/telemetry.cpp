@@ -173,6 +173,34 @@ void updateRangeEstimate() {
     remainingRangeKm = remainingWh / avgWhPerKm;
 }
 
+// ---- state-of-charge from a real Li-ion curve -------------------------------
+// The old gauge mapped pack voltage to % LINEARLY over [stop..full]. Li-ion isn't
+// linear (a long flat plateau, then a steep drop), so the linear map badly
+// over-read near empty — "30%" was effectively dead. This piecewise OCV->SoC
+// table (per-cell, resting) is interpolated instead.
+static int liionSocFromCellV(float v) {
+    static const float vlut[] = {4.20,4.10,4.00,3.90,3.85,3.80,3.75,3.70,3.65,3.60,3.55,3.50,3.45,3.40,3.35,3.30,3.20,3.00};
+    static const float slut[] = {100,  92,  83,  72,  65,  58,  50,  42,  35,  28,  22,  17,  13,   9,   6,   3,   1,   0};
+    const int n = sizeof(vlut) / sizeof(vlut[0]);
+    if (v >= vlut[0])   return 100;
+    if (v <= vlut[n-1]) return 0;
+    for (int i = 0; i < n - 1; i++) {
+        if (v <= vlut[i] && v >= vlut[i + 1]) {
+            float t = (v - vlut[i + 1]) / (vlut[i] - vlut[i + 1]);
+            return (int)lroundf(slut[i + 1] + t * (slut[i] - slut[i + 1]));
+        }
+    }
+    return 0;
+}
+
+// Pack internal resistance (ohms) used to undo voltage sag: V_open = V + I*R.
+// ~45 mOhm is typical for a 10s6p 18650/21700 pack incl. wiring; tune if needed.
+static const float BATTERY_INTERNAL_R_OHM = 0.045f;
+
+// Smoothed SoC so sag/regen transients don't swing the gauge. EMA across polls
+// (~10 Hz); seeded on the first real reading so it doesn't ramp up from zero.
+static float gSocFilt = -1.0f;
+
 // ---- one poll cycle ---------------------------------------------------------
 void pollVescData() {
     bool useSim = true;
@@ -186,8 +214,15 @@ void pollVescData() {
             currentSpeedMph = currentSpeedKmh * 0.621371;
 
             currentVoltage = raw.inpVoltage;
-            float pct = ((currentVoltage - BATTERY_MIN_V) / (BATTERY_MAX_V - BATTERY_MIN_V)) * 100.0;
-            currentBatteryPercent = constrain((int)pct, 0, 100);
+            // Sag-compensate to open-circuit voltage (discharge current is positive,
+            // so this adds the sag back; regen is negative, which subtracts it), then
+            // read SoC off the Li-ion curve and low-pass filter it.
+            float vOpen = currentVoltage + raw.avgInputCurrent * BATTERY_INTERNAL_R_OHM;
+            float vCell = vOpen / max(1, BATTERY_CELLS_COUNT);
+            int rawSoc = liionSocFromCellV(vCell);
+            if (gSocFilt < 0) gSocFilt = rawSoc;            // seed on first sample
+            else              gSocFilt += (rawSoc - gSocFilt) * 0.05f;   // ~2s EMA at 10 Hz
+            currentBatteryPercent = constrain((int)lroundf(gSocFilt), 0, 100);
 
             currentMotorTemp = raw.tempMotor;
             currentEscTemp = raw.tempMosfet;
