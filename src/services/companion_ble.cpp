@@ -13,6 +13,7 @@
 #include "ui/ui.h"
 #include "app/App.h"
 #include "telemetry/telemetry.h"
+#include "board/BoardLilyGoTDisplayS3.h"
 
 // Custom companion service + characteristics (docs/companion_api_spec.md §2).
 static const char* DEVICE_NAME   = "ESK8-BLE";   // same name VESC Tool scans for
@@ -53,6 +54,13 @@ static void buildSettingsJson(char* out, size_t cap) {
     doc["gear"]    = r1(profileGearRatio());      // motor:wheel pulley ratio the firmware uses
     doc["bat_s"]   = BATTERY_CELLS_COUNT;
     doc["profile"] = activeWheelProfile;          // index; poles/wheel/gear are derived from this preset
+    // Battery / range tuning (writable; mirror the board's SETTINGS page).
+    doc["packAh"]   = r1(BATTERY_EFFECTIVE_CAPACITY_AH);
+    doc["stopCell"] = roundf(BATTERY_STOP_CELL_V * 100.0f) / 100.0f;
+    doc["whmi"]     = (int)lroundf(RANGE_DEFAULT_WH_PER_MILE);
+    doc["bright"]   = gBrightnessPct;
+    doc["demo"]     = gDemoMode;
+    doc["rider"]    = RIDER_NAME;
     serializeJson(doc, out, cap);
 }
 
@@ -83,6 +91,42 @@ static void applySettings(const char* json) {
     }
     // poles / wheel / gear are read-only here: they come from the selected wheel
     // preset, not independently settable fields. Use "profile" to switch presets.
+    if (doc["packAh"].is<float>()) {
+        BATTERY_EFFECTIVE_CAPACITY_AH = constrain((float)doc["packAh"], 4.0f, 40.0f);
+        prefs.putFloat("packAh", BATTERY_EFFECTIVE_CAPACITY_AH);
+        updateRangeEstimate();
+        repaint = true;
+    }
+    if (doc["stopCell"].is<float>()) {
+        BATTERY_STOP_CELL_V = constrain((float)doc["stopCell"], 3.00f, 3.60f);
+        prefs.putFloat("stopCell", BATTERY_STOP_CELL_V);
+        recalcBatteryBounds();
+        currentVoltage = constrain(currentVoltage, BATTERY_MIN_V, BATTERY_MAX_V);
+        updateRangeEstimate();
+        repaint = true;
+    }
+    if (doc["whmi"].is<float>()) {
+        RANGE_DEFAULT_WH_PER_MILE = constrain((float)doc["whmi"], 14.0f, 40.0f);
+        prefs.putFloat("whmi", RANGE_DEFAULT_WH_PER_MILE);
+        updateRangeEstimate();
+        repaint = true;
+    }
+    if (doc["bright"].is<int>()) {
+        gBrightnessPct = constrain((int)doc["bright"], 10, 100);
+        prefs.putInt("bright", gBrightnessPct);
+        Esk8OS::Board::setBacklight((uint8_t)(gBrightnessPct * 255 / 100));
+        repaint = true;
+    }
+    if (doc["demo"].is<bool>()) {
+        gDemoMode = doc["demo"];
+        prefs.putBool("demo", gDemoMode);
+        repaint = true;
+    }
+    if (doc["rider"].is<const char*>()) {
+        strlcpy(RIDER_NAME, doc["rider"], sizeof(RIDER_NAME));
+        prefs.putString("rider", RIDER_NAME);
+        repaint = true;
+    }
     if (doc["theme"].is<const char*>()) {
         const char* tn = doc["theme"];
         for (int i = 0; i < THEME_COUNT; i++) {
@@ -99,7 +143,7 @@ static void applySettings(const char* json) {
 
 class SettingsCallbacks : public NimBLECharacteristicCallbacks {
     void onRead(NimBLECharacteristic* c) override {
-        char buf[160];
+        char buf[256];
         buildSettingsJson(buf, sizeof(buf));
         c->setValue((uint8_t*)buf, strlen(buf));
     }
@@ -213,6 +257,10 @@ void companionBleTick() {
     lastTel = now;
     if (!g_tel || !g_server || g_server->getConnectedCount() == 0) return;
 
+    // Distance/speed convert to the board's display unit (mi/mph) so they line up
+    // with spd/rng/max_s. Efficiency is Wh/mi when mph (divide by KM2MI). These
+    // match the conversions ui.cpp uses on the board's own pages.
+    const float dCv = useMph ? KM2MI : 1.0f;     // km -> display distance
     JsonDocument doc;
     doc["spd"]   = r1(useMph ? currentSpeedMph : currentSpeedKmh);
     doc["bat"]   = currentBatteryPercent;
@@ -220,11 +268,29 @@ void companionBleTick() {
     doc["w"]     = (int)currentWatts;
     doc["mtr_t"] = (int)currentMotorTemp;
     doc["esc_t"] = (int)currentEscTemp;
+    doc["btemp"] = (int)currentBatteryTemp;
     doc["rng"]   = r1(useMph ? remainingRangeKm * KM2MI : remainingRangeKm);
     doc["max_s"] = r1(useMph ? maxSpeedKmh * KM2MI : maxSpeedKmh);
     doc["wh"]    = (int)currentWattHours;
+    // Power detail
+    doc["bata"]  = r1(currentAmps);              // battery A
+    doc["mota"]  = r1(currentMotorAmps);         // motor A
+    doc["duty"]  = (int)currentDuty;             // already %
+    doc["pkw"]   = (int)peakWatts;               // session peak W
+    // Energy / session
+    doc["whr"]   = (int)currentWhRegen;          // regen Wh
+    doc["minv"]  = r1(minVoltageSession);        // session min volt
+    doc["avs"]   = r1(useMph ? avgSpeedKmh * KM2MI : avgSpeedKmh);
+    // Trip / odometer / range / efficiency (display units)
+    doc["trip"]  = r1(tripDistanceKm * dCv);
+    doc["odo"]   = r1(totalDistanceKm * dCv);
+    doc["est"]   = r1(estimatedRangeKm * dCv);
+    doc["eff"]   = (int)(useMph ? avgWhPerKm / KM2MI : avgWhPerKm);   // Wh/mi (mph) or Wh/km
+    // System / fault
+    doc["fault"] = vescFault;
+    doc["rtime"] = (uint32_t)((millis() - rideStartMs) / 1000UL);     // ride seconds
 
-    char buf[192];
+    char buf[320];
     size_t n = serializeJson(doc, buf, sizeof(buf));
     g_tel->setValue((uint8_t*)buf, n);
     g_tel->notify();

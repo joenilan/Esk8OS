@@ -90,7 +90,7 @@ static void cmdHelp() {
     Serial.println(F("  log [on|off]    logging switch / status"));
     Serial.println(F("  wifi [on|off]   standalone log/OTA web service (http://192.168.4.1)"));
     Serial.println(F("  free            partition usage"));
-    Serial.println(F("  odo             odometer + trip distance"));
+    Serial.println(F("  odo [reset|set <v>]  odometer + trip (reset=0, set <v> in display unit)"));
 }
 
 static void dispatch(char* line) {
@@ -107,10 +107,26 @@ static void dispatch(char* line) {
     else if (!strcmp(line, "free")) Serial.printf("FS %u/%u B used\n",
                  (unsigned)LittleFS.usedBytes(), (unsigned)LittleFS.totalBytes());
     else if (!strcmp(line, "odo")) {
-        if (useMph) Serial.printf("odo %.2f mi | trip %.2f mi\n",
+        if (!strcmp(arg, "reset")) {
+            totalDistanceKm = 0.0f;
+            saveOdo();                          // persist the cleared lifetime total
+            Serial.println("odo reset -> 0");
+        } else if (!strncmp(arg, "set ", 4)) {
+            float v = atof(arg + 4);            // value in the active display unit
+            if (v >= 0) {
+                totalDistanceKm = useMph ? v / 0.621371f : v;
+                saveOdo();
+                Serial.printf("odo set -> %.2f %s\n", v, useMph ? "mi" : "km");
+            } else {
+                Serial.println("odo set: need a value >= 0");
+            }
+        } else if (useMph) {
+            Serial.printf("odo %.2f mi | trip %.2f mi\n",
                  totalDistanceKm * 0.621371f, tripDistanceKm * 0.621371f);
-        else        Serial.printf("odo %.2f km | trip %.2f km\n",
+        } else {
+            Serial.printf("odo %.2f km | trip %.2f km\n",
                  totalDistanceKm, tripDistanceKm);
+        }
     }
     else if (line[0]) Serial.println("? unknown - try 'help'");
 }

@@ -58,7 +58,7 @@ extern int        gOtaProgressPct;
 
 // ---- branding (defined in main.cpp; external linkage const char*) ------------
 extern const char* PRODUCT_NAME;
-extern const char* RIDER_NAME;
+extern char RIDER_NAME[16];   // mutable, NVS-persisted (settable from the app)
 
 // ---- shared compile-time UI constants ---------------------------------------
 // Battery warning thresholds over the configured usable pack window (display

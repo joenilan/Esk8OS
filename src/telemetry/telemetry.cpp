@@ -261,18 +261,24 @@ void pollVescData() {
 
     // Accumulate trip + odometer from speed (km), then persist to flash on
     // every stop and every 60s so they survive a disconnect / power-off.
+    // In DEMO mode the speed is synthetic, so the *lifetime odometer* must NOT
+    // grow (and must never be persisted) — it is a real total. Trip still
+    // accumulates so the demo shows live distance.
     static unsigned long lastDistMs = 0;
     unsigned long nowMs = millis();
     if (lastDistMs != 0) {
         float dKm = currentSpeedKmh * ((nowMs - lastDistMs) / 3600000.0f);
-        if (dKm > 0) { tripDistanceKm += dKm; totalDistanceKm += dKm; }
+        if (dKm > 0) {
+            tripDistanceKm += dKm;
+            if (!DEMO_DATA) totalDistanceKm += dKm;
+        }
     }
     lastDistMs = nowMs;
 
     static unsigned long lastSave = 0;
     static bool wasMoving = false;
     bool moving = currentSpeedKmh > 1.0;
-    if ((wasMoving && !moving) || (millis() - lastSave > 60000)) {
+    if (!DEMO_DATA && ((wasMoving && !moving) || (millis() - lastSave > 60000))) {
         saveOdo();
         lastSave = millis();
     }

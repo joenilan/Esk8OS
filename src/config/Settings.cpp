@@ -3,7 +3,7 @@
 
 // Variables previously in main.cpp
 const char* PRODUCT_NAME = "ESK8OS";
-const char* RIDER_NAME   = "JOE";
+char RIDER_NAME[16]      = "JOE";   // mutable: settable from the app, persisted to NVS
 const bool  USE_MPH_DEFAULT = true;
 const int   STORAGE_SCHEMA_VERSION = 2;
 const bool  DEMO_MODE_DEFAULT = true;
@@ -66,6 +66,7 @@ void begin() {
 
     gDemoMode      = prefs.getBool("demo", DEMO_MODE_DEFAULT);
     useMph         = prefs.getBool("mph", USE_MPH_DEFAULT);
+    { String r = prefs.getString("rider", "JOE"); strlcpy(RIDER_NAME, r.c_str(), sizeof(RIDER_NAME)); }
     gBrightnessPct = constrain(prefs.getInt("bright", 100), 10, 100);
     gThemeIdx      = constrain(prefs.getInt("theme", 0), 0, THEME_COUNT - 1);
 
