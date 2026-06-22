@@ -15,22 +15,55 @@ static SemaphoreHandle_t gDataMutex = NULL;
 static bool gPollPaused = false;
 static TaskHandle_t gVescTaskHandle = NULL;
 
+// Second motor's VESC CAN ID (the slave's "Controller ID" in VESC Tool). The
+// poll task adds the slave's battery current + watt-hours to the master so
+// power, energy and the Wh/mi efficiency reflect BOTH motors — reading the
+// master alone undercounts a dual drive by ~half. If the slave doesn't answer
+// (single-motor build, CAN not set up, or wrong ID) we fall back to the master
+// alone, so this is safe either way. Set to match your slave; 0 = local/master.
+static const uint8_t VESC_SLAVE_CAN_ID = 1;
+
 #ifndef WOKWI_SIMULATION
 static void vescPollTask(void* pvParameters) {
     for (;;) {
         if (!gPollPaused) {
             if (UART.getVescValues()) {
+                // Master (shared pack voltage + this motor's current/energy/temps).
+                float rpm      = UART.data.rpm;
+                float inpV     = UART.data.inpVoltage;
+                float tMotor   = UART.data.tempMotor;
+                float tMosfet  = UART.data.tempMosfet;
+                float inA      = UART.data.avgInputCurrent;
+                float motA     = UART.data.avgMotorCurrent;
+                float duty     = UART.data.dutyCycleNow;
+                float wh       = UART.data.wattHours;
+                float whCharged= UART.data.wattHoursCharged;
+                int   err      = UART.data.error;
+
+                // Add the second motor over CAN. getVescValues(canId) forwards the
+                // request through the master; on success UART.data holds the slave.
+                // Sum the additive quantities; for temps keep the hotter so a
+                // warning trips on either motor/ESC. Voltage/rpm/duty are shared.
+                if (VESC_SLAVE_CAN_ID != 0 && UART.getVescValues(VESC_SLAVE_CAN_ID)) {
+                    inA       += UART.data.avgInputCurrent;
+                    motA      += UART.data.avgMotorCurrent;
+                    wh        += UART.data.wattHours;
+                    whCharged += UART.data.wattHoursCharged;
+                    if (UART.data.tempMotor  > tMotor)  tMotor  = UART.data.tempMotor;
+                    if (UART.data.tempMosfet > tMosfet) tMosfet = UART.data.tempMosfet;
+                }
+
                 if (xSemaphoreTake(gDataMutex, portMAX_DELAY) == pdTRUE) {
-                    gRawData.rpm = UART.data.rpm;
-                    gRawData.inpVoltage = UART.data.inpVoltage;
-                    gRawData.tempMotor = UART.data.tempMotor;
-                    gRawData.tempMosfet = UART.data.tempMosfet;
-                    gRawData.avgInputCurrent = UART.data.avgInputCurrent;
-                    gRawData.avgMotorCurrent = UART.data.avgMotorCurrent;
-                    gRawData.dutyCycleNow = UART.data.dutyCycleNow;
-                    gRawData.wattHours = UART.data.wattHours;
-                    gRawData.wattHoursCharged = UART.data.wattHoursCharged;
-                    gRawData.error = UART.data.error;
+                    gRawData.rpm = rpm;
+                    gRawData.inpVoltage = inpV;
+                    gRawData.tempMotor = tMotor;
+                    gRawData.tempMosfet = tMosfet;
+                    gRawData.avgInputCurrent = inA;
+                    gRawData.avgMotorCurrent = motA;
+                    gRawData.dutyCycleNow = duty;
+                    gRawData.wattHours = wh;
+                    gRawData.wattHoursCharged = whCharged;
+                    gRawData.error = err;
                     gHasNewData = true;
                     xSemaphoreGive(gDataMutex);
                 }
