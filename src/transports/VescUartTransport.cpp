@@ -21,7 +21,8 @@ static TaskHandle_t gVescTaskHandle = NULL;
 // master alone undercounts a dual drive by ~half. If the slave doesn't answer
 // (single-motor build, CAN not set up, or wrong ID) we fall back to the master
 // alone, so this is safe either way. Set to match your slave; 0 = local/master.
-static const uint8_t VESC_SLAVE_CAN_ID = 1;
+// 114 = Joe's slave Controller ID (from VESC Tool's CAN Devices list).
+static const uint8_t VESC_SLAVE_CAN_ID = 114;
 
 #ifndef WOKWI_SIMULATION
 static void vescPollTask(void* pvParameters) {
