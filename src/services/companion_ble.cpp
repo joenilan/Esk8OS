@@ -164,6 +164,7 @@ static void dispatchCommand(const char* cmd) {
     if      (!strcmp(cmd, "TRIP_RESET"))        Esk8OS::App::resetTrip();
     else if (!strcmp(cmd, "PAGE_NEXT"))       { settingsCursor = 0; currentPage = (currentPage + 1) % PAGE_COUNT; drawStaticFrame(); gRedrawAll = true; }
     else if (!strcmp(cmd, "PAGE_PREV"))       { settingsCursor = 0; currentPage = (currentPage + PAGE_COUNT - 1) % PAGE_COUNT; drawStaticFrame(); gRedrawAll = true; }
+    else if (!strncmp(cmd, "PAGE_SET:", 9))   { int p = atoi(cmd + 9); if (p >= 0 && p < PAGE_COUNT) { settingsCursor = 0; currentPage = p; drawStaticFrame(); gRedrawAll = true; } }  // absolute page (app pages don't 1:1 the board's count)
     else if (!strcmp(cmd, "BRIDGE_MODE"))       enterBridgeMode();         // safety-checks speed internally
     else if (!strcmp(cmd, "WIFI_EXPORT_START")) { if (!webServiceActive()) { webServiceStart(); showToast("WIFI EXPORT"); } }  // standalone AP + http (logs/OTA); telemetry stays live
     else if (!strcmp(cmd, "WIFI_EXPORT_STOP"))  { if (webServiceActive())  { webServiceStop();  showToast("WIFI OFF"); } }

@@ -113,6 +113,7 @@ Writing a raw ASCII string to this characteristic triggers immediate physical ac
 | `"TRIP_RESET"` | Resets the current session/trip distance and max metrics. |
 | `"PAGE_NEXT"` | Swipes the physical ESP32 display to the next page. |
 | `"PAGE_PREV"` | Swipes the physical ESP32 display to the previous page. |
+| `"PAGE_SET:<n>"` | Jumps the display to an **absolute** page index (0=HUD,1=DASH,2=POWER,3=TRIP,4=SETTINGS,5=SYSTEM,6=GRAPHS,7=LOGS). Use this for page-swipe sync when the app's page set doesn't 1:1 the board's. |
 | `"BRIDGE_MODE"` | Halts telemetry and forces the board into VESC Tool Bridge Mode. |
 | `"WIFI_EXPORT_START"`| Turns on the ESP32's WiFi AP and HTTP server (logs + OTA) without entering VESC bridge mode — telemetry/BLE keep streaming. |
 | `"WIFI_EXPORT_STOP"` | Drops the standalone WiFi AP / HTTP server started by `WIFI_EXPORT_START`. |
