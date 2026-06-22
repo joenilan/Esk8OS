@@ -194,8 +194,12 @@ static int liionSocFromCellV(float v) {
 }
 
 // Pack internal resistance (ohms) used to undo voltage sag: V_open = V + I*R.
-// ~45 mOhm is typical for a 10s6p 18650/21700 pack incl. wiring; tune if needed.
-static const float BATTERY_INTERNAL_R_OHM = 0.045f;
+// Calibrated from ride r0074: regressing pack volts vs battery current gave
+// ~0.23 ohm using the MASTER VESC current alone; the real pack sees both motors'
+// current (~2x), so true R ~= 0.11 ohm. NOTE this is high for a 10s6p (healthy is
+// ~0.04-0.05) — aged/high-resistance cells or resistive wiring/connectors, which
+// itself shortens usable range. Re-tune if cells/wiring change.
+static const float BATTERY_INTERNAL_R_OHM = 0.11f;
 
 // Smoothed SoC so sag/regen transients don't swing the gauge. EMA across polls
 // (~10 Hz); seeded on the first real reading so it doesn't ramp up from zero.
