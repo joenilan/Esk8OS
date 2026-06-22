@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED / HISTORICAL (as of 2026-06-22).** This was the original VolosR-inspired research/roadmap. Much of it is NO LONGER the plan: the ESP-NOW / wireless aux-sensor direction was **dropped and removed** (board is wired-only), and the phase numbering doesn't match what shipped. Kept only for the hardware baseline + research history. For current state see the auto-loaded memory (`longboard-display-status`, `esk8os-mobile-app-plan`) and the app's `esk8os_mobile/HANDOFF.md`. Do not act on this doc.
+
 # Esk8OS AI Implementation Handoff: VolosR Research + LilyGO T-Display-S3 Board Notes
 
 ## Purpose
