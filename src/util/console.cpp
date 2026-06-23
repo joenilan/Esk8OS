@@ -120,12 +120,12 @@ static void dispatch(char* line) {
             } else {
                 Serial.println("odo set: need a value >= 0");
             }
-        } else if (useMph) {
-            Serial.printf("odo %.2f mi | trip %.2f mi\n",
-                 totalDistanceKm * 0.621371f, tripDistanceKm * 0.621371f);
         } else {
-            Serial.printf("odo %.2f km | trip %.2f km\n",
-                 totalDistanceKm, tripDistanceKm);
+            float cv = useMph ? 0.621371f : 1.0f;
+            const char* u = useMph ? "mi" : "km";
+            Serial.printf("odo %.2f %s | trip %.2f %s | tmov %02u:%02u:%02u\n",
+                 totalDistanceKm * cv, u, tripDistanceKm * cv, u,
+                 tripMovingSec / 3600, (tripMovingSec / 60) % 60, tripMovingSec % 60);
         }
     }
     else if (line[0]) Serial.println("? unknown - try 'help'");
