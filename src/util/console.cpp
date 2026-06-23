@@ -1,8 +1,15 @@
 #include "console.h"
 #include "esk8os.h"
+#include "app/App.h"
+#include "version.h"
 #include "logging/ridelog.h"
 #include "services/webexport.h"
 #include <LittleFS.h>
+#include <esp_system.h>
+
+// Forward-declared (defined in App.cpp, external linkage) — re-applies the
+// backlight from gBrightnessPct after the `bright` command changes it.
+void applyBrightness();
 
 static const char* RIDES_DIR = "/rides";
 static char   g_line[96];
@@ -81,6 +88,97 @@ static void cmdWifi(const char* arg) {
     Serial.printf("wifi export %s\n", webServiceActive() ? "ON" : "OFF");
 }
 
+// ---- debug / status dumps ---------------------------------------------------
+static void cmdStat() {
+    const char* su = useMph ? "mph" : "kmh";
+    float spd = useMph ? currentSpeedMph : currentSpeedKmh;
+    Serial.printf("spd %.1f %s | batt %d%% | %.1fV | link %s | fault %d\n",
+        spd, su, currentBatteryPercent, currentVoltage, vescLinkOk ? "OK" : "DOWN", vescFault);
+    Serial.printf("pwr %dW (peak %dW) | batA %.1f | motA %.1f | duty %d%%\n",
+        (int)currentWatts, (int)peakWatts, currentAmps, currentMotorAmps, (int)currentDuty);
+    Serial.printf("temp motor %dC | esc %dC | batt %dC\n",
+        (int)currentMotorTemp, (int)currentEscTemp, (int)currentBatteryTemp);
+    Serial.printf("energy %dWh used | %dWh regen\n", (int)currentWattHours, (int)currentWhRegen);
+}
+
+static void cmdTrip(const char* arg) {
+    if (!strcmp(arg, "reset")) {
+        Esk8OS::App::resetTrip();
+        Serial.println("trip reset (distance + moving-time + session metrics)");
+        return;
+    }
+    float cv = useMph ? 0.621371f : 1.0f;
+    const char* u  = useMph ? "mi"  : "km";
+    const char* su = useMph ? "mph" : "kmh";
+    Serial.printf("trip %.2f %s | tmov %02u:%02u:%02u | odo %.2f %s\n",
+        tripDistanceKm * cv, u, tripMovingSec / 3600, (tripMovingSec / 60) % 60, tripMovingSec % 60,
+        totalDistanceKm * cv, u);
+    Serial.printf("avg %.1f %s | max %.1f %s | range est %.1f %s (rem %.1f) %s\n",
+        avgSpeedKmh * cv, su, maxSpeedKmh * cv, su, estimatedRangeKm * cv, u, remainingRangeKm * cv,
+        rangeEstimateReady ? "[learned]" : "[default]");
+}
+
+static void cmdSys() {
+    unsigned long up = millis() / 1000;
+    Serial.printf("fw %s\n", FW_VERSION_FULL);
+    Serial.printf("uptime %02lu:%02lu:%02lu | reset-reason %d | fps %u\n",
+        up / 3600, (up / 60) % 60, up % 60, (int)esp_reset_reason(), gFps);
+    Serial.printf("heap %u B free (min %u) | psram %u/%u B free\n",
+        (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
+        (unsigned)ESP.getFreePsram(), (unsigned)ESP.getPsramSize());
+}
+
+static void cmdCfg() {
+    Serial.printf("units %s | demo %s | bright %d%% | theme %d | rider %s\n",
+        useMph ? "mph" : "kmh", gDemoMode ? "ON" : "OFF", gBrightnessPct, gThemeIdx, RIDER_NAME);
+    Serial.printf("battery %d cells | pack %.1f Ah | stop %.2f V/cell | %.0f Wh/mi\n",
+        BATTERY_CELLS_COUNT, BATTERY_EFFECTIVE_CAPACITY_AH, BATTERY_STOP_CELL_V, RANGE_DEFAULT_WH_PER_MILE);
+    WheelProfile& w = wheelProfiles[activeWheelProfile];
+    Serial.printf("wheel prof %d: %s (%.0f mm, %d/%d, %.1f pp)\n",
+        activeWheelProfile, w.name, w.wheelDiameterM * 1000.0f, w.motorPulley, w.wheelPulley, w.polePairs);
+}
+
+// ---- actions ----------------------------------------------------------------
+static void cmdDemo(const char* arg) {
+    String a = arg; a.trim();
+    if (a == "on" || a == "off") {
+        gDemoMode = (a == "on");
+        prefs.putBool("demo", gDemoMode);
+        rideEnergyBaselineSet = false;     // re-baseline VESC energy on the next real poll
+    }
+    Serial.printf("demo %s\n", gDemoMode ? "ON" : "OFF");
+}
+
+static void cmdUnits(const char* arg) {
+    String a = arg; a.trim();
+    if (a == "mph" || a == "kmh" || a == "km") {
+        useMph = (a == "mph");
+        prefs.putBool("mph", useMph);
+        gRedrawAll = true;
+    }
+    Serial.printf("units %s\n", useMph ? "mph" : "kmh");
+}
+
+static void cmdBright(const char* arg) {
+    String a = arg; a.trim();
+    if (a.length()) {
+        gBrightnessPct = constrain(a.toInt(), 10, 100);
+        prefs.putInt("bright", gBrightnessPct);
+        applyBrightness();
+    }
+    Serial.printf("bright %d%%\n", gBrightnessPct);
+}
+
+static void cmdRider(const char* arg) {
+    String a = arg; a.trim();
+    if (a.length()) {
+        strlcpy(RIDER_NAME, a.c_str(), sizeof(RIDER_NAME));
+        prefs.putString("rider", RIDER_NAME);
+        gRedrawAll = true;
+    }
+    Serial.printf("rider %s\n", RIDER_NAME);
+}
+
 static void cmdHelp() {
     Serial.println(F("commands:"));
     Serial.println(F("  help            this list"));
@@ -91,6 +189,15 @@ static void cmdHelp() {
     Serial.println(F("  wifi [on|off]   standalone log/OTA web service (http://192.168.4.1)"));
     Serial.println(F("  free            partition usage"));
     Serial.println(F("  odo [reset|set <v>]  odometer + trip (reset=0, set <v> in display unit)"));
+    Serial.println(F("  stat            live telemetry (speed/power/temps/energy)"));
+    Serial.println(F("  trip [reset]    trip distance/time/avg/max/range, or full reset"));
+    Serial.println(F("  sys             fw, uptime, heap/psram, reset reason, fps"));
+    Serial.println(F("  cfg             units/demo/brightness/battery/wheel config"));
+    Serial.println(F("  demo [on|off]   simulate telemetry (persisted)"));
+    Serial.println(F("  units [mph|kmh] display units (persisted)"));
+    Serial.println(F("  bright <10-100> backlight % (persisted)"));
+    Serial.println(F("  rider [name]    rider name (persisted)"));
+    Serial.println(F("  reboot          restart the board"));
 }
 
 static void dispatch(char* line) {
@@ -127,6 +234,20 @@ static void dispatch(char* line) {
                  totalDistanceKm * cv, u, tripDistanceKm * cv, u,
                  tripMovingSec / 3600, (tripMovingSec / 60) % 60, tripMovingSec % 60);
         }
+    }
+    else if (!strcmp(line, "stat") || !strcmp(line, "tel")) cmdStat();
+    else if (!strcmp(line, "trip")) cmdTrip(arg);
+    else if (!strcmp(line, "sys"))  cmdSys();
+    else if (!strcmp(line, "cfg") || !strcmp(line, "config")) cmdCfg();
+    else if (!strcmp(line, "demo")) cmdDemo(arg);
+    else if (!strcmp(line, "units")) cmdUnits(arg);
+    else if (!strcmp(line, "bright")) cmdBright(arg);
+    else if (!strcmp(line, "rider")) cmdRider(arg);
+    else if (!strcmp(line, "reboot")) {
+        Serial.println("rebooting...");
+        Serial.flush();
+        delay(100);
+        ESP.restart();
     }
     else if (line[0]) Serial.println("? unknown - try 'help'");
 }
