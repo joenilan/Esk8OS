@@ -302,7 +302,9 @@ void pollVescData() {
     // Telemetry link freshness, session max + average speed
     vescLinkOk = (millis() - lastVescOkMs < VESC_LINK_TIMEOUT_MS);
     if (currentSpeedKmh > maxSpeedKmh) maxSpeedKmh = currentSpeedKmh;
-    float hrs = (millis() - rideStartMs) / 3600000.0f;
-    if (hrs > 0.0001f) avgSpeedKmh = (tripDistanceKm - sessionTripStartKm) / hrs;
+    // AVG is a true moving-average: session distance / session MOVING-time, so it
+    // doesn't sag while parked (the trip clock and distance both pause together).
+    uint32_t sessionMovingSec = tripMovingSec - sessionMovingStartSec;
+    if (sessionMovingSec > 0) avgSpeedKmh = (tripDistanceKm - sessionTripStartKm) / (sessionMovingSec / 3600.0f);
     updateRangeEstimate();
 }

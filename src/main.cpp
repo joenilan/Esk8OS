@@ -22,6 +22,7 @@ void setup() {
 
     rideStartMs = millis();
     sessionTripStartKm = tripDistanceKm;
+    sessionMovingStartSec = tripMovingSec;   // AVG = distance / moving-time since this baseline
 
     #ifndef WOKWI_SIMULATION
     Esk8OS::Board::enableDisplayPower();

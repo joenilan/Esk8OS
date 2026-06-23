@@ -152,6 +152,7 @@ extern bool  vescLinkOk;
 extern unsigned long rideStartMs;
 extern float sessionTripStartKm, tripDistanceKm, totalDistanceKm;
 extern uint32_t tripMovingSec;       // trip moving time (seconds rolling); persisted, board-authoritative
+extern uint32_t sessionMovingStartSec; // tripMovingSec baseline at session start (for the moving AVG)
 extern unsigned long lastMovedMs;    // millis() of last rolling sample; drives the parked auto-reset
 extern float estimatedRangeKm, remainingRangeKm, avgWhPerKm;
 extern float rideStartVescWh, rideStartVescWhRegen;

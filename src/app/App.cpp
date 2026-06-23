@@ -38,6 +38,7 @@ void resetTrip() {
     saveRideSummaryLog();
     tripDistanceKm = 0;
     tripMovingSec = 0;
+    sessionMovingStartSec = 0;
     lastMovedMs = 0;
     sessionTripStartKm = 0;
     rideStartMs = millis();

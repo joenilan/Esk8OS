@@ -43,6 +43,7 @@ extern float sessionTripStartKm;
 extern float tripDistanceKm;
 extern float totalDistanceKm;
 extern uint32_t tripMovingSec;       // trip moving time (seconds rolling); persisted, board-authoritative
+extern uint32_t sessionMovingStartSec; // tripMovingSec baseline at session start (for the moving AVG)
 extern unsigned long lastMovedMs;    // millis() of last rolling sample; drives the parked auto-reset
 extern float estimatedRangeKm;
 extern float remainingRangeKm;

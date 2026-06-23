@@ -29,6 +29,7 @@ float sessionTripStartKm = 0.0;
 float tripDistanceKm = 0.0;
 float totalDistanceKm = 0.0;
 uint32_t tripMovingSec = 0;          // trip time = seconds spent rolling (NOT uptime)
+uint32_t sessionMovingStartSec = 0;  // tripMovingSec at session start; AVG uses moving-time since here
 unsigned long lastMovedMs = 0;       // millis() at the last rolling sample (0 = not yet moved this boot)
 float estimatedRangeKm = 0.0;
 float remainingRangeKm = 0.0;
