@@ -1,6 +1,10 @@
 #include "telemetry.h"
 #include "transports/VescUartTransport.h"
 
+// Speed above which the board is considered "rolling" — trip moving-time and the
+// last-moved timestamp only advance past this, so parked/walking time isn't counted.
+static const float TRIP_MOVING_MIN_KMH = 2.0f;
+
 // ============================================================================
 // Telemetry data layer. Reads the VESC over UART (or a demo simulation), then
 // integrates trip/odometer + energy, maintains the range estimate, the 3-minute
@@ -69,6 +73,7 @@ void saveRideSummaryLog() {
 void saveOdo() {
     prefs.putFloat("odo", totalDistanceKm);
     prefs.putFloat("trip", tripDistanceKm);
+    prefs.putUInt("tripsec", tripMovingSec);   // persist trip moving-time alongside distance
 }
 
 // ---- demo simulation --------------------------------------------------------
@@ -265,12 +270,22 @@ void pollVescData() {
     // grow (and must never be persisted) — it is a real total. Trip still
     // accumulates so the demo shows live distance.
     static unsigned long lastDistMs = 0;
+    static uint32_t movingMsRem = 0;          // sub-second carry for the moving-time accumulator
     unsigned long nowMs = millis();
     if (lastDistMs != 0) {
-        float dKm = currentSpeedKmh * ((nowMs - lastDistMs) / 3600000.0f);
+        unsigned long dtMs = nowMs - lastDistMs;
+        float dKm = currentSpeedKmh * (dtMs / 3600000.0f);
         if (dKm > 0) {
             tripDistanceKm += dKm;
             if (!DEMO_DATA) totalDistanceKm += dKm;
+        }
+        // Trip TIME = moving time: accumulate seconds only while rolling, so
+        // parked/walking/off gaps are never counted (self-correcting). This is the
+        // board's authoritative trip clock; lastMovedMs feeds the 6h parked reset.
+        if (currentSpeedKmh > TRIP_MOVING_MIN_KMH) {
+            movingMsRem += (uint32_t)dtMs;
+            while (movingMsRem >= 1000) { tripMovingSec++; movingMsRem -= 1000; }
+            lastMovedMs = nowMs;
         }
     }
     lastDistMs = nowMs;

@@ -1069,7 +1069,7 @@ static void updateTrip() {
     float cv = useMph ? 0.621371 : 1.0;
     float avgWh = useMph ? avgWhPerKm / 0.621371 : avgWhPerKm;
 
-    unsigned long sec = (millis() - rideStartMs) / 1000;   // trip elapsed; resets with the trip
+    unsigned long sec = tripMovingSec;   // trip TIME = moving time (rolling only), not uptime
     char tb[6];
     snprintf(tb, sizeof(tb), "%02d:%02d", (int)((sec / 60) % 100), (int)(sec % 60));
 

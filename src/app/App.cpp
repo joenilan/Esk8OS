@@ -37,6 +37,8 @@ namespace App {
 void resetTrip() {
     saveRideSummaryLog();
     tripDistanceKm = 0;
+    tripMovingSec = 0;
+    lastMovedMs = 0;
     sessionTripStartKm = 0;
     rideStartMs = millis();
     avgSpeedKmh = 0;
@@ -218,6 +220,16 @@ void dashboardLoop() {
         recordHistorySample();
         ridelogTick();
         lastDataPoll = now;
+    }
+
+    // Auto-reset the trip after 6h parked: once the board has actually moved this
+    // session (lastMovedMs set) and then sits still for 6h, zero the trip so the
+    // next ride starts fresh. A power-off gap can't be measured (no RTC), so a
+    // cold boot instead continues from NVS; manual TRIP_RESET still zeros anytime.
+    static const unsigned long TRIP_PARK_RESET_MS = 6UL * 3600UL * 1000UL;
+    if (!DEMO_DATA && lastMovedMs != 0 && tripDistanceKm > 0.0f &&
+        now - lastMovedMs > TRIP_PARK_RESET_MS) {
+        resetTrip();
     }
 
     // Stream telemetry to the companion app + apply any queued settings/commands.

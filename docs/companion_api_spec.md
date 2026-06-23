@@ -52,9 +52,16 @@ firmware — the app must **not** re-convert. Efficiency `eff` is Wh/mi (mph) or
   "est": 21.7,       // Estimated full-charge range (display unit)
   "eff": 22,         // Avg efficiency — Wh/mi (mph) or Wh/km
   "fault": 0,        // VESC fault code (0 = none)
-  "rtime": 1843      // Ride time since power-on (seconds)
+  "rtime": 1843,     // Board uptime since power-on this boot (seconds)
+  "tmov": 1290       // Trip moving-time — seconds spent rolling (>2 km/h), board-authoritative
 }
 ```
+
+> **`tmov` vs `rtime`:** `tmov` is the canonical trip time the app should display — it
+> accumulates only while the board is actually rolling, persists to NVS, and survives a
+> power-cycle (the board continues the same trip on cold boot). It auto-resets after 6 h
+> parked or on `TRIP_RESET`. `rtime` is just raw board uptime this boot (parked time
+> included) and is only useful as a system/diagnostics value.
 
 ---
 
@@ -110,7 +117,7 @@ Writing a raw ASCII string to this characteristic triggers immediate physical ac
 
 | Command String | Action |
 | :--- | :--- |
-| `"TRIP_RESET"` | Resets the current session/trip distance and max metrics. |
+| `"TRIP_RESET"` | Zeros the current trip — distance, moving-time (`tmov`), and session max metrics — and persists the cleared values. |
 | `"PAGE_NEXT"` | Swipes the physical ESP32 display to the next page. |
 | `"PAGE_PREV"` | Swipes the physical ESP32 display to the previous page. |
 | `"PAGE_SET:<n>"` | Jumps the display to an **absolute** page index (0=HUD,1=DASH,2=POWER,3=TRIP,4=SETTINGS,5=SYSTEM,6=GRAPHS,7=LOGS). Use this for page-swipe sync when the app's page set doesn't 1:1 the board's. |

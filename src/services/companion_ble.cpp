@@ -289,7 +289,8 @@ void companionBleTick() {
     doc["eff"]   = (int)(useMph ? avgWhPerKm / KM2MI : avgWhPerKm);   // Wh/mi (mph) or Wh/km
     // System / fault
     doc["fault"] = vescFault;
-    doc["rtime"] = (uint32_t)((millis() - rideStartMs) / 1000UL);     // ride seconds
+    doc["rtime"] = (uint32_t)((millis() - rideStartMs) / 1000UL);     // board uptime this boot (seconds)
+    doc["tmov"]  = tripMovingSec;                                     // trip moving-time (seconds rolling) — board-authoritative
 
     char buf[320];
     size_t n = serializeJson(doc, buf, sizeof(buf));

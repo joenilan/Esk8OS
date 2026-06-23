@@ -28,6 +28,8 @@ unsigned long rideStartMs = 0;
 float sessionTripStartKm = 0.0;
 float tripDistanceKm = 0.0;
 float totalDistanceKm = 0.0;
+uint32_t tripMovingSec = 0;          // trip time = seconds spent rolling (NOT uptime)
+unsigned long lastMovedMs = 0;       // millis() at the last rolling sample (0 = not yet moved this boot)
 float estimatedRangeKm = 0.0;
 float remainingRangeKm = 0.0;
 float avgWhPerKm = 0.0;

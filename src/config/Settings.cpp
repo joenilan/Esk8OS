@@ -53,12 +53,17 @@ void begin() {
     if (storedSchema != STORAGE_SCHEMA_VERSION) {
         totalDistanceKm = 0.0;
         tripDistanceKm = 0.0;
+        tripMovingSec = 0;
         prefs.putFloat("odo", totalDistanceKm);
         prefs.putFloat("trip", tripDistanceKm);
+        prefs.putUInt("tripsec", tripMovingSec);
         prefs.putInt("schema", STORAGE_SCHEMA_VERSION);
     } else {
         totalDistanceKm = prefs.getFloat("odo", 0.0);
         tripDistanceKm  = prefs.getFloat("trip", 0.0);
+        // Reload trip moving-time so a quick power-cycle mid-ride continues the
+        // same trip (board is authoritative; cold boot favours continue-from-NVS).
+        tripMovingSec   = prefs.getUInt("tripsec", 0);
     }
 
     activeWheelProfile = prefs.getInt("wheelprof", 0);
