@@ -111,10 +111,14 @@ static void vescPollTask(void* pvParameters) {
                     if (UART.data.tempMosfet > tMosfet) tMosfet = UART.data.tempMosfet;
                 }
 
-                // Decoded remote input from the master (throttle + signal-present).
+                // Decoded remote input from the master. NOTE: over PPM "connected"
+                // really means "a valid pulse is present" — it CANNOT distinguish the
+                // handheld being OFF from ON-but-idle, because the receiver failsafes
+                // to the same center pulse (~1.49 ms) in both cases (measured). Real
+                // remote link/battery would need the VX1's UART telemetry on a COMM port.
                 float ppmDec = 0, ppmMs = 0;
                 bool ppmOk = readDecodedPpm(&ppmDec, &ppmMs);
-                bool ppmConn = ppmOk && ppmMs > 0.5f && ppmMs < 2.5f;   // valid RC pulse window
+                bool ppmConn = ppmOk && ppmMs > 0.5f && ppmMs < 2.5f;
 
                 // VESC firmware version: read once (it doesn't change), then cache.
                 static uint8_t fwMaj = 0, fwMin = 0;

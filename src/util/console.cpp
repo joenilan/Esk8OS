@@ -117,7 +117,7 @@ static void cmdStat() {
 }
 
 static void cmdDiag() {
-    Serial.printf("remote: %s | throttle %+.2f (%s) | pulse %.2f ms\n",
+    Serial.printf("remote: %s | throttle %+.3f (%s) | pulse %.4f ms\n",
         gPpmConnected ? "CONNECTED" : "no signal", gPpmDecoded,
         gPpmDecoded > 0.02f ? "accel" : (gPpmDecoded < -0.02f ? "brake" : "center"), gPpmPulseMs);
     Serial.printf("vesc fw %u.%u | slave(CAN) %s | fault %d | last-fault %d\n",
@@ -125,6 +125,22 @@ static void cmdDiag() {
     Serial.printf("motor A: master %.1f | slave %.1f\n", gMasterMotorAmps, gSlaveMotorAmps);
     Serial.printf("temps C: motor m %.0f/s %.0f | esc m %.0f/s %.0f\n",
         gMasterMotorTemp, gSlaveMotorTemp, gMasterEscTemp, gSlaveEscTemp);
+}
+
+// Burst-sample the decoded PPM for ~2s and report the spread, to compare what
+// the receiver feeds the VESC with the handheld remote OFF vs ON (idle vs active).
+static void cmdPpmScan() {
+    float pMin = 9, pMax = -9, dMin = 9, dMax = -9;
+    float pPrev = gPpmPulseMs; int changes = 0;
+    for (int i = 0; i < 80; i++) {            // ~2.4s at 30ms
+        float p = gPpmPulseMs, d = gPpmDecoded;
+        if (p < pMin) pMin = p; if (p > pMax) pMax = p;
+        if (d < dMin) dMin = d; if (d > dMax) dMax = d;
+        if (fabsf(p - pPrev) > 0.0001f) { changes++; pPrev = p; }
+        delay(30);
+    }
+    Serial.printf("ppm scan (2.4s): pulse %.4f..%.4f spread %.4f ms, %d changes | throttle %.3f..%.3f | conn=%s\n",
+        pMin, pMax, pMax - pMin, changes, dMin, dMax, gPpmConnected ? "Y" : "N");
 }
 
 static void cmdTrip(const char* arg) {
@@ -276,6 +292,7 @@ static void dispatch(char* line) {
     }
     else if (!strcmp(line, "stat") || !strcmp(line, "tel")) cmdStat();
     else if (!strcmp(line, "diag")) cmdDiag();
+    else if (!strcmp(line, "ppmscan")) cmdPpmScan();
     else if (!strcmp(line, "trip")) {
         if (!strcmp(arg, "reset") && !needConfirm("reset the trip (distance + moving-time)", orig)) return;
         cmdTrip(arg);
