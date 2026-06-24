@@ -46,6 +46,13 @@ Preferences prefs;
 namespace Esk8OS {
 namespace Settings {
 
+// getFloat() goes through getBytes(), which logs an ESP "nvs_get_blob" error for
+// a key that doesn't exist yet. Guard with isKey() so first-boot/default reads
+// stay quiet and just return the default.
+static float prefFloat(const char* key, float def) {
+    return prefs.isKey(key) ? prefs.getFloat(key, def) : def;
+}
+
 void begin() {
     prefs.begin("esk8os", false);
     
@@ -59,8 +66,8 @@ void begin() {
         prefs.putUInt("tripsec", tripMovingSec);
         prefs.putInt("schema", STORAGE_SCHEMA_VERSION);
     } else {
-        totalDistanceKm = prefs.getFloat("odo", 0.0);
-        tripDistanceKm  = prefs.getFloat("trip", 0.0);
+        totalDistanceKm = prefFloat("odo", 0.0);
+        tripDistanceKm  = prefFloat("trip", 0.0);
         // Reload trip moving-time so a quick power-cycle mid-ride continues the
         // same trip (board is authoritative; cold boot favours continue-from-NVS).
         tripMovingSec   = prefs.getUInt("tripsec", 0);
@@ -76,9 +83,9 @@ void begin() {
     gThemeIdx      = constrain(prefs.getInt("theme", 0), 0, THEME_COUNT - 1);
 
     BATTERY_CELLS_COUNT = constrain(prefs.getInt("cells", BATTERY_CELLS_COUNT), 6, 14);
-    BATTERY_EFFECTIVE_CAPACITY_AH = constrain(prefs.getFloat("packAh", BATTERY_EFFECTIVE_CAPACITY_AH), 4.0f, 40.0f);
-    BATTERY_STOP_CELL_V = constrain(prefs.getFloat("stopCell", BATTERY_STOP_CELL_V), 3.00f, 3.60f);
-    RANGE_DEFAULT_WH_PER_MILE = constrain(prefs.getFloat("whmi", RANGE_DEFAULT_WH_PER_MILE), 14.0f, 40.0f);
+    BATTERY_EFFECTIVE_CAPACITY_AH = constrain(prefFloat("packAh", BATTERY_EFFECTIVE_CAPACITY_AH), 4.0f, 40.0f);
+    BATTERY_STOP_CELL_V = constrain(prefFloat("stopCell", BATTERY_STOP_CELL_V), 3.00f, 3.60f);
+    RANGE_DEFAULT_WH_PER_MILE = constrain(prefFloat("whmi", RANGE_DEFAULT_WH_PER_MILE), 14.0f, 40.0f);
     
     recalcBatteryBounds();
     currentVoltage = BATTERY_MAX_V;

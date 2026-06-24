@@ -290,10 +290,14 @@ void pollVescData() {
     }
     lastDistMs = nowMs;
 
+    // Persist on a moving->stopped edge (so a stop checkpoints the trip) and at
+    // least every 60s while riding. The stop-save is debounced to once per 10s so
+    // speed chattering across the 1 km/h line near a stop can't hammer NVS.
     static unsigned long lastSave = 0;
     static bool wasMoving = false;
     bool moving = currentSpeedKmh > 1.0;
-    if (!DEMO_DATA && ((wasMoving && !moving) || (millis() - lastSave > 60000))) {
+    bool stopEdge = wasMoving && !moving && (millis() - lastSave > 10000);
+    if (!DEMO_DATA && (stopEdge || (millis() - lastSave > 60000))) {
         saveOdo();
         lastSave = millis();
     }

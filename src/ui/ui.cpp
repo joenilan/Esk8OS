@@ -701,6 +701,9 @@ static void updateLogs() {
         snprintf(key, sizeof(key), "ride%02u", (unsigned int)idx);
 
         RideLog log;
+        // isKey() guard avoids the ESP-IDF "nvs_get_blob" error log that getBytes
+        // emits for a not-yet-written ride slot (the count can run ahead of the keys).
+        if (!prefs.isKey(key)) continue;
         size_t got = prefs.getBytes(key, &log, sizeof(log));
         if (got != sizeof(log)) continue;
 
