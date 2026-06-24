@@ -56,6 +56,10 @@ Type `help` (or `?`) for the in-firmware list. `[...]` = optional argument.
 
 ### Actions
 
+> **Destructive commands require confirmation.** `rm`, `odo reset`, `odo set`,
+> `trip reset`, and `reboot` print a `… -- confirm? [y/N]` prompt and do nothing
+> until you reply `y`/`yes` on the next line; anything else cancels.
+
 | Command | Effect |
 | :--- | :--- |
 | `demo [on\|off]` | Toggle simulated telemetry (persisted). No arg = show state. |

@@ -15,6 +15,21 @@ static const char* RIDES_DIR = "/rides";
 static char   g_line[96];
 static size_t g_len = 0;
 
+// ---- confirmation guard for destructive commands ----------------------------
+// A dangerous command stashes its original line in g_pending and prints a "[y/N]"
+// prompt; the next input line confirms (y/yes) and re-dispatches, or cancels.
+static char g_pending[96] = "";
+static bool g_confirmed   = false;
+
+// Returns true to proceed (this exec was already confirmed); otherwise stashes
+// the full command line, prints the prompt, and returns false so the caller aborts.
+static bool needConfirm(const char* what, const char* fullLine) {
+    if (g_confirmed) return true;
+    strlcpy(g_pending, fullLine, sizeof(g_pending));
+    Serial.printf("%s -- confirm? [y/N]\n", what);
+    return false;
+}
+
 // Resolve a user-typed name to a full path: bare names go under /rides.
 static String resolvePath(const char* arg) {
     String a = arg; a.trim();
@@ -201,6 +216,8 @@ static void cmdHelp() {
 }
 
 static void dispatch(char* line) {
+    char orig[96];
+    strlcpy(orig, line, sizeof(orig));   // keep the un-split line to re-dispatch on confirm
     char* sp = strchr(line, ' ');
     const char* arg = "";
     if (sp) { *sp = '\0'; arg = sp + 1; }
@@ -208,19 +225,29 @@ static void dispatch(char* line) {
     if      (!strcmp(line, "help") || !strcmp(line, "?")) cmdHelp();
     else if (!strcmp(line, "logs") || !strcmp(line, "ls")) cmdList();
     else if (!strcmp(line, "cat"))  cmdCat(arg);
-    else if (!strcmp(line, "rm"))   cmdRm(arg);
+    else if (!strcmp(line, "rm")) {
+        if (arg[0]) {
+            char msg[80];
+            if (!strcmp(arg, "all")) strlcpy(msg, "delete ALL ride files", sizeof(msg));
+            else snprintf(msg, sizeof(msg), "delete ride file '%s'", arg);
+            if (!needConfirm(msg, orig)) return;
+        }
+        cmdRm(arg);
+    }
     else if (!strcmp(line, "log"))  cmdLog(arg);
     else if (!strcmp(line, "wifi")) cmdWifi(arg);
     else if (!strcmp(line, "free")) Serial.printf("FS %u/%u B used\n",
                  (unsigned)LittleFS.usedBytes(), (unsigned)LittleFS.totalBytes());
     else if (!strcmp(line, "odo")) {
         if (!strcmp(arg, "reset")) {
+            if (!needConfirm("reset the LIFETIME odometer to 0", orig)) return;
             totalDistanceKm = 0.0f;
             saveOdo();                          // persist the cleared lifetime total
             Serial.println("odo reset -> 0");
         } else if (!strncmp(arg, "set ", 4)) {
             float v = atof(arg + 4);            // value in the active display unit
             if (v >= 0) {
+                if (!needConfirm("overwrite the lifetime odometer", orig)) return;
                 totalDistanceKm = useMph ? v / 0.621371f : v;
                 saveOdo();
                 Serial.printf("odo set -> %.2f %s\n", v, useMph ? "mi" : "km");
@@ -236,7 +263,10 @@ static void dispatch(char* line) {
         }
     }
     else if (!strcmp(line, "stat") || !strcmp(line, "tel")) cmdStat();
-    else if (!strcmp(line, "trip")) cmdTrip(arg);
+    else if (!strcmp(line, "trip")) {
+        if (!strcmp(arg, "reset") && !needConfirm("reset the trip (distance + moving-time)", orig)) return;
+        cmdTrip(arg);
+    }
     else if (!strcmp(line, "sys"))  cmdSys();
     else if (!strcmp(line, "cfg") || !strcmp(line, "config")) cmdCfg();
     else if (!strcmp(line, "demo")) cmdDemo(arg);
@@ -244,6 +274,7 @@ static void dispatch(char* line) {
     else if (!strcmp(line, "bright")) cmdBright(arg);
     else if (!strcmp(line, "rider")) cmdRider(arg);
     else if (!strcmp(line, "reboot")) {
+        if (!needConfirm("reboot the board", orig)) return;
         Serial.println("rebooting...");
         Serial.flush();
         delay(100);
@@ -270,7 +301,18 @@ void consolePoll() {
             // so a command never dispatches twice.
             if (g_len > 0) {
                 g_line[g_len] = '\0';
-                dispatch(g_line);
+                if (g_pending[0]) {
+                    // Awaiting a [y/N] answer to a stashed destructive command.
+                    // Anything but y/yes cancels (safe default).
+                    bool yes = (g_line[0] == 'y' || g_line[0] == 'Y');
+                    char cmd[96];
+                    strlcpy(cmd, g_pending, sizeof(cmd));
+                    g_pending[0] = '\0';
+                    if (yes) { g_confirmed = true; dispatch(cmd); g_confirmed = false; }
+                    else Serial.println("cancelled");
+                } else {
+                    dispatch(g_line);
+                }
                 g_len = 0;
             }
         } else if (c == 0x08 || c == 0x7f) {     // backspace / delete
