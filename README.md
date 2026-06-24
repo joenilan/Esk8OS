@@ -143,6 +143,15 @@ Then start/restart Wokwi (Command Palette → “Wokwi: Start Simulator”). Bui
 only the `lilygo` env leaves the sim binary stale, so the sim keeps showing old
 code — a common gotcha.
 
+## Serial console
+
+The `*_debug_usb` builds expose a USB serial console (115200 baud) for bench
+debugging and driving the board without BLE — live telemetry (`stat`), trip/config
+dumps (`trip`, `sys`, `cfg`), and actions (`demo`, `units`, `bright`, `rider`,
+`trip reset`, `reboot`). Type `help` for the full list. See
+[`docs/serial_console.md`](docs/serial_console.md) for the reference and the
+`scripts/serial_query.py` helper.
+
 ## Versioning
 
 The version is stamped at build time, so every build is traceable. The semantic
