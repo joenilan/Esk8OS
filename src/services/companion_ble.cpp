@@ -267,28 +267,28 @@ void companionBleTick() {
     doc["spd"]   = r1(useMph ? currentSpeedMph : currentSpeedKmh);
     doc["bat"]   = currentBatteryPercent;
     doc["v"]     = r1(currentVoltage);
-    doc["w"]     = (int)currentWatts;
-    doc["mtr_t"] = (int)currentMotorTemp;
-    doc["esc_t"] = (int)currentEscTemp;
-    doc["btemp"] = (int)currentBatteryTemp;
+    doc["w"]     = (int)lroundf(currentWatts);
+    doc["mtr_t"] = (int)lroundf(currentMotorTemp);
+    doc["esc_t"] = (int)lroundf(currentEscTemp);
+    doc["btemp"] = (int)lroundf(currentBatteryTemp);
     doc["rng"]   = r1(useMph ? remainingRangeKm * KM2MI : remainingRangeKm);
     doc["max_s"] = r1(useMph ? maxSpeedKmh * KM2MI : maxSpeedKmh);
-    doc["wh"]    = (int)currentWattHours;
+    doc["wh"]    = (int)lroundf(currentWattHours);
     // Power detail
     doc["bata"]  = r1(currentAmps);              // battery A
     doc["mota"]  = r1(currentMotorAmps);         // motor A
-    doc["duty"]  = (int)currentDuty;             // already %
-    doc["pkw"]   = (int)peakWatts;               // live peak-hold W ("peak now")
-    doc["mpw"]   = (int)maxWattsSession;         // session max W ("max ride")
+    doc["duty"]  = (int)lroundf(currentDuty);    // already %
+    doc["pkw"]   = (int)lroundf(peakWatts);      // live peak-hold W ("peak now")
+    doc["mpw"]   = (int)lroundf(maxWattsSession); // session max W ("max ride")
     // Energy / session
-    doc["whr"]   = (int)currentWhRegen;          // regen Wh
+    doc["whr"]   = (int)lroundf(currentWhRegen); // regen Wh
     doc["minv"]  = r1(minVoltageSession);        // session min volt
     doc["avs"]   = r1(useMph ? avgSpeedKmh * KM2MI : avgSpeedKmh);
     // Trip / odometer / range / efficiency (display units)
     doc["trip"]  = r1(tripDistanceKm * dCv);
     doc["odo"]   = r1(totalDistanceKm * dCv);
     doc["est"]   = r1(estimatedRangeKm * dCv);
-    doc["eff"]   = (int)(useMph ? avgWhPerKm / KM2MI : avgWhPerKm);   // Wh/mi (mph) or Wh/km
+    doc["eff"]   = (int)lroundf(useMph ? avgWhPerKm / KM2MI : avgWhPerKm);   // Wh/mi (mph) or Wh/km
     // System / fault
     doc["fault"] = vescFault;
     doc["rtime"] = (uint32_t)((millis() - rideStartMs) / 1000UL);     // board uptime this boot (seconds)
