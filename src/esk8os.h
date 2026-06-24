@@ -29,7 +29,8 @@ enum PageId {
 enum SystemMode {
     MODE_DASHBOARD,
     MODE_VESC_BRIDGE,
-    MODE_BRIDGE_CONFIRM
+    MODE_BRIDGE_CONFIRM,
+    MODE_TRIP_RESET_CONFIRM   // hold-L trip reset waits here for L=yes / R=no
 };
 extern int        currentPage;
 extern SystemMode systemMode;

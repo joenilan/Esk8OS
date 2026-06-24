@@ -113,14 +113,30 @@ void checkButtons() {
         return;
     }
 
+    // TRIP RESET CONFIRMATION: a fresh L press confirms, R cancels. Requires the
+    // hold-L to be released first (needs a HIGH->LOW edge), so it can't auto-confirm.
+    if (systemMode == MODE_TRIP_RESET_CONFIRM) {
+        if (left == LOW && lastLeftBtn == HIGH) {
+            systemMode = MODE_DASHBOARD;
+            resetTrip();                 // repaints + toasts on its own
+        } else if (right == LOW && lastRightBtn == HIGH) {
+            systemMode = MODE_DASHBOARD;
+            drawStaticFrame();
+            gRedrawAll = true;
+        }
+        lastLeftBtn = left; lastRightBtn = right;
+        return;
+    }
+
     // LEFT button: short-press cycles pages, hold ~1.5s resets the trip
     static unsigned long leftDownAt = 0;
     static bool leftHandled = false;
     if (left == LOW) {
         if (lastLeftBtn == HIGH) { leftDownAt = millis(); leftHandled = false; }
-        if (!leftHandled && millis() - leftDownAt > 1500) {     // long press: reset trip
+        if (!leftHandled && millis() - leftDownAt > 1500) {     // long press: ask before reset
             leftHandled = true;
-            resetTrip();
+            systemMode = MODE_TRIP_RESET_CONFIRM;
+            gRedrawAll = true;
         }
     } else if (lastLeftBtn == LOW && !leftHandled && millis() - leftDownAt > 30) {
         if (currentPage == PAGE_SETTINGS && settingsCursor < SETTINGS_COUNT - 1) {

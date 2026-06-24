@@ -1186,6 +1186,7 @@ static const char* faultName(int f) {
 // Highest-priority alert: 1 fault, 2 link-lost, 3 over-temp, 4 crit battery.
 int alertState() {
     if (systemMode == MODE_BRIDGE_CONFIRM) return 5;
+    if (systemMode == MODE_TRIP_RESET_CONFIRM) return 6;
     if (vescFault != 0) return 1;
     if (!vescLinkOk) return 2;
     if (currentMotorTemp > MOTOR_TEMP_LIMIT || currentEscTemp > ESC_TEMP_LIMIT) return 3;
@@ -1219,6 +1220,9 @@ void updateOverlays(int state) {
     } else if (state == 5) {
         line1 = "START BRIDGE?";
         line2 = "L=YES    R=NO";
+    } else if (state == 6) {
+        line1 = "RESET TRIP?";
+        line2 = "L=YES    R=NO";
     } else {
         line1 = "LOW BATTERY";
         line2 = "STOP & CHARGE";
@@ -1227,8 +1231,9 @@ void updateOverlays(int state) {
 
     String textKey = line1 + "|" + line2 + "|" + line3;
     if (state != lastState || textKey != lastText || gRedrawAll) {
-        uint16_t bgColor = (state == 5) ? COL_ACCENT : COL_RED;
-        uint16_t fgColor = (state == 5) ? COL_BG : COL_WHITE;
+        bool confirmModal = (state == 5 || state == 6);
+        uint16_t bgColor = confirmModal ? COL_ACCENT : COL_RED;
+        uint16_t fgColor = confirmModal ? COL_BG : COL_WHITE;
         GFX->fillRect(X0 + 8, by, UI_W - 16, bh, bgColor);
         GFX->setTextDatum(TC_DATUM);
         GFX->setTextColor(fgColor);
@@ -1240,8 +1245,8 @@ void updateOverlays(int state) {
             GFX->drawString(line2, X0 + UI_W / 2, by + 44);
             GFX->setFont(&BebasNeue18pt7b);
             GFX->drawString(line3, X0 + UI_W / 2, by + 68);
-        } else if (state == 5) {
-            // BRIDGE CONFIRM: already Bebas
+        } else if (confirmModal) {
+            // BRIDGE / TRIP-RESET CONFIRM: title in Bebas24, "L=YES R=NO" in Bebas18
             GFX->setFont(&BebasNeue24pt7b);
             GFX->drawString(line1, X0 + UI_W / 2, by + 6);
             GFX->setFont(&BebasNeue18pt7b);
