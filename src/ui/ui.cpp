@@ -432,7 +432,7 @@ static void updateHud() {
     // or page dots); the shared bottom status bar still lives at y>=298.
     GFX->fillRect(X0, 18, UI_W, 280, COL_BG);
 
-    int spdInt = (int)round(useMph ? currentSpeedMph : currentSpeedKmh);
+    int spdInt = (int)(useMph ? currentSpeedMph : currentSpeedKmh);   // truncate, never round
 
     // Hero speed: native BebasNeue110 (~79px digits) drawn at scale 1.0 — crisp,
     // no fractional scaling. Centered vertically between the status bar (~y16) and
@@ -461,7 +461,7 @@ static void updateHud() {
     GFX->drawString(String(currentBatteryPercent) + "%", X0 + UI_W / 2, 184);
 
     // Four key ride tiles (2x2), sitting just above the bottom status bar.
-    int watts = (int)round(max(0.0f, peakWatts));
+    int watts = (int)max(0.0f, peakWatts);   // truncate (hide decimal)
     float rangeDisplay = useMph ? remainingRangeKm * 0.621371f : remainingRangeKm;
     String rangeUnit = useMph ? "mi" : "km";
     float hottest = max(currentMotorTemp, currentEscTemp);
@@ -469,7 +469,7 @@ static void updateHud() {
     drawHudSmallMetric(4,  202, 78, "WATTS", String(watts), wattColor(watts));
     drawHudSmallMetric(88, 202, 78, "VOLTS", String(currentVoltage, 1), battColor(currentBatteryPercent));
     drawHudSmallMetric(4,  250, 78, "RANGE", String(rangeDisplay, 1) + rangeUnit, COL_WHITE);
-    drawHudSmallMetric(88, 250, 78, "TEMP", String((int)round(hottest)) + "C",
+    drawHudSmallMetric(88, 250, 78, "TEMP", String((int)hottest) + "C",
                        hottest > MOTOR_TEMP_LIMIT ? COL_RED : COL_GREEN);
 
     markDirty(18, 280);
@@ -520,13 +520,13 @@ static void graphRange(GraphField f, float& mn, float& mx) {
 static String graphCurrentText(GraphField f) {
     switch (f) {
         case GF_SPEED:
-            return String((int)round(useMph ? currentSpeedMph : currentSpeedKmh)) + (useMph ? " mph" : " kmh");
+            return String((int)(useMph ? currentSpeedMph : currentSpeedKmh)) + (useMph ? " mph" : " kmh");
         case GF_WATTS:
-            return String((int)round(max(0.0f, currentWatts))) + " W";
+            return String((int)max(0.0f, currentWatts)) + " W";
         case GF_VOLTS:
             return String(currentVoltage, 1) + " V";
         case GF_MOTOR_TEMP:
-            return String((int)round(currentMotorTemp)) + "C";
+            return String((int)currentMotorTemp) + "C";
         default:
             return "";
     }
@@ -854,7 +854,7 @@ static void updateStatPanel() {
     int midx = X0 + UI_W / 2;
     int by = 86, bh = 32;
 
-    int w = (int)round(peakWatts);
+    int w = (int)peakWatts;
     bool vchanged = abs(currentVoltage - lastV) > 0.05 || currentBatteryPercent != lastPct || gRedrawAll;
     bool wchanged = abs(w - lastW) >= 5 || gRedrawAll;
 
@@ -876,7 +876,7 @@ static void updateStatPanel() {
 static void drawTempRow(int y, float temp, int pct, bool hot) {
     GFX->setFont(&fonts::Font0);
     String pstr = String("(") + pct + "%)";
-    String tstr = String((int)round(temp)) + "C";
+    String tstr = String((int)temp) + "C";   // truncate (hide decimal)
 
     int pw = GFX->textWidth(pstr);
     GFX->setTextDatum(TR_DATUM);
@@ -1034,16 +1034,16 @@ static void updatePower() {
     if (!gRedrawAll && millis() - lastMs < 400) return;
     lastMs = millis();
 
-    int duty = (int)round(currentDuty);
-    int peakW = (int)round(peakWatts);
+    int duty = (int)currentDuty;          // truncate (hide decimal), never round
+    int peakW = (int)peakWatts;
     drawVal(40,  String(currentMotorAmps, 1) + " A", COL_WHITE);
     drawVal(56,  String(currentAmps, 1) + " A",      COL_WHITE);
     drawVal(72,  String(duty) + " %", dutyColor(duty));
     drawVal(88,  String(peakW) + " W", wattColor(peakW));   // PEAK NOW (peak-hold)
-    drawVal(126, String((int)round(currentWattHours)) + " Wh", COL_WHITE);
-    drawVal(142, String("+") + String((int)round(currentWhRegen)) + " Wh", COL_GREEN);
+    drawVal(126, String((int)currentWattHours) + " Wh", COL_WHITE);
+    drawVal(142, String("+") + String((int)currentWhRegen) + " Wh", COL_GREEN);
 
-    int maxW = (int)round(maxWattsSession);
+    int maxW = (int)maxWattsSession;
     drawVal(178, String(maxW) + " W", wattColor(maxW));     // MAX RIDE (session max)
     drawVal(194, String(minVoltageSession, 1) + " V", COL_WHITE);
     markDirty(22, 186);
@@ -1068,10 +1068,10 @@ static void updateTrip() {
 
     drawVal(40,  String(tb),                          COL_WHITE);
     drawVal(56,  String(tripDistanceKm * cv, 1) + " " + du, COL_WHITE);
-    drawVal(72,  String((int)round(avgSpeedKmh * cv)) + " " + su, COL_WHITE);
-    drawVal(88,  String((int)round(maxSpeedKmh * cv)) + " " + su, COL_WHITE);
-    drawVal(104, String((int)round(avgWh)) + " wh/" + du, COL_WHITE);
-    drawVal(150, String((int)round(totalDistanceKm * cv)) + " " + du, COL_WHITE);
+    drawVal(72,  String((int)(avgSpeedKmh * cv)) + " " + su, COL_WHITE);
+    drawVal(88,  String((int)(maxSpeedKmh * cv)) + " " + su, COL_WHITE);
+    drawVal(104, String((int)avgWh) + " wh/" + du, COL_WHITE);
+    drawVal(150, String(totalDistanceKm * cv, 1) + " " + du, COL_WHITE);   // odo: 1 decimal (distance)
     markDirty(22, 172);
 }
 
@@ -1208,8 +1208,8 @@ void updateOverlays(int state) {
     else if (state == 3) {
         line1 = "! HOT";
         line2 = (currentMotorTemp > MOTOR_TEMP_LIMIT)
-                ? "MOTOR " + String((int)round(currentMotorTemp)) + "C"
-                : "ESC " + String((int)round(currentEscTemp)) + "C";
+                ? "MOTOR " + String((int)currentMotorTemp) + "C"
+                : "ESC " + String((int)currentEscTemp) + "C";
     } else if (state == 5) {
         line1 = "START BRIDGE?";
         line2 = "L=YES    R=NO";

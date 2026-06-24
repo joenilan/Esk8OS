@@ -110,10 +110,10 @@ static void cmdStat() {
     Serial.printf("spd %.1f %s | batt %d%% | %.1fV | link %s | fault %d\n",
         spd, su, currentBatteryPercent, currentVoltage, vescLinkOk ? "OK" : "DOWN", vescFault);
     Serial.printf("pwr %dW (peak %dW) | batA %.1f | motA %.1f | duty %d%%\n",
-        (int)lroundf(currentWatts), (int)lroundf(peakWatts), currentAmps, currentMotorAmps, (int)lroundf(currentDuty));
+        (int)currentWatts, (int)peakWatts, currentAmps, currentMotorAmps, (int)currentDuty);
     Serial.printf("temp motor %dC | esc %dC | batt %dC\n",
-        (int)lroundf(currentMotorTemp), (int)lroundf(currentEscTemp), (int)lroundf(currentBatteryTemp));
-    Serial.printf("energy %dWh used | %dWh regen\n", (int)lroundf(currentWattHours), (int)lroundf(currentWhRegen));
+        (int)currentMotorTemp, (int)currentEscTemp, (int)currentBatteryTemp);
+    Serial.printf("energy %dWh used | %dWh regen\n", (int)currentWattHours, (int)currentWhRegen);
 }
 
 static void cmdDiag() {
