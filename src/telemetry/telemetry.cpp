@@ -124,6 +124,9 @@ static void simulateTelemetry() {
     currentBatteryTemp += ((ambient + 12.0f * load) - currentBatteryTemp) * kBatt;
 
     lastVescOkMs = millis();      // demo link always "up"
+    vescFault = 0;                // ...and fault-free: clear any stale fault left by a
+                                  // real (e.g. unpowered) VESC read before demo was enabled,
+                                  // so the board page isn't frozen behind a fault banner.
 
     static unsigned long lastDrain = 0;
     if (millis() - lastDrain > 2000) {
@@ -251,6 +254,18 @@ void pollVescData() {
         }
     }
     #endif
+    // On entering demo, seed a clean full-charge, fault-free state so a stale
+    // reading left by a real/unpowered VESC doesn't strand a low-battery or fault
+    // banner over the simulation. Covers every enable path (console/board/BLE).
+    static bool wasSim = false;
+    if (useSim && !wasSim) {
+        currentBatteryPercent = 100;
+        currentVoltage = BATTERY_MAX_V;
+        currentMotorTemp = currentEscTemp = currentBatteryTemp = 24.0f;
+        vescFault = 0;
+        peakWatts = 0;
+    }
+    wasSim = useSim;
     if (useSim) simulateTelemetry();
 
     // Peak-hold: rise instantly to new peaks, ease back down (~2-3s) so the
