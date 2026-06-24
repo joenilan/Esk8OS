@@ -44,6 +44,7 @@ Type `help` (or `?`) for the in-firmware list. `[...]` = optional argument.
 | :--- | :--- |
 | `help`, `?` | List all commands. |
 | `stat`, `tel` | Live telemetry: speed, battery %, volts, VESC link/fault, power + peak, battery/motor amps, duty, motor/ESC/battery temps, energy used/regen. |
+| `diag` | Remote/PPM throttle (−1…+1, accel/brake) + signal-present, VESC firmware version, slave-motor (CAN) online, current/last fault, per-motor current + temps. |
 | `trip` | Trip distance, moving-time (`tmov`), odometer, session avg/max speed, range estimate (learned vs default). |
 | `sys` | Firmware version, uptime, reset reason, FPS, free heap (+ min), free/total PSRAM. |
 | `cfg`, `config` | Units, demo, brightness, theme, rider, battery (cells / pack Ah / stop V·cell / Wh-per-mi), active wheel profile. |

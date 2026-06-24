@@ -35,6 +35,7 @@ static volatile bool g_setPending = false;
 static char          g_setBuf[256];
 
 static inline float r1(float v) { return roundf(v * 10.0f) / 10.0f; }
+static inline float r2(float v) { return roundf(v * 100.0f) / 100.0f; }
 
 // Case-insensitive equality (theme names are stored uppercase; the spec sends
 // lowercase like "cyber").
@@ -291,8 +292,16 @@ void companionBleTick() {
     doc["fault"] = vescFault;
     doc["rtime"] = (uint32_t)((millis() - rideStartMs) / 1000UL);     // board uptime this boot (seconds)
     doc["tmov"]  = tripMovingSec;                                     // trip moving-time (seconds rolling) — board-authoritative
+    // Remote input + diagnostics
+    doc["ppm"]   = r2(gPpmDecoded);              // throttle -1..1 (brake..accel)
+    doc["ppmok"] = gPpmConnected;                // remote signal present
+    doc["lfault"]= gLastFault;                   // most recent fault (latched)
+    doc["slave"] = gSlaveOnline;                 // 2nd motor online over CAN
+    doc["m1a"]   = r1(gMasterMotorAmps);         // master motor current
+    doc["m2a"]   = r1(gSlaveMotorAmps);          // slave motor current
+    { char fw[8]; snprintf(fw, sizeof(fw), "%u.%u", gVescFwMajor, gVescFwMinor); doc["fw"] = fw; }
 
-    char buf[320];
+    char buf[512];
     size_t n = serializeJson(doc, buf, sizeof(buf));
     g_tel->setValue((uint8_t*)buf, n);
     g_tel->notify();

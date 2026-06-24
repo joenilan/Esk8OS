@@ -3,6 +3,8 @@
 
 #ifndef WOKWI_SIMULATION
 #include <VescUart.h>
+#include <buffer.h>
+#include <crc.h>
 VescUart UART;
 #endif
 
@@ -25,6 +27,52 @@ static TaskHandle_t gVescTaskHandle = NULL;
 static const uint8_t VESC_SLAVE_CAN_ID = 114;
 
 #ifndef WOKWI_SIMULATION
+// Send a SHORT VESC command packet (payload < 256 B) and read the reply payload.
+// The bundled VescUart lib keeps its packet framing private, so this is a minimal
+// self-contained round-trip using the lib's crc16/buffer helpers. Only ever called
+// sequentially from vescPollTask (same Serial1 as getVescValues — no concurrency).
+// Returns reply payload length, or 0 on timeout/CRC/format error.
+static int vescShortCommand(uint8_t cmd, uint8_t* reply, int maxReply) {
+    while (Serial1.available()) Serial1.read();      // drop stale bytes
+    uint8_t payload = cmd;
+    uint16_t crc = crc16(&payload, 1);
+    uint8_t pkt[6] = { 0x02, 0x01, cmd, (uint8_t)(crc >> 8), (uint8_t)(crc & 0xFF), 0x03 };
+    Serial1.write(pkt, sizeof(pkt));
+    Serial1.flush();
+
+    const uint32_t start = millis();
+    auto readByte = [&](int& out) -> bool {
+        while (!Serial1.available()) {
+            if (millis() - start > 50) return false;
+        }
+        out = Serial1.read();
+        return true;
+    };
+
+    int b;
+    do { if (!readByte(b)) return 0; } while (b != 0x02);   // sync to short-packet start
+    int len;
+    if (!readByte(len) || len <= 0 || len > maxReply) return 0;
+    for (int i = 0; i < len; i++) { if (!readByte(b)) return 0; reply[i] = (uint8_t)b; }
+    int crcHi, crcLo, stop;
+    if (!readByte(crcHi) || !readByte(crcLo) || !readByte(stop)) return 0;
+    if (stop != 0x03) return 0;
+    if (((crcHi << 8) | crcLo) != crc16(reply, len)) return 0;
+    return len;
+}
+
+// Read the master VESC's decoded remote input (COMM_GET_DECODED_PPM): throttle
+// level (-1..1) and last pulse length. Reply = [cmd, int32 level*1e6, int32 ms*1e6].
+static bool readDecodedPpm(float* decoded, float* pulseMs) {
+    uint8_t reply[32];
+    int n = vescShortCommand(COMM_GET_DECODED_PPM, reply, sizeof(reply));
+    if (n < 9 || reply[0] != COMM_GET_DECODED_PPM) return false;
+    int32_t idx = 1;
+    *decoded = buffer_get_int32(reply, &idx) / 1000000.0f;
+    *pulseMs = buffer_get_int32(reply, &idx) / 1000000.0f;
+    return true;
+}
+
 static void vescPollTask(void* pvParameters) {
     for (;;) {
         if (!gPollPaused) {
@@ -41,17 +89,38 @@ static void vescPollTask(void* pvParameters) {
                 float whCharged= UART.data.wattHoursCharged;
                 int   err      = UART.data.error;
 
+                // Per-motor (master) values kept for the diagnostics view.
+                float mMotA = motA, mTMotor = tMotor, mTMosfet = tMosfet;
+                float sMotA = 0, sTMotor = 0, sTMosfet = 0;
+
                 // Add the second motor over CAN. getVescValues(canId) forwards the
                 // request through the master; on success UART.data holds the slave.
                 // Sum the additive quantities; for temps keep the hotter so a
                 // warning trips on either motor/ESC. Voltage/rpm/duty are shared.
+                bool slaveOnline = false;
                 if (VESC_SLAVE_CAN_ID != 0 && UART.getVescValues(VESC_SLAVE_CAN_ID)) {
+                    slaveOnline = true;
+                    sMotA = UART.data.avgMotorCurrent;
+                    sTMotor = UART.data.tempMotor;
+                    sTMosfet = UART.data.tempMosfet;
                     inA       += UART.data.avgInputCurrent;
                     motA      += UART.data.avgMotorCurrent;
                     wh        += UART.data.wattHours;
                     whCharged += UART.data.wattHoursCharged;
                     if (UART.data.tempMotor  > tMotor)  tMotor  = UART.data.tempMotor;
                     if (UART.data.tempMosfet > tMosfet) tMosfet = UART.data.tempMosfet;
+                }
+
+                // Decoded remote input from the master (throttle + signal-present).
+                float ppmDec = 0, ppmMs = 0;
+                bool ppmOk = readDecodedPpm(&ppmDec, &ppmMs);
+                bool ppmConn = ppmOk && ppmMs > 0.5f && ppmMs < 2.5f;   // valid RC pulse window
+
+                // VESC firmware version: read once (it doesn't change), then cache.
+                static uint8_t fwMaj = 0, fwMin = 0;
+                if (fwMaj == 0 && UART.getFWversion()) {
+                    fwMaj = UART.fw_version.major;
+                    fwMin = UART.fw_version.minor;
                 }
 
                 if (xSemaphoreTake(gDataMutex, portMAX_DELAY) == pdTRUE) {
@@ -65,6 +134,18 @@ static void vescPollTask(void* pvParameters) {
                     gRawData.wattHours = wh;
                     gRawData.wattHoursCharged = whCharged;
                     gRawData.error = err;
+                    gRawData.ppmDecoded = ppmDec;
+                    gRawData.ppmPulseMs = ppmMs;
+                    gRawData.ppmConnected = ppmConn;
+                    gRawData.fwMajor = fwMaj;
+                    gRawData.fwMinor = fwMin;
+                    gRawData.slaveOnline = slaveOnline;
+                    gRawData.masterMotorAmps = mMotA;
+                    gRawData.slaveMotorAmps = sMotA;
+                    gRawData.masterTempMotor = mTMotor;
+                    gRawData.slaveTempMotor = sTMotor;
+                    gRawData.masterTempMosfet = mTMosfet;
+                    gRawData.slaveTempMosfet = sTMosfet;
                     gHasNewData = true;
                     xSemaphoreGive(gDataMutex);
                 }

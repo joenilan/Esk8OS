@@ -116,6 +116,17 @@ static void cmdStat() {
     Serial.printf("energy %dWh used | %dWh regen\n", (int)currentWattHours, (int)currentWhRegen);
 }
 
+static void cmdDiag() {
+    Serial.printf("remote: %s | throttle %+.2f (%s) | pulse %.2f ms\n",
+        gPpmConnected ? "CONNECTED" : "no signal", gPpmDecoded,
+        gPpmDecoded > 0.02f ? "accel" : (gPpmDecoded < -0.02f ? "brake" : "center"), gPpmPulseMs);
+    Serial.printf("vesc fw %u.%u | slave(CAN) %s | fault %d | last-fault %d\n",
+        gVescFwMajor, gVescFwMinor, gSlaveOnline ? "online" : "offline", vescFault, gLastFault);
+    Serial.printf("motor A: master %.1f | slave %.1f\n", gMasterMotorAmps, gSlaveMotorAmps);
+    Serial.printf("temps C: motor m %.0f/s %.0f | esc m %.0f/s %.0f\n",
+        gMasterMotorTemp, gSlaveMotorTemp, gMasterEscTemp, gSlaveEscTemp);
+}
+
 static void cmdTrip(const char* arg) {
     if (!strcmp(arg, "reset")) {
         Esk8OS::App::resetTrip();
@@ -205,6 +216,7 @@ static void cmdHelp() {
     Serial.println(F("  free            partition usage"));
     Serial.println(F("  odo [reset|set <v>]  odometer + trip (reset=0, set <v> in display unit)"));
     Serial.println(F("  stat            live telemetry (speed/power/temps/energy)"));
+    Serial.println(F("  diag            remote/PPM throttle + VESC diagnostics"));
     Serial.println(F("  trip [reset]    trip distance/time/avg/max/range, or full reset"));
     Serial.println(F("  sys             fw, uptime, heap/psram, reset reason, fps"));
     Serial.println(F("  cfg             units/demo/brightness/battery/wheel config"));
@@ -263,6 +275,7 @@ static void dispatch(char* line) {
         }
     }
     else if (!strcmp(line, "stat") || !strcmp(line, "tel")) cmdStat();
+    else if (!strcmp(line, "diag")) cmdDiag();
     else if (!strcmp(line, "trip")) {
         if (!strcmp(arg, "reset") && !needConfirm("reset the trip (distance + moving-time)", orig)) return;
         cmdTrip(arg);

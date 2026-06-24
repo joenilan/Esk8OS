@@ -128,6 +128,18 @@ static void simulateTelemetry() {
                                   // real (e.g. unpowered) VESC read before demo was enabled,
                                   // so the board page isn't frozen behind a fault banner.
 
+    // Simulated remote + diagnostics so the throttle slider / DIAG view animate on
+    // the bench with no real remote: throttle tracks the accel/brake ramp.
+    gPpmConnected = true;
+    gPpmDecoded = accel ? (currentSpeedKmh / 45.0f) : -(currentSpeedKmh / 45.0f) * 0.6f;
+    gPpmPulseMs = 1.5f + gPpmDecoded * 0.5f;   // 1.0..2.0 ms, centered at 1.5
+    gVescFwMajor = 6; gVescFwMinor = 2;
+    gSlaveOnline = true;
+    gMasterMotorAmps = currentMotorAmps * 0.5f;
+    gSlaveMotorAmps  = currentMotorAmps * 0.5f;
+    gMasterMotorTemp = gSlaveMotorTemp = currentMotorTemp;
+    gMasterEscTemp = gSlaveEscTemp = currentEscTemp;
+
     static unsigned long lastDrain = 0;
     if (millis() - lastDrain > 2000) {
         lastDrain = millis();
@@ -250,6 +262,20 @@ void pollVescData() {
             currentWhRegen = max(0.0f, raw.wattHoursCharged - rideStartVescWhRegen);
             currentWatts = currentVoltage * currentAmps;
             vescFault = raw.error;
+            if (raw.error != 0) gLastFault = raw.error;   // latch for the diagnostics view
+            // Remote input + diagnostics passthrough.
+            gPpmDecoded = raw.ppmDecoded;
+            gPpmPulseMs = raw.ppmPulseMs;
+            gPpmConnected = raw.ppmConnected;
+            gVescFwMajor = raw.fwMajor;
+            gVescFwMinor = raw.fwMinor;
+            gSlaveOnline = raw.slaveOnline;
+            gMasterMotorAmps = raw.masterMotorAmps;
+            gSlaveMotorAmps = raw.slaveMotorAmps;
+            gMasterMotorTemp = raw.masterTempMotor;
+            gSlaveMotorTemp = raw.slaveTempMotor;
+            gMasterEscTemp = raw.masterTempMosfet;
+            gSlaveEscTemp = raw.slaveTempMosfet;
             lastVescOkMs = millis();
         }
     }
@@ -263,6 +289,7 @@ void pollVescData() {
         currentVoltage = BATTERY_MAX_V;
         currentMotorTemp = currentEscTemp = currentBatteryTemp = 24.0f;
         vescFault = 0;
+        gLastFault = 0;
         peakWatts = 0;
     }
     wasSim = useSim;

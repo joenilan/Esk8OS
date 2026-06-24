@@ -53,9 +53,23 @@ firmware — the app must **not** re-convert. Efficiency `eff` is Wh/mi (mph) or
   "eff": 22,         // Avg efficiency — Wh/mi (mph) or Wh/km
   "fault": 0,        // VESC fault code (0 = none)
   "rtime": 1843,     // Board uptime since power-on this boot (seconds)
-  "tmov": 1290       // Trip moving-time — seconds spent rolling (>2 km/h), board-authoritative
+  "tmov": 1290,      // Trip moving-time — seconds spent rolling (>2 km/h), board-authoritative
+  // --- remote input + diagnostics ---
+  "ppm": 0.42,       // Decoded remote throttle, -1.0..+1.0 (<0 brake, >0 accel)
+  "ppmok": true,     // Remote signal present (valid PPM pulse)
+  "lfault": 0,       // Most recent VESC fault code, latched (0 = none seen)
+  "slave": true,     // Second motor responding over CAN
+  "m1a": 18.3,       // Master motor current (A)
+  "m2a": 17.9,       // Slave motor current (A)
+  "fw": "6.2"        // VESC firmware version (major.minor)
 }
 ```
+
+> **Remote (`ppm`/`ppmok`):** decoded from the master VESC via `COMM_GET_DECODED_PPM`
+> — it's the VESC's decoded input (reflects PPM calibration), not the raw receiver
+> channel. Throttle/brake position + signal-present only; **remote battery/buttons are
+> NOT available over PPM** (one-way pulse train — would need the remote's UART telemetry
+> wired to a VESC COMM port).
 
 > **`tmov` vs `rtime`:** `tmov` is the canonical trip time the app should display — it
 > accumulates only while the board is actually rolling, persists to NVS, and survives a

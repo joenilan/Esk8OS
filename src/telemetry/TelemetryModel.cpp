@@ -20,9 +20,20 @@ float maxWattsSession = 0.0;
 float minVoltageSession = 42.0; 
 float maxMotorAmpsSession = 0.0;        
 
-int vescFault = 0;              
-unsigned long lastVescOkMs = 0; 
-bool vescLinkOk = true;         
+int vescFault = 0;
+unsigned long lastVescOkMs = 0;
+bool vescLinkOk = true;
+
+// --- remote input + diagnostics (from the VESC; see VescUartTransport) ---
+float gPpmDecoded = 0;          // -1..1 throttle (brake..accel)
+float gPpmPulseMs = 0;          // last PPM pulse length, ms
+bool  gPpmConnected = false;    // valid remote signal present
+uint8_t gVescFwMajor = 0, gVescFwMinor = 0;
+bool  gSlaveOnline = false;     // second motor responding over CAN
+float gMasterMotorAmps = 0, gSlaveMotorAmps = 0;
+float gMasterMotorTemp = 0, gSlaveMotorTemp = 0;
+float gMasterEscTemp = 0, gSlaveEscTemp = 0;
+int   gLastFault = 0;           // most recent non-zero fault (latched until cleared)
 
 unsigned long rideStartMs = 0;
 float sessionTripStartKm = 0.0;

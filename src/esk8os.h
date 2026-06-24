@@ -150,6 +150,16 @@ extern float maxSpeedKmh, avgSpeedKmh;
 extern float maxWattsSession, minVoltageSession, maxMotorAmpsSession;
 extern int   vescFault;
 extern bool  vescLinkOk;
+// remote input + diagnostics (see VescUartTransport / telemetry)
+extern float gPpmDecoded;     // -1..1 throttle (brake..accel)
+extern float gPpmPulseMs;     // last PPM pulse length, ms
+extern bool  gPpmConnected;   // valid remote signal present
+extern uint8_t gVescFwMajor, gVescFwMinor;
+extern bool  gSlaveOnline;
+extern float gMasterMotorAmps, gSlaveMotorAmps;
+extern float gMasterMotorTemp, gSlaveMotorTemp;
+extern float gMasterEscTemp, gSlaveEscTemp;
+extern int   gLastFault;
 extern unsigned long rideStartMs;
 extern float sessionTripStartKm, tripDistanceKm, totalDistanceKm;
 extern uint32_t tripMovingSec;       // trip moving time (seconds rolling); persisted, board-authoritative

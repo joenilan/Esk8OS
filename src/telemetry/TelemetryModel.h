@@ -38,6 +38,17 @@ extern int   vescFault;
 extern bool  vescLinkOk;
 extern unsigned long lastVescOkMs;
 
+// remote input + diagnostics (see VescUartTransport)
+extern float gPpmDecoded;     // -1..1 throttle (brake..accel)
+extern float gPpmPulseMs;     // last PPM pulse length, ms
+extern bool  gPpmConnected;   // valid remote signal present
+extern uint8_t gVescFwMajor, gVescFwMinor;
+extern bool  gSlaveOnline;    // second motor responding over CAN
+extern float gMasterMotorAmps, gSlaveMotorAmps;
+extern float gMasterMotorTemp, gSlaveMotorTemp;
+extern float gMasterEscTemp, gSlaveEscTemp;
+extern int   gLastFault;      // most recent non-zero fault (latched)
+
 extern unsigned long rideStartMs;
 extern float sessionTripStartKm;
 extern float tripDistanceKm;
