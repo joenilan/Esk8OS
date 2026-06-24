@@ -263,31 +263,30 @@ static void drawStaticDash() {
     drawRowLabel("BATTERY", 156);
     drawRowLabel("ESC",     172);
 
-    drawCard(4, 198, 162, 70, "RANGE");
+    // Avg wh/dist (efficiency) lives on the TRIP page (deduped); DASH range keeps
+    // just the estimate + remaining.
+    drawCard(4, 198, 162, 54, "RANGE");
     drawRowLabel("ESTIMATED", 216);
     drawRowLabel("REMAINING", 232);
-    drawRowLabel(useMph ? "AVG. WH/MI" : "AVG. WH/KM", 248);
 }
 
 // ── PAGE 1: POWER / ENERGY / SPEED static chrome ──
 static void drawStaticPower() {
+    // Power/energy only — speed max/avg lives on the TRIP page (deduped). "PEAK NOW"
+    // is the live peak-hold; "MAX RIDE" (Session) is the session maximum.
     drawCard(4, 22, 162, 82, "POWER");
-    drawRowLabel("MOTOR",   40);
-    drawRowLabel("BATTERY", 56);
-    drawRowLabel("DUTY",    72);
-    drawRowLabel("PEAK",    88);
+    drawRowLabel("MOTOR",    40);
+    drawRowLabel("BATTERY",  56);
+    drawRowLabel("DUTY",     72);
+    drawRowLabel("PEAK NOW", 88);
 
     drawCard(4, 108, 162, 48, "ENERGY");
     drawRowLabel("USED",  126);
     drawRowLabel("REGEN", 142);
 
-    drawCard(4, 160, 162, 48, "SPEED");
-    drawRowLabel("MAX", 178);
-    drawRowLabel("AVG", 194);
-
-    drawCard(4, 212, 162, 48, "SESSION");
-    drawRowLabel("MAX PWR",  230);
-    drawRowLabel("MIN VOLT", 246);
+    drawCard(4, 160, 162, 48, "SESSION");
+    drawRowLabel("MAX RIDE", 178);
+    drawRowLabel("MIN VOLT", 194);
 }
 
 // ── PAGE 2: TRIP static chrome ──
@@ -924,16 +923,15 @@ static void updateTemps() {
 // UPDATE: Range Card
 // ==========================================
 static void updateRange() {
-    static float lastEst = -999, lastRem = -999, lastWh = -999;
+    static float lastEst = -999, lastRem = -999;
     static bool lastUseMph = !useMph;
 
     if (abs(estimatedRangeKm - lastEst) > 0.1 ||
         abs(remainingRangeKm - lastRem) > 0.1 ||
-        abs(avgWhPerKm - lastWh) > 0.1 ||
         useMph != lastUseMph || gRedrawAll) {
 
-        // Clear the values column for all three rows
-        GFX->fillRect(X0 + 80, 216, 82, 44, COL_BG);
+        // Clear the values column for both rows
+        GFX->fillRect(X0 + 80, 216, 82, 28, COL_BG);
 
         GFX->setFont(&fonts::Font0);
         GFX->setTextDatum(TR_DATUM);
@@ -941,8 +939,6 @@ static void updateRange() {
 
         String du = useMph ? "mi" : "km";
         float cv = useMph ? 0.621371 : 1.0;        // km -> mi for distances
-        // Energy-per-distance scales inversely: wh/km -> wh/mi multiplies by 1.609.
-        float avgWh = useMph ? avgWhPerKm / 0.621371 : avgWhPerKm;
 
         // REMAINING also shows an estimated time-left (range / current avg speed),
         // which riders tend to read more intuitively than distance.
@@ -954,11 +950,10 @@ static void updateRange() {
 
         GFX->drawString(String(estimatedRangeKm * cv, 1) + " " + du, X0 + 158, 216);
         GFX->drawString(remStr,                                      X0 + 158, 232);
-        GFX->drawString(String(avgWh, 1) + " wh/" + du,              X0 + 158, 248);
 
-        lastEst = estimatedRangeKm; lastRem = remainingRangeKm; lastWh = avgWhPerKm;
+        lastEst = estimatedRangeKm; lastRem = remainingRangeKm;
         lastUseMph = useMph;
-        markDirty(216, 44);
+        markDirty(216, 28);
     }
 }
 
@@ -1039,24 +1034,19 @@ static void updatePower() {
     if (!gRedrawAll && millis() - lastMs < 400) return;
     lastMs = millis();
 
-    String su = useMph ? "mph" : "kmh";
-    float cv = useMph ? 0.621371 : 1.0;
-
     int duty = (int)round(currentDuty);
     int peakW = (int)round(peakWatts);
     drawVal(40,  String(currentMotorAmps, 1) + " A", COL_WHITE);
     drawVal(56,  String(currentAmps, 1) + " A",      COL_WHITE);
     drawVal(72,  String(duty) + " %", dutyColor(duty));
-    drawVal(88,  String(peakW) + " W", wattColor(peakW));
+    drawVal(88,  String(peakW) + " W", wattColor(peakW));   // PEAK NOW (peak-hold)
     drawVal(126, String((int)round(currentWattHours)) + " Wh", COL_WHITE);
     drawVal(142, String("+") + String((int)round(currentWhRegen)) + " Wh", COL_GREEN);
-    drawVal(178, String((int)round(maxSpeedKmh * cv)) + " " + su, COL_WHITE);
-    drawVal(194, String((int)round(avgSpeedKmh * cv)) + " " + su, COL_WHITE);
 
     int maxW = (int)round(maxWattsSession);
-    drawVal(230, String(maxW) + " W", wattColor(maxW));
-    drawVal(246, String(minVoltageSession, 1) + " V", COL_WHITE);
-    markDirty(22, 252);
+    drawVal(178, String(maxW) + " W", wattColor(maxW));     // MAX RIDE (session max)
+    drawVal(194, String(minVoltageSession, 1) + " V", COL_WHITE);
+    markDirty(22, 186);
 }
 
 // ==========================================

@@ -278,7 +278,8 @@ void companionBleTick() {
     doc["bata"]  = r1(currentAmps);              // battery A
     doc["mota"]  = r1(currentMotorAmps);         // motor A
     doc["duty"]  = (int)currentDuty;             // already %
-    doc["pkw"]   = (int)peakWatts;               // session peak W
+    doc["pkw"]   = (int)peakWatts;               // live peak-hold W ("peak now")
+    doc["mpw"]   = (int)maxWattsSession;         // session max W ("max ride")
     // Energy / session
     doc["whr"]   = (int)currentWhRegen;          // regen Wh
     doc["minv"]  = r1(minVoltageSession);        // session min volt

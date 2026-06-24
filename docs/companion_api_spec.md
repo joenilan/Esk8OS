@@ -43,7 +43,8 @@ firmware — the app must **not** re-convert. Efficiency `eff` is Wh/mi (mph) or
   "bata": 14.2,      // Battery current (A)
   "mota": 22.8,      // Motor current (A)
   "duty": 35,        // Motor duty cycle (%)
-  "pkw": 1850,       // Session peak power (W)
+  "pkw": 1850,       // Live peak-hold power (W) — "peak now"
+  "mpw": 2100,       // Session max power (W) — "max ride"
   "whr": 6,          // Session regen energy (Wh)
   "minv": 41.0,      // Session minimum voltage
   "avs": 18.3,       // Session average speed (display unit)
