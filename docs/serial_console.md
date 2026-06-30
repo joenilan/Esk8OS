@@ -6,11 +6,12 @@ config, and perform actions (toggle demo, reset trip, reboot, …).
 
 ## Connecting
 
-- **Port / baud:** the board enumerates as a USB CDC serial device (e.g. `COM5`
-  on Windows) at **115200 baud**.
-- **Build requirement:** the console reads from `Serial`, which is only on the USB
-  port in the **`tdisplay_s3_debug_usb`** / **`tdisplay_s3_touch_debug`** builds
-  (`-DARDUINO_USB_CDC_ON_BOOT=1`). The `*_ride_release` builds drop USB CDC, so the
+- **Port / baud:** 115200 baud. LilyGO debug builds enumerate as USB CDC
+  serial. Generic ESP32-S3 builds also mirror the console on `Serial0`, so the
+  CH343/USB-UART port works too.
+- **Build requirement:** the console is available in `tdisplay_s3_debug_usb`,
+  `tdisplay_s3_touch_debug`, `esp32s3_headless_usb`, and
+  `esp32s3_oled_i2c_usb`. LilyGO ride-release builds drop USB CDC, so the
   console is unavailable there.
 - Open with any serial terminal, or the helper scripts below. Commands are
   newline-terminated (`\r`, `\n`, or `\r\n`); arrow-key escape sequences are
@@ -19,12 +20,47 @@ config, and perform actions (toggle demo, reset trip, reboot, …).
 > Tip: set the terminal to **not** assert DTR/RTS on open — toggling them resets
 > the ESP32. The helper scripts already do this.
 
+## Silent Serial Troubleshooting
+
+If the LilyGO appears as `USB Serial Device (COMx)` but does not answer commands,
+do not immediately assume the ESP32 is dead.
+
+Known failure mode fixed in firmware: when `demo` was persisted `OFF` and the
+VESC UART was disconnected/not responding, `waitForBootReady()` used to block
+forever waiting for `UART.getVescValues()`. The serial console only starts after
+`setup()` finishes, so `sys`/`cfg` appeared dead even though USB and flashing
+still worked. Current firmware times out the VESC boot wait after about 3.5 s,
+shows `NO VESC - BLE READY`, and continues to the console.
+
+Recovery checklist:
+
+1. Confirm Windows sees a COM port:
+   ```powershell
+   [System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object
+   ```
+2. Confirm the USB path is alive by flashing the debug build:
+   ```powershell
+   pio run -e tdisplay_s3_debug_usb -t upload --upload-port COM5
+   ```
+3. Wait about 6 s after reset, then query:
+   ```powershell
+   python scripts\serial_query.py sys cfg
+   ```
+4. If opening the port with RTS asserted prints an `ESP-ROM` reset banner, USB
+   reset and ROM serial output are alive; focus on firmware boot flow or VESC
+   UART wiring.
+5. Use `demo on` for bench work when the VESC UART is not connected.
+
+Use `tdisplay_s3_debug_usb` for serial work. The `tdisplay_s3_ride_release`
+environment intentionally disables USB CDC, so it is not appropriate for Claude
+or Codex serial debugging.
+
 ## Helper scripts
 
 | Script | Purpose |
 | :--- | :--- |
 | `scripts/serial_query.py [cmd ...]` | Send one or more console commands and print the replies. Defaults to `help odo free logs` if none given. |
-| `scripts/serial_fetch.py` | Pull ride-log CSVs off the board over serial. |
+| `scripts/serial_fetch.py` | Pull session-log CSVs off the board over serial. |
 
 Both default to `COM5` — edit the `PORT` constant if your board enumerates
 elsewhere.
@@ -43,14 +79,14 @@ Type `help` (or `?`) for the in-firmware list. `[...]` = optional argument.
 | Command | Output |
 | :--- | :--- |
 | `help`, `?` | List all commands. |
-| `stat`, `tel` | Live telemetry: speed, battery %, volts, VESC link/fault, power + peak, battery/motor amps, duty, motor/ESC/battery temps, energy used/regen. |
+| `stat`, `tel` | Live telemetry: speed, battery %, volts, VESC link/fault, power + peak, battery/motor amps, duty, motor/ESC/battery temps, energy used/regen, loaded-cell sag evidence. |
 | `diag` | Remote/PPM throttle (−1…+1, accel/brake) + signal-present, VESC firmware version, slave-motor (CAN) online, current/last fault, per-motor current + temps. |
 | `trip` | Trip distance, moving-time (`tmov`), odometer, session avg/max speed, range estimate (learned vs default). |
 | `sys` | Firmware version, uptime, reset reason, FPS, free heap (+ min), free/total PSRAM. |
 | `cfg`, `config` | Units, demo, brightness, theme, rider, battery (cells / pack Ah / stop V·cell / Wh-per-mi), active wheel profile. |
 | `odo` | Odometer + trip + `tmov` (one line). |
-| `logs`, `ls` | List ride-log files + storage use. |
-| `cat <file>` | Dump a ride CSV (e.g. `cat r0001.csv`). |
+| `logs`, `ls` | List board session-log files + storage use. |
+| `cat <file>` | Dump a session CSV (e.g. `cat s0001.csv`). |
 | `free` | Filesystem partition usage. |
 | `log` | Logging on/off status + free space. |
 | `wifi` | Standalone log/OTA web-service status. |
@@ -70,8 +106,8 @@ Type `help` (or `?`) for the in-firmware list. `[...]` = optional argument.
 | `trip reset` | Zero the trip — distance, moving-time, and session max metrics — same as a BLE `TRIP_RESET` / left long-press. |
 | `odo reset` | Zero the lifetime odometer. |
 | `odo set <v>` | Set the odometer to `<v>` (in the active display unit). |
-| `rm <file\|all>` | Delete one ride file, or all of them. |
-| `log [on\|off]` | Enable/disable ride logging. |
+| `rm <file\|all>` | Delete one session file, or all of them. |
+| `log [on\|off]` | Enable/disable board session logging. |
 | `wifi [on\|off]` | Start/stop the standalone log/OTA web service (`http://192.168.4.1`). |
 | `reboot` | Restart the board. |
 
@@ -85,12 +121,12 @@ heap 131528 B free (min 131432) | psram 8385851/8386231 B free
 
 >>> cfg
 units mph | demo OFF | bright 100% | theme 0 | rider ZOMBIE
-battery 10 cells | pack 16.5 Ah | stop 3.30 V/cell | 25 Wh/mi
+battery 10 cells | pack 16.5 Ah | home 3.40 V/cell | limp 3.10 V/cell | 25.9 Wh/mi
 wheel prof 0: 8IN PNEU (203 mm, 16/72, 7.0 pp)
 
 >>> trip
 trip 0.03 mi | tmov 00:00:08 | odo 16.38 mi
-avg 0.0 mph | max 0.0 mph | range est 18.3 mi (rem 0.0) [default]
+avg 0.0 mph | max 0.0 mph | home 15.7 mi (rem 14.2) | limp 21.6 mi (rem 19.6) [default]
 ```
 
 ## Notes
@@ -99,6 +135,6 @@ avg 0.0 mph | max 0.0 mph | range est 18.3 mi (rem 0.0) [default]
   and survive a reboot. Trip distance + `tmov` persist on stop / every 60 s while
   riding (see the trip model), but **not** while demo mode is on (demo
   intentionally skips the odo/trip save).
-- **No VESC connected:** `stat` will show idle/garbage values and a non-zero fault
-  with `link DOWN` (or a stale `OK` right after boot) — that's just the absent ESC,
-  not a console bug. Use `demo on` to exercise the telemetry pipeline on the bench.
+- **No VESC connected:** live telemetry is marked unavailable and masked instead
+  of showing stale pack voltage or current. Use `demo on` to exercise the
+  telemetry pipeline on the bench.

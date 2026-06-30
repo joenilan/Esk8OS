@@ -83,7 +83,21 @@ If the board is ever flashed without `ARDUINO_USB_CDC_ON_BOOT=1`, the COM port w
 4. Release the **BOOT** button.
 The board will now appear as a USB Serial device and accept a new flash.
 
-## 5. VESC / FSESC UART Wiring
+## 5. COM Port Present But Serial Console Silent
+If Windows shows the LilyGO as `USB Serial Device (COMx)` and esptool can identify/flash it, the ESP32 USB interface is probably not dead even if `sys`/`cfg` get no response.
+
+Known root cause: older boot code blocked forever in `waitForBootReady()` when persisted `demo OFF` and no VESC UART response was available. Because `consolePoll()` only runs after `setup()` finishes, the board looked like serial was dead. This was fixed by adding a VESC boot-wait timeout in `src/ui/ui.cpp`; after about 3.5 seconds it continues with `NO VESC - BLE READY` and the console works.
+
+Debug sequence:
+1. Check ports with PowerShell: `[System.IO.Ports.SerialPort]::GetPortNames()`.
+2. If a COM port exists, try flashing `tdisplay_s3_debug_usb` before assuming hardware failure.
+3. Open serial at `115200` with DTR/RTS not asserted and send `sys` then `cfg`.
+4. If opening with RTS asserted prints an `ESP-ROM` banner, USB reset/ROM output is alive.
+5. If serial is silent only until the VESC wait timeout, inspect VESC UART wiring or set `demo on`.
+
+Important: `tdisplay_s3_ride_release` intentionally removes USB CDC with `-UARDUINO_USB_CDC_ON_BOOT`. Use `tdisplay_s3_debug_usb` when Claude/Codex needs serial.
+
+## 6. VESC / FSESC UART Wiring
 The firmware expects the FSESC UART on:
 * ESP32 `VESC_RX_PIN` = GPIO 18, connected to FSESC TX
 * ESP32 `VESC_TX_PIN` = GPIO 17, connected to FSESC RX
@@ -92,7 +106,7 @@ The firmware expects the FSESC UART on:
 
 Do not connect the display to SPI display pins for telemetry. The display uses its own 8-bit parallel TFT pins; the FSESC telemetry/config connection is only the UART pair above.
 
-## 6. Dashboard vs VESC Tool Bridge Mode
+## 7. Dashboard vs VESC Tool Bridge Mode
 The firmware now has two top-level modes:
 * `MODE_DASHBOARD`: normal ride UI. This mode owns `VescUart` and may call `UART.getVescValues()`.
 * `MODE_VESC_BRIDGE`: WiFi TCP bridge for desktop VESC Tool. This mode owns `Serial1` directly and forwards raw bytes between TCP and the FSESC.
@@ -109,7 +123,7 @@ Current bridge controls:
 
 Bridge mode is a first-step TCP proof for desktop VESC Tool. Phone/mobile VESC Tool compatibility will likely need a BLE backend later; do not assume the WiFi TCP bridge works with every mobile VESC Tool build.
 
-## 7. Demo Mode and Wheel Profiles
+## 8. Demo Mode and Wheel Profiles
 `DEMO_MODE` in `src/main.cpp` makes the physical board use simulated telemetry for bench testing. Set it to `false` when testing live dashboard telemetry from the FSESC.
 
 Wheel/gearing profiles are local display settings only. They affect the display's own speed and distance math and are saved in NVS, but they do not write VESC motor/app configuration. Use bridge mode plus official VESC Tool for actual FSESC config changes.

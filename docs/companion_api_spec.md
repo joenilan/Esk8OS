@@ -27,9 +27,16 @@ All distance/speed/range/efficiency values are in the **board's configured displ
 unit** (mph + miles when `mph:true`, otherwise km/h + km), already converted by the
 firmware — the app must **not** re-convert. Efficiency `eff` is Wh/mi (mph) or Wh/km.
 
+When `live:false`, live values such as voltage, battery %, speed, watts, amps,
+duty, temperatures, and remaining range must be treated as unavailable. This
+happens when demo mode is off and no real VESC telemetry has arrived recently;
+it is not an ESP32 supply-voltage reading.
+
 **Example Payload:**
 ```json
 {
+  "live": true,      // Current live values are valid
+  "vesc": true,      // Recent real VESC packet received
   "spd": 24.5,       // Current speed (board's display unit)
   "bat": 85,         // Battery percentage (0-100)
   "v": 45.2,         // Battery voltage
@@ -37,21 +44,30 @@ firmware — the app must **not** re-convert. Efficiency `eff` is Wh/mi (mph) or
   "mtr_t": 45,       // Motor temp (Celsius)
   "esc_t": 38,       // ESC temp (Celsius)
   "btemp": 30,       // Battery temp (Celsius)
-  "rng": 12.4,       // Estimated remaining range (display unit)
+  "rng": 12.4,       // Ride-home remaining range to homeCell floor (display unit)
   "max_s": 40.1,     // Session max speed (display unit)
-  "wh": 120,         // Session Watt-Hours used
+  "wh": 120.4,       // Session Watt-Hours used
   "bata": 14.2,      // Battery current (A)
   "mota": 22.8,      // Motor current (A)
   "duty": 35,        // Motor duty cycle (%)
   "pkw": 1850,       // Live peak-hold power (W) — "peak now"
   "mpw": 2100,       // Session max power (W) — "max ride"
-  "whr": 6,          // Session regen energy (Wh)
+  "whr": 6.2,        // Session regen energy (Wh)
   "minv": 41.0,      // Session minimum voltage
+  "minvl": 36.5,     // Lowest loaded/discharge voltage this session
+  "mba": 37.9,       // Max battery current this session (A)
+  "cellv": 3.65,     // Loaded pack voltage per cell
+  "rwarn": 2,        // Range warning: 0 ok, 1 turn-home, 2 voltage sag, 3 limp
+  "sagc": 3,         // Count of loaded voltage dips below homeCell floor
+  "thome": 18,       // Seconds below homeCell floor under load
+  "tlimp": 0,        // Seconds near/under stopCell floor under load
   "avs": 18.3,       // Session average speed (display unit)
   "trip": 6.2,       // This-trip distance (display unit)
   "odo": 412.5,      // Lifetime odometer (display unit)
-  "est": 21.7,       // Estimated full-charge range (display unit)
-  "eff": 22,         // Avg efficiency — Wh/mi (mph) or Wh/km
+  "est": 15.7,       // Ride-home full-charge range to homeCell floor (display unit)
+  "lrng": 19.7,      // Limp remaining range to stopCell floor (display unit)
+  "lest": 21.6,      // Limp full-charge range to stopCell floor (display unit)
+  "eff": 25.9,       // Avg efficiency — Wh/mi (mph) or Wh/km
   "fault": 0,        // VESC fault code (0 = none)
   "rtime": 1843,     // Board uptime since power-on this boot (seconds)
   "tmov": 1290,      // Trip moving-time — seconds spent rolling (>2 km/h), board-authoritative
@@ -75,8 +91,8 @@ firmware — the app must **not** re-convert. Efficiency `eff` is Wh/mi (mph) or
 > **`tmov` vs `rtime`:** `tmov` is the canonical trip time the app should display — it
 > accumulates only while the board is actually rolling, persists to NVS, and survives a
 > power-cycle (the board continues the same trip on cold boot). It auto-resets after 6 h
-> parked or on `TRIP_RESET`. `rtime` is just raw board uptime this boot (parked time
-> included) and is only useful as a system/diagnostics value.
+> parked or on `TRIP_RESET`. `rtime` is raw board uptime this boot (parked time
+> included) and is only useful as a system/diagnostics/session-log value.
 
 ---
 
@@ -87,6 +103,10 @@ Allows the companion app to remotely configure the ESP32 without touching the ph
 When the Android app connects, it reads this characteristic to get the board's current configuration.
 ```json
 {
+  "hw": "tdisplay-s3",
+  "display": "tft",
+  "ui": "full",
+  "buttons": true,
   "mph": true,
   "theme": "cam",
   "poles": 14,
@@ -94,27 +114,37 @@ When the Android app connects, it reads this characteristic to get the board's c
   "gear": 2.4,
   "bat_s": 12,
   "packAh": 16.5,
+  "homeCell": 3.40,
   "stopCell": 3.30,
-  "whmi": 22,
+  "whmi": 25.9,
   "bright": 100,
   "demo": false,
-  "rider": "JOE"
+  "rider": "JOE",
+  "hud": "speed",
+  "bfocus": "pct"
 }
 ```
 
 | Key | Type | Writable | Range / notes |
 | :--- | :--- | :--- | :--- |
+| `hw` | string | ❌ | hardware target: `tdisplay-s3`, `esp32s3-oled`, `esp32s3-headless`, or generic `esp32s3` |
+| `display` | string | ❌ | onboard display class: `tft`, `oled`, or `none` |
+| `ui` | string | ❌ | onboard UI class: `full`, `mini`, or `headless` |
+| `buttons` | bool | ❌ | true when the firmware target has local navigation buttons |
 | `mph` | bool | ✅ | mph+mi vs km/h+km display unit |
 | `theme` | string | ✅ | case-insensitive theme name |
 | `bat_s` | int | ✅ | battery series cell count, 6–14 |
 | `profile` | int | ✅ | wheel-preset index; **drives** read-only `poles`/`wheel`/`gear` |
 | `poles` / `wheel` / `gear` | — | ❌ | read-only, derived from `profile` |
 | `packAh` | float | ✅ | effective pack capacity (Ah), 4.0–40.0 |
-| `stopCell` | float | ✅ | per-cell cutoff voltage, 3.00–3.60 |
-| `whmi` | int | ✅ | range model default Wh/mile, 14–40 |
+| `homeCell` | float | ✅ | per-cell ride-home/range-planning floor, clamped to `stopCell`–4.20 |
+| `stopCell` | float | ✅ | per-cell limp/dead cutoff floor, 3.00–3.60 |
+| `whmi` | float | ✅ | range model default Wh/mile, 14.0–40.0 |
 | `bright` | int | ✅ | display brightness %, 10–100 |
 | `demo` | bool | ✅ | synthetic demo telemetry on/off |
 | `rider` | string | ✅ | rider name shown in the header (≤15 chars), persisted to NVS |
+| `hud` | string | ✅ | board HUD face: `speed`, `battery`, or `watts` |
+| `bfocus` | string | ✅ | battery HUD hero value: `pct` or `volts` |
 
 ### Write
 The Android app writes a JSON object to this characteristic to change settings. The ESP32 parses it, saves to non-volatile storage (NVS), and immediately repaints the display. *You can send partial updates.*
@@ -141,14 +171,14 @@ Writing a raw ASCII string to this characteristic triggers immediate physical ac
 | `"WIFI_EXPORT_STOP"` | Drops the standalone WiFi AP / HTTP server started by `WIFI_EXPORT_START`. |
 | `"REBOOT"` | Reboots the ESP32 display. |
 
-## 6. Hybrid WiFi Log Transfer (Bulk Data)
-Because the ESP32 logs 1 line of CSV per second, historical ride logs can easily exceed 500 KB. Attempting to download files this large over BLE is mathematically slow and prone to timeout errors. 
+## 6. Hybrid WiFi Session-Log Transfer (Bulk Data)
+The ESP32 writes one board session CSV from dashboard boot until power-off/reboot. It records at 1 Hz while the dashboard is running and is not reset by `TRIP_RESET` or phone trip recording. Because session logs can easily exceed 500 KB, attempting to download files this large over BLE is mathematically slow and prone to timeout errors.
 
 To download historical logs, the Android app should use a **Hybrid Transfer**:
 1. The app writes `"WIFI_EXPORT_START"` to the Command characteristic (`0003`).
 2. The ESP32 immediately spins up its `ESK8-BRIDGE` WiFi Access Point.
 3. The Android app prompts the user to join the `ESK8-BRIDGE` network (Password: `esk8bridge`).
-4. The Android app hits the ESP32's internal HTTP Web Server (`http://192.168.4.1/`) to download the raw CSV files over fast TCP.
+4. The Android app hits the ESP32's internal HTTP Web Server (`http://192.168.4.1/`) to download the raw session CSV files over fast TCP.
 5. Once downloaded, the user disconnects from the WiFi, and the board seamlessly resumes BLE telemetry.
 
 ## 7. Implementation Notes for Android Devs
@@ -160,6 +190,7 @@ The ESP32 side of this spec is implemented in `src/services/companion_ble.cpp` (
 
 - **Always-on service.** The companion service initializes in `setup()` and advertises 100% of the time. The device name is **`ESK8-BLE`** (the companion service UUID is in the primary advertisement; the name + VESC-Tool NUS UUID are in the scan response). Use **active scanning** and filter by the service UUID `5043697A-0000-…`.
 - **Co-existence with VESC Bridge mode.** The VESC-Tool NUS bridge shares the *same* NimBLE server. Entering Bridge mode (physically, or via the `BRIDGE_MODE` command) does not tear down the companion service — but **telemetry notifications pause** while bridging (consistent with §6), and queued Settings/Command writes are applied once the dashboard resumes.
-- **Settings writes (§4):** `mph` (bool), `theme` (string, case-insensitive), `bat_s` (int, 6–14), `profile` (int index), `packAh` (float, 4.0–40.0), `stopCell` (float, 3.00–3.60), `whmi` (int, 14–40), `bright` (int, 10–100), and `demo` (bool) are honored and persisted to NVS; all are clamped to the listed ranges. `poles`, `wheel`, and `gear` are **read-only** — they are derived from the selected wheel preset, not independently settable. To change them, write **`profile`** (int index) to select a preset. `gear` is reported as the firmware's motor:wheel pulley ratio. Writing `stopCell` recomputes the battery voltage bounds; `packAh`/`whmi` refresh the range estimate; `bright` applies to the backlight immediately.
-- **`WIFI_EXPORT_START` / `WIFI_EXPORT_STOP` (§5/§6):** runs a *standalone* web service — it raises the `ESK8-BRIDGE` AP + `http://192.168.4.1/` (ride-log download **and** OTA firmware upload) **without** entering VESC Bridge mode, so the dashboard keeps running and BLE telemetry keeps streaming (true "hybrid" transfer). The same pages are also served while in VESC Bridge mode (over the bridge's own AP), so logs/OTA are reachable in either state — bridged or unbridged. The standalone AP auto-drops after 10 min idle. On-device, the same service can be toggled over USB serial with `wifi on` / `wifi off`.
+- **Settings reads (§4):** `hw`, `display`, `ui`, and `buttons` are read-only capability fields so the app can adapt for full TFT, mini OLED, and headless firmware targets.
+- **Settings writes (§4):** `mph` (bool), `theme` (string, case-insensitive), `bat_s` (int, 6–14), `profile` (int index), `packAh` (float, 4.0–40.0), `homeCell` (float, `stopCell`–4.20), `stopCell` (float, 3.00–3.60), `whmi` (float, 14.0–40.0), `bright` (int, 10–100), `demo` (bool), `hud` (`speed`/`battery`/`watts`), and `bfocus` (`pct`/`volts`) are honored and persisted to NVS; numeric fields are clamped to the listed ranges. `poles`, `wheel`, and `gear` are **read-only** — they are derived from the selected wheel preset, not independently settable. To change them, write **`profile`** (int index) to select a preset. `gear` is reported as the firmware's motor:wheel pulley ratio. Writing `homeCell`/`stopCell` recomputes home/limp range; `packAh`/`whmi` refresh the range estimate; `bright` applies to the backlight immediately.
+- **`WIFI_EXPORT_START` / `WIFI_EXPORT_STOP` (§5/§6):** runs a *standalone* web service — it raises the `ESK8-BRIDGE` AP + `http://192.168.4.1/` (board session-log download **and** OTA firmware upload) **without** entering VESC Bridge mode, so the dashboard keeps running and BLE telemetry keeps streaming (true "hybrid" transfer). The same pages are also served while in VESC Bridge mode (over the bridge's own AP), so logs/OTA are reachable in either state — bridged or unbridged. The standalone AP auto-drops after 10 min idle. On-device, the same service can be toggled over USB serial with `wifi on` / `wifi off`.
 - **Settings/Command writes** are processed on the firmware's UI thread (BLE callbacks only enqueue), so display repaints triggered by a write are race-free.

@@ -20,8 +20,9 @@ Pages match the firmware PageId enum:
 
 Usage:  python preview.py                  -> writes preview.png (scaled x3)
         python preview.py --page 6         -> graphs page
-        python preview.py --page 7         -> ride logs page
+        python preview.py --page 7         -> ride summaries / session-log status page
         python preview.py --hud            -> Big HUD (same as --page 0)
+        python preview.py --hud-face battery --battery-focus volts
         python preview.py --theme ice      -> alternate color theme
         python preview.py --bridge         -> VESC Tool bridge screen
         python preview.py --splash
@@ -269,7 +270,9 @@ class State:
     wheel_pulley = 72
     poles = 7
     brightness = 100
-    settings_cursor = 4   # 0 prof,1 units,2 demo,3 bright,4 cells,5 packAh,6 stopCell,7 whmi
+    hud_face = "speed"
+    battery_focus = "pct"
+    settings_cursor = 5   # see firmware SET_* enum
     cells = 10
     pack_ah = 16.5
     stop_cell = 3.30
@@ -370,7 +373,9 @@ def draw_topbar(p, s):
 
 def _cells(p, s, y, ch):
     """Segmented battery gauge with a smooth (fractional) boundary cell."""
-    cells, cw, gap = 10, 13, 2
+    cells = s.cells
+    gap = 1 if cells > 12 else 2
+    cw = max(5, min(13, (W - ((cells - 1) * gap)) // cells))
     total = cells * cw + (cells - 1) * gap
     sx = (W - total) // 2
     level = s.batt_pct * cells / 100.0
@@ -546,17 +551,19 @@ def draw_page_settings(p, s):
                   ("GEARING", "%d:%d" % (s.motor_pulley, s.wheel_pulley)),
                   ("POLES", "%d" % s.poles)], 57, step=17)
 
-    card(p, "DISPLAY", 4, 110, 162, 84)
-    slabel("UNITS", 128, 1);      value("MPH" if s.use_mph else "KM/H", 128)
-    slabel("DEMO", 145, 2);       value("ON" if s.demo else "OFF", 145, YELLOW if s.demo else WHITE)
-    slabel("BRIGHTNESS", 162, 3); value("%d%%" % s.brightness, 162)
-    slabel("THEME", 179, 4);      value(CURRENT_THEME.upper(), 179, ACCENT)
+    card(p, "DISPLAY", 4, 110, 162, 94)
+    slabel("UNITS", 124, 1);     value("MPH" if s.use_mph else "KM/H", 124)
+    slabel("DEMO", 137, 2);      value("ON" if s.demo else "OFF", 137, YELLOW if s.demo else WHITE)
+    slabel("BRIGHT", 150, 3);    value("%d%%" % s.brightness, 150)
+    slabel("THEME", 163, 4);     value(CURRENT_THEME.upper(), 163, ACCENT)
+    slabel("HUD", 176, 5);       value(s.hud_face.upper(), 176)
+    slabel("BATT", 188, 6);     value(("VOLTS" if s.battery_focus == "volts" else "PCT"), 188)
 
-    card(p, "BATTERY", 4, 198, 162, 84)
-    slabel("CELLS", 216, 5);   value("%dS" % s.cells, 216)
-    slabel("PACK AH", 233, 6); value("%.1fAh" % s.pack_ah, 233)
-    slabel("STOP/C", 250, 7);  value("%.2fV" % s.stop_cell, 250)
-    slabel("WH/MI", 267, 8);   value("%d" % s.wh_mi, 267)
+    card(p, "BATTERY", 4, 208, 162, 74)
+    slabel("CELLS", 224, 7);   value("%dS" % s.cells, 224)
+    slabel("PACK AH", 239, 8); value("%.1fAh" % s.pack_ah, 239)
+    slabel("STOP/C", 254, 9);  value("%.2fV" % s.stop_cell, 254)
+    slabel("WH/MI", 269, 10);  value("%d" % s.wh_mi, 269)
 
     p.set_datum(MC); p.set_color(DIM)
     p.draw_string("L: select  R: change", W // 2, 288)
@@ -632,18 +639,18 @@ def draw_page_graphs(p, s):
 
 
 def _log_status_line(p, s, y):
-    """Detail-log (LittleFS) status line at the bottom of the LOGS list."""
+    """Session-log (LittleFS) status line at the bottom of the LOGS list."""
     p.set_datum(MC)
     if s.log_state == "full":
         p.set_color(RED); p.draw_string("! LOG STORAGE FULL", W // 2, y)
     elif s.log_state == "off":
-        p.set_color(YELLOW); p.draw_string("DETAIL LOGGING OFF", W // 2, y)
+        p.set_color(YELLOW); p.draw_string("SESSION LOGGING OFF", W // 2, y)
     else:
-        p.set_color(DIM); p.draw_string("log: %d KB free" % s.log_free_kb, W // 2, y)
+        p.set_color(DIM); p.draw_string("session: %d KB free" % s.log_free_kb, W // 2, y)
 
 
 def draw_page_logs(p, s):
-    card(p, "RIDE LOGS", 4, 22, 162, 240)
+    card(p, "RIDE SUMMARIES", 4, 22, 162, 240)
     cv, du = dist_cv(s), dist_unit(s)
     su = "mph" if s.use_mph else "kmh"
     if not s.rides:
@@ -660,7 +667,7 @@ def draw_page_logs(p, s):
             p.draw_string("%d Wh/%s  %dW" % (round(wh_per), du, round(max_w)), 12, y + 24)
     _log_status_line(p, s, 252)
     p.set_datum(MC); p.set_color(DIM)
-    p.draw_string("saved on trip reset", W // 2, 268)
+    p.draw_string("CSV sessions via WiFi", W // 2, 268)
 
 
 def draw_fault_banner(p, s):
@@ -690,7 +697,7 @@ def draw_toast(p, msg):
 
 
 def draw_bridge(p, s):
-    """VESC Tool bridge screen (WiFi-TCP + BLE + ride-log web download)."""
+    """VESC Tool bridge screen (WiFi-TCP + BLE + session-log web download)."""
     p.fill_screen(BG)
     p.set_datum(TC); p.set_color(ACCENT)
     p.draw_string("BRIDGE MODE", W // 2, 18, px=24)
@@ -779,13 +786,92 @@ def draw_splash(p, s, progress=0.7):
     p.draw_string("RIDER: " + s.rider, W // 2, 300)
 
 
-def draw_hud(p, s):
-    """PAGE 0: Big HUD. Glanceable ride screen — huge speed, big battery, four
-    key tiles. No page dots / mid-screen cell strip; the bottom status bar stays.
-    Speed uses the native BebasNeue110 (~79px digits) drawn at scale 1.0 — crisp,
-    no fractional scaling — so positioning is predictable."""
-    p.fill_screen(BG)
-    draw_topbar(p, s)
+def _hud_tile(p, x, y, w, label, val, vcol):
+    p.draw_rect(x, y, w, 44, BORDER)
+    p.set_datum(TC); p.set_color(DIM); p.draw_string(label, x + w // 2, y + 5)
+    p.set_datum(BC); p.set_color(vcol)
+    p.draw_string(val, x + w // 2, y + 42, px=24)
+
+
+def _hud_face_label(p, label):
+    p.set_datum(TC); p.set_color(DIM)
+    p.draw_string(label, W // 2, 24)
+
+
+def _hud_hero_metric(p, value, unit, y, color):
+    vw = p.text_w(value, px=80)
+    uw = p.text_w(unit, px=24) if unit else 0
+    gap = 4 if unit else 0
+    x = (W - (vw + gap + uw)) // 2
+    p.set_datum(TL)
+    p.set_color(BG)
+    p.draw_string(value, x - 2, y + 2, px=80)
+    p.draw_string(value, x + 2, y + 2, px=80)
+    p.set_color(color)
+    p.draw_string(value, x, y, px=80)
+    if unit:
+        p.set_color(BG)
+        p.draw_string(unit, x + vw + gap - 1, y + 50, px=24)
+        p.draw_string(unit, x + vw + gap + 1, y + 50, px=24)
+        p.set_color(LABEL)
+        p.draw_string(unit, x + vw + gap, y + 50, px=24)
+
+
+def _hud_hero_metric110(p, value, unit, y, color):
+    vw = p.text_w(value, px=110)
+    uw = p.text_w(unit, px=24) if unit else 0
+    gap = 4 if unit else 0
+    x = (W - (vw + gap + uw)) // 2
+    p.set_datum(TL)
+    p.set_color(BG)
+    p.draw_string(value, x - 2, y + 2, px=110)
+    p.draw_string(value, x + 2, y + 2, px=110)
+    p.set_color(color)
+    p.draw_string(value, x, y, px=110)
+    if unit:
+        p.set_color(BG)
+        p.draw_string(unit, x + vw + gap - 1, y + 74, px=24)
+        p.draw_string(unit, x + vw + gap + 1, y + 74, px=24)
+        p.set_color(WHITE)
+        p.draw_string(unit, x + vw + gap, y + 74, px=24)
+
+
+def _hud_gauge_text(p, value, y, color, px=34):
+    p.set_datum(MC)
+    p.set_color(BG)
+    p.draw_string(value, W // 2 - 1, y + 1, px=px)
+    p.draw_string(value, W // 2 + 1, y + 1, px=px)
+    p.set_color(color)
+    p.draw_string(value, W // 2, y, px=px)
+
+
+def _full_screen_battery_gauge(p, s):
+    gx, gy, gw, gh = 6, 26, W - 12, 266
+    fill_h = round((gh - 2) * max(0, min(100, s.batt_pct)) / 100.0)
+    p.draw_rect(gx - 1, gy - 1, gw + 2, gh + 2, BORDER)
+    p.fill_rect(gx + 1, gy + 1, gw - 2, gh - 2, BG)
+    if fill_h > 0:
+        p.fill_rect(gx + 1, gy + gh - 1 - fill_h, gw - 2, fill_h, batt_color(s.batt_pct))
+    p.draw_rect(gx, gy, gw, gh, BORDER)
+    for i in range(s.cells):
+        sy = gy + (i * gh) // s.cells
+        p.hline(gx, sy, gw, BORDER)
+
+
+def _full_screen_watts_gauge(p, watts):
+    gx, gy, gw, gh = 6, 26, W - 12, 266
+    fill_h = round((gh - 2) * max(0, min(3000, watts)) / 3000.0)
+    p.draw_rect(gx - 1, gy - 1, gw + 2, gh + 2, BORDER)
+    p.fill_rect(gx + 1, gy + 1, gw - 2, gh - 2, BG)
+    if fill_h > 0:
+        p.fill_rect(gx + 1, gy + gh - 1 - fill_h, gw - 2, fill_h, watt_color(watts))
+    p.draw_rect(gx, gy, gw, gh, BORDER)
+    for i in range(10):
+        sy = gy + (i * gh) // 10
+        p.hline(gx, sy, gw, BORDER)
+
+
+def _draw_hud_speed(p, s):
 
     # SPEED — big, top-anchored just below the status bar so it can't bleed up.
     # NOTE: the firmware's hudSpeedY is tuned separately (LovyanGFX places this
@@ -806,18 +892,41 @@ def draw_hud(p, s):
     p.set_datum(MC); p.set_color(WHITE)
     p.draw_string("%d%%" % s.batt_pct, W // 2, 184, px=34)
 
-    # four key tiles (2x2), sitting just above the bottom status bar
-    def tile(x, y, w, label, val, vcol):
-        p.draw_rect(x, y, w, 44, BORDER)
-        p.set_datum(TC); p.set_color(DIM); p.draw_string(label, x + w // 2, y + 5)
-        p.set_datum(BC); p.set_color(vcol)
-        p.draw_string(val, x + w // 2, y + 42, px=24)
-
     cv, du = dist_cv(s), dist_unit(s)
-    tile(4, 202, 78, "WATTS", str(s.watts), watt_color(s.watts))
-    tile(88, 202, 78, "VOLTS", "%.1f" % s.voltage, batt_color(s.batt_pct))
-    tile(4, 250, 78, "RANGE", "%.1f%s" % (s.rem_km * cv, du), WHITE)
-    tile(88, 250, 78, "TEMP", "%dC" % int(round(max(s.motor_t, s.esc_t))), GREEN)
+    _hud_tile(p, 4, 202, 78, "WATTS", str(s.watts), watt_color(s.watts))
+    _hud_tile(p, 88, 202, 78, "VOLTS", "%.1f" % s.voltage, batt_color(s.batt_pct))
+    _hud_tile(p, 4, 250, 78, "RANGE", "%.1f%s" % (s.rem_km * cv, du), WHITE)
+    _hud_tile(p, 88, 250, 78, "TEMP", "%dC" % int(round(max(s.motor_t, s.esc_t))), GREEN)
+
+
+def _draw_hud_battery(p, s):
+    _full_screen_battery_gauge(p, s)
+    if s.battery_focus == "volts":
+        _hud_hero_metric(p, "%.1f" % s.voltage, "V", 82, WHITE)
+        _hud_gauge_text(p, "%d%%" % s.batt_pct, 214, WHITE)
+    else:
+        _hud_hero_metric110(p, str(s.batt_pct), "%", 70, WHITE)
+        _hud_gauge_text(p, "%.1fV" % s.voltage, 214, WHITE)
+
+
+def _draw_hud_watts(p, s):
+    watts = max(0, s.watts)
+    _full_screen_watts_gauge(p, watts)
+    _hud_hero_metric110(p, str(watts), "W", 70, WHITE)
+    _hud_gauge_text(p, "%dW PEAK" % watts, 214, WHITE)
+
+
+def draw_hud(p, s):
+    """PAGE 0: Big HUD. One physical page with selectable speed/battery/watts faces."""
+    p.fill_screen(BG)
+    draw_topbar(p, s)
+
+    if s.hud_face == "battery":
+        _draw_hud_battery(p, s)
+    elif s.hud_face == "watts":
+        _draw_hud_watts(p, s)
+    else:
+        _draw_hud_speed(p, s)
 
     draw_bottom(p, s)
 
@@ -854,6 +963,10 @@ def main():
     ap.add_argument("--progress", type=float, default=0.7)
     ap.add_argument("--batt", type=int, default=State.batt_pct, help="battery %% for color test")
     ap.add_argument("--watts", type=int, default=State.watts)
+    ap.add_argument("--hud-face", default=State.hud_face,
+                    choices=["speed", "battery", "watts"], help="HUD face")
+    ap.add_argument("--battery-focus", default=State.battery_focus,
+                    choices=["pct", "volts"], help="battery HUD hero value")
     ap.add_argument("--page", type=int, default=0,
                     help="0 hud 1 dash 2 power 3 trip 4 settings 5 system 6 graphs 7 logs")
     ap.add_argument("--theme", default="cam", choices=list(THEMES), help="color theme")
@@ -872,6 +985,8 @@ def main():
     s.use_mph = not a.kmh
     s.batt_pct = a.batt
     s.watts = a.watts
+    s.hud_face = a.hud_face
+    s.battery_focus = a.battery_focus
     s.page = 0 if a.hud else a.page
     s.fault = a.fault
     s.log_state = a.logstate

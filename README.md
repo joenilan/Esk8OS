@@ -112,17 +112,31 @@ runtime toggle now, persisted in flash — no reflashing needed).
 
 ## Build & flash
 
-Uses [PlatformIO](https://platformio.org/). Two environments:
+Uses [PlatformIO](https://platformio.org/). Main environments:
 
 | Environment | Target | Notes |
 |---|---|---|
-| `lilygo-t-display-s3` | Physical board | Real VESC over UART |
+| `tdisplay_s3_debug_usb` | LilyGO T-Display-S3 | Full TFT UI, USB serial console, real VESC over UART |
+| `esp32s3_headless_usb` | Generic ESP32-S3 | No onboard display; phone app is the UI |
+| `esp32s3_oled_i2c_usb` | Generic ESP32-S3 + SSD1306 | Tiny OLED glance UI; phone chooses speed/battery/watts face |
 | `wokwi-simulator` | [Wokwi](https://wokwi.com/) | Generic ESP32 + ILI9341 stand-in, fake telemetry |
 
 ```bash
-pio run -e lilygo-t-display-s3 -t upload     # flash the board
-pio run -e wokwi-simulator                    # build for the simulator
+pio run -e tdisplay_s3_debug_usb -t upload       # flash the LilyGO display board
+pio run -e esp32s3_headless_usb                  # build generic headless ESP32-S3
+pio run -e esp32s3_oled_i2c_usb                  # build generic ESP32-S3 + OLED
+pio run -e wokwi-simulator                       # build for the simulator
 ```
+
+The OLED env defaults to SSD1306 I2C at address `0x3C`, SDA `GPIO8`, SCL
+`GPIO9`. Override with PlatformIO build flags (`-DOLED_SDA=...`,
+`-DOLED_SCL=...`, `-DOLED_ADDR=...`) if the test board wiring needs it.
+
+Generic ESP32-S3 builds also enable an onboard addressable RGB status LED on
+`GPIO48` by default (`-DESK8OS_STATUS_RGB_PIN=48`). Override the pin in
+`platformio.ini` if a board uses a different RGB LED pin. Status colors:
+blue=boot/idle, purple=demo telemetry, green=real VESC telemetry, orange=no
+VESC data, yellow=turn-home warning, red=fault/limp, cyan=WiFi/bridge/export.
 
 > Wokwi has no 8-bit-parallel ST7789 support, so the simulator substitutes an
 > SPI ILI9341 at 240×320. The UI is drawn in a centered 170px band, so what you
@@ -145,10 +159,12 @@ code — a common gotcha.
 
 ## Serial console
 
-The `*_debug_usb` builds expose a USB serial console (115200 baud) for bench
-debugging and driving the board without BLE — live telemetry (`stat`), trip/config
-dumps (`trip`, `sys`, `cfg`), and actions (`demo`, `units`, `bright`, `rider`,
-`trip reset`, `reboot`). Type `help` for the full list. See
+The `*_debug_usb` LilyGO builds expose a USB serial console (115200 baud).
+Generic ESP32-S3 builds mirror the same console on native USB CDC and `Serial0`
+for boards with a CH343/USB-UART port. Use it for bench debugging and driving
+the board without BLE — live telemetry (`stat`), trip/config dumps (`trip`,
+`sys`, `cfg`), and actions (`demo`, `units`, `bright`, `rider`, `trip reset`,
+`reboot`). Type `help` for the full list. See
 [`docs/serial_console.md`](docs/serial_console.md) for the reference and the
 `scripts/serial_query.py` helper.
 

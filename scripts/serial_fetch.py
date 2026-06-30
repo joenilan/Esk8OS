@@ -1,5 +1,5 @@
-"""Fetch a ride CSV from the board over serial (COM5) and save it locally.
-Usage: python scripts/serial_fetch.py r0074.csv [out_path]"""
+"""Fetch a session CSV from the board over serial (COM5) and save it locally.
+Usage: python scripts/serial_fetch.py s0001.csv [out_path]"""
 import serial, time, sys
 
 PORT = "COM5"
