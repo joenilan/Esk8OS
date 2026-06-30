@@ -67,7 +67,6 @@ void setup() {
     gRedrawAll = false;
 
     sessionLogStart();
-    Serial.printf("[boot] ready in %lu ms\n", millis());   // setup() wall time = boot duration
 }
 
 void loop() {
