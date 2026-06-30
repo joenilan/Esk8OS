@@ -199,49 +199,32 @@ static void drawBootSplashFrame() {
 }
 
 void waitForBootReady() {
+    // Boot must NOT block. Paint the splash instantly and let the main loop's
+    // telemetry poll (pollVescData, ~10 Hz) bring the VESC link up on its own a
+    // few ms later. We do ONE quick, bounded probe purely for instant on-screen
+    // feedback: if a VESC is already talking we light "VESC LINKED" now; otherwise
+    // we return immediately instead of stalling several seconds on a blank splash.
+    // (The old no-VESC path waited up to 3.5 s + fixed delays, which made every
+    // bench/no-VESC boot look hung after a flash.)
     drawBootSplashFrame();
-    drawBootProgress(20, "DISPLAY READY", COL_DIM);
-    delay(150);
-    drawBootProgress(40, "STORAGE READY", COL_DIM);
-    delay(150);
 
     #ifdef WOKWI_SIMULATION
     drawBootProgress(100, "SIMULATION MODE", COL_ACCENT);
-    delay(500);
     #else
-    drawBootProgress(60, "UART READY", COL_DIM);
-    delay(150);
-
     if (gDemoMode) {
         drawBootProgress(100, "DEMO TELEMETRY", COL_ACCENT);
-        delay(500);
         return;
     }
 
-    unsigned long lastDraw = 0;
-    unsigned long connectStart = millis();
-    int pulse = 0;
-    while (!UART.getVescValues()) {
-        if (millis() - connectStart > 3500UL) {
-            telemetryLive = false;
-            vescLinkOk = false;
-            lastVescOkMs = 0;
-            drawBootProgress(100, "NO VESC - BLE READY", COL_YELLOW);
-            delay(700);
-            return;
-        }
-        if (millis() - lastDraw > 350) {
-            lastDraw = millis();
-            int pct = 65 + (pulse % 26);  // pulse between 65% and 90% while waiting
-            pulse = (pulse + 5) % 26;
-            drawBootProgress(pct, "CONNECTING TO VESC", COL_YELLOW);
-        }
-        delay(25);
+    if (UART.getVescValues()) {                 // single non-blocking probe (~100 ms max)
+        lastVescOkMs = millis();
+        drawBootProgress(100, "VESC LINKED", COL_GREEN);
+    } else {
+        telemetryLive = false;
+        vescLinkOk = false;
+        lastVescOkMs = 0;                        // the loop will set it when the ESC answers
+        drawBootProgress(100, "BLE READY", COL_YELLOW);
     }
-
-    lastVescOkMs = millis();
-    drawBootProgress(100, "VESC LINKED", COL_GREEN);
-    delay(500);
     #endif
 }
 
