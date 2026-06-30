@@ -10,7 +10,7 @@ bool gOtaInProgress = false;
 int  gOtaProgressPct = 0;
 
 static WebServer   server(80);
-static const char* RIDES_DIR = "/rides";
+static const char* SESSIONS_DIR = "/sessions";
 static bool        g_running = false;
 
 // Standalone web-service state (the AP-owning variant; see webServiceStart).
@@ -18,13 +18,13 @@ static bool          g_service       = false;
 static unsigned long g_svcLastActive = 0;
 static const unsigned long WEB_SVC_TIMEOUT_MS = 10UL * 60 * 1000;  // auto-drop AP after 10 min idle
 
-// Index: a small dark page listing every ride CSV with a download link + size.
+// Index: a small dark page listing every board session CSV with a download link + size.
 static void handleIndex() {
     String h;
     h.reserve(1024);
     h += F("<!doctype html><html><head><meta charset=utf-8>"
            "<meta name=viewport content='width=device-width,initial-scale=1'>"
-           "<title>ESK8OS ride logs</title><style>"
+           "<title>ESK8OS session logs</title><style>"
            "body{font-family:system-ui,sans-serif;background:#1a1a1a;color:#eee;margin:0;padding:18px}"
            ".btn{display:inline-block;padding:10px 16px;background:#b950d7;color:#fff;border-radius:4px;text-decoration:none;border:none;cursor:pointer;font-size:16px;font-weight:bold;}"
            "h2{color:#b950d7;margin:0 0 12px}ul{list-style:none;padding:0}"
@@ -35,10 +35,10 @@ static void handleIndex() {
            "<form method='POST' action='/update' enctype='multipart/form-data' onsubmit='document.getElementById(\"sb\").value=\"Updating...\"'>"
            "<input type='file' name='update' accept='.bin' style='margin-bottom:12px'><br>"
            "<input type='submit' value='Update Firmware' class='btn' id='sb'></form>"
-           "<hr style='border:1px solid #333;margin:20px 0'><h2>Ride logs</h2><ul>");
+           "<hr style='border:1px solid #333;margin:20px 0'><h2>Board session logs</h2><ul>");
 
     int n = 0;
-    File dir = LittleFS.open(RIDES_DIR);
+    File dir = LittleFS.open(SESSIONS_DIR);
     if (dir && dir.isDirectory()) {
         for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
             String name = f.name();
@@ -51,14 +51,14 @@ static void handleIndex() {
         }
         dir.close();
     }
-    if (n == 0) h += F("<li><span class=s>no rides yet</span></li>");
+    if (n == 0) h += F("<li><span class=s>no sessions yet</span></li>");
 
     h += "</ul><div class=f>" + String((unsigned)(LittleFS.usedBytes() / 1024)) + " / " +
          String((unsigned)(LittleFS.totalBytes() / 1024)) + " KB used</div></body></html>";
     server.send(200, "text/html", h);
 }
 
-// Stream a single ride CSV as a download. Name is constrained to /rides.
+// Stream a single session CSV as a download. Name is constrained to /sessions.
 static void handleDownload() {
     if (!server.hasArg("f")) { server.send(400, "text/plain", "missing f"); return; }
     String name = server.arg("f");
@@ -66,7 +66,7 @@ static void handleDownload() {
         server.send(400, "text/plain", "bad name");
         return;
     }
-    File f = LittleFS.open(String(RIDES_DIR) + "/" + name, "r");
+    File f = LittleFS.open(String(SESSIONS_DIR) + "/" + name, "r");
     if (!f) { server.send(404, "text/plain", "not found"); return; }
     server.sendHeader("Content-Disposition", "attachment; filename=" + name);
     server.streamFile(f, "text/csv");

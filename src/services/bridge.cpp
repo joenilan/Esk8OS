@@ -3,10 +3,12 @@
 #include "wifi_bridge.h"
 #include "ble_bridge.h"
 #include "webexport.h"
-#include "logging/ridelog.h"
+#include "logging/sessionlog.h"
 #include "transports/VescUartTransport.h"
+#if ESK8OS_FULL_UI
 #include "ui/BebasNeue18.h"
 #include "ui/BebasNeue24.h"
+#endif
 
 // VESC Tool BRIDGE MODE coordinator. Bridge mode lets VESC Tool configure the
 // ESC wirelessly through the display. This file owns the mode itself — the
@@ -21,6 +23,7 @@ static unsigned long bridgeLastActive = 0;
 
 static void updateBridgeStatus(const char* status) {
     bridgeStatus = status;
+#if ESK8OS_FULL_UI
     GFX->fillRect(X0 + 8, 212, UI_W - 16, 38, COL_BG);
     GFX->drawRect(X0 + 8, 212, UI_W - 16, 38, COL_BORDER);
     uint16_t c = COL_DIM;
@@ -32,12 +35,17 @@ static void updateBridgeStatus(const char* status) {
     GFX->drawString(status, X0 + UI_W / 2, 232);
     GFX->setFont(&fonts::Font0);
     pushCanvasFull();
+#else
+    Serial.print("[bridge] ");
+    Serial.println(status);
+#endif
 }
 
 // Live throughput per transport, just under the status box. The BLE line is a
 // diagnostic: RX climbs as the phone's requests reach the ESC, TX as replies are
 // forwarded back — so you can see exactly where a bridge session stalls.
 static void updateBridgeStats() {
+#if ESK8OS_FULL_UI
     GFX->fillRect(X0 + 8, 254, UI_W - 16, 26, COL_BG);
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
@@ -52,9 +60,11 @@ static void updateBridgeStats() {
                  "  RX " + String(bleBridgeRxBytes()) + " TX " + String(bleBridgeTxBytes());
     GFX->drawString(bln, X0 + UI_W / 2, 270);
     pushCanvasFull();
+#endif
 }
 
 static void drawBridgeScreen() {
+#if ESK8OS_FULL_UI
     GFX->fillScreen(COL_BG);
 
     GFX->setTextDatum(TC_DATUM);
@@ -91,6 +101,13 @@ static void drawBridgeScreen() {
 
     updateBridgeStatus(bridgeStatus.c_str());
     updateBridgeStats();                        // pushes the finished frame
+#else
+    Serial.println("[bridge] mode active");
+    Serial.print("[bridge] wifi ");
+    Serial.print(wifiBridgeSsid());
+    Serial.print(" ");
+    Serial.println(wifiBridgeIpPort());
+#endif
 }
 
 static void bridgeStart() {
@@ -101,7 +118,7 @@ static void bridgeStart() {
     // live on the shared NimBLE server (built at boot by companion_ble); this just
     // flips its forwarding flag on. No-op on builds without BLE_BRIDGE_ENABLED.
     bleBridgeStart();
-    // Serve the ride-log CSVs for download on the same AP (http://192.168.4.1/).
+    // Serve board session CSVs for download on the same AP (http://192.168.4.1/).
     webExportStart();
 }
 
@@ -130,7 +147,7 @@ void bridgeLoop() {
         }
     }
     bleBridgePoll();
-    webExportHandle();          // serve any pending ride-log download requests
+    webExportHandle();          // serve any pending session-log download requests
 
     static unsigned long lastTrafficShown = 0;
     if (traffic && millis() - lastTrafficShown > 300) {
@@ -148,6 +165,7 @@ void bridgeLoop() {
     if (millis() - lastStats > 500) { lastStats = millis(); updateBridgeStats(); }
 
     if (gOtaInProgress) {
+#if ESK8OS_FULL_UI
         static unsigned long lastOta = 0;
         if (millis() - lastOta > 100) {
             lastOta = millis();
@@ -160,6 +178,7 @@ void bridgeLoop() {
             GFX->drawString(String(gOtaProgressPct) + "%", X0 + UI_W / 2, 184);
             pushCanvasFull();
         }
+#endif
         bridgeLastActive = millis(); // Prevent timeout
         return;
     }
@@ -174,6 +193,7 @@ void bridgeLoop() {
 
 void enterBridgeMode() {
     if (!DEMO_DATA && currentSpeedKmh > 1.0) {   // live safety: only when stopped
+#if ESK8OS_FULL_UI
         GFX->fillRect(X0 + 8, 140, UI_W - 16, 40, COL_RED);
         GFX->setTextDatum(MC_DATUM);
         GFX->setTextColor(COL_WHITE);
@@ -184,13 +204,17 @@ void enterBridgeMode() {
         delay(1200);
         drawStaticFrame();
         gRedrawAll = true;
+#else
+        Serial.println("[bridge] blocked: stop board first");
+#endif
         return;
     }
     // If the standalone log/OTA web service is up, drop it first — bridge mode
     // raises its own AP and serves the same pages, and two APs must not co-exist.
     if (webServiceActive()) webServiceStop();
     saveOdo();
-    ridelogEndRide();           // flush + close the active ride so it downloads whole
+    sessionLogMark("bridge_enter");
+    sessionLogFlush();          // keep this power session as one CSV, but make it downloadable
     while (Serial1.available()) Serial1.read();   // drop stale VESC poll bytes so the
                                                   // first bridged packet starts clean
     Esk8OS::Transports::setVescPollPaused(true);  // STOP the background polling task
@@ -205,7 +229,7 @@ void exitBridgeMode() {
     systemMode = MODE_DASHBOARD;
     lastVescOkMs = millis();
     currentPage = PAGE_HUD;
-    ridelogStartRide();         // resume logging on a fresh ride file
+    sessionLogMark("bridge_exit");
     drawStaticFrame();
     gRedrawAll = true;
     Esk8OS::Transports::setVescPollPaused(false); // RESUME background polling

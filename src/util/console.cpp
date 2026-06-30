@@ -2,18 +2,57 @@
 #include "esk8os.h"
 #include "app/App.h"
 #include "version.h"
-#include "logging/ridelog.h"
+#include "logging/sessionlog.h"
 #include "services/webexport.h"
+#include "ui/UiRenderer.h"
 #include <LittleFS.h>
 #include <esp_system.h>
+#if ESK8OS_DISPLAY_OLED
+#include <Wire.h>
+#endif
+#ifndef ESK8OS_STATUS_RGB
+#define ESK8OS_STATUS_RGB 0
+#endif
+#ifndef ESK8OS_STATUS_RGB_PIN
+#define ESK8OS_STATUS_RGB_PIN 48
+#endif
 
 // Forward-declared (defined in App.cpp, external linkage) — re-applies the
 // backlight from gBrightnessPct after the `bright` command changes it.
 void applyBrightness();
 
-static const char* RIDES_DIR = "/rides";
+static const char* SESSIONS_DIR = "/sessions";
 static char   g_line[96];
 static size_t g_len = 0;
+#if ESK8OS_DUAL_CONSOLE
+static char   g_line0[96];
+static size_t g_len0 = 0;
+#endif
+
+#if ESK8OS_DUAL_CONSOLE
+class ConsoleOutput : public Print {
+public:
+    size_t write(uint8_t c) override {
+        size_t n = Serial.write(c);
+        Serial0.write(c);
+        return n;
+    }
+    size_t write(const uint8_t* buffer, size_t size) override {
+        size_t n = Serial.write(buffer, size);
+        Serial0.write(buffer, size);
+        return n;
+    }
+    void flush() override {
+        Serial.flush();
+        Serial0.flush();
+    }
+};
+
+static ConsoleOutput g_consoleOut;
+static Print& consoleOut() { return g_consoleOut; }
+#else
+static Print& consoleOut() { return Serial; }
+#endif
 
 // ---- confirmation guard for destructive commands ----------------------------
 // A dangerous command stashes its original line in g_pending and prints a "[y/N]"
@@ -26,28 +65,28 @@ static bool g_confirmed   = false;
 static bool needConfirm(const char* what, const char* fullLine) {
     if (g_confirmed) return true;
     strlcpy(g_pending, fullLine, sizeof(g_pending));
-    Serial.printf("%s -- confirm? [y/N]\n", what);
+    consoleOut().printf("%s -- confirm? [y/N]\n", what);
     return false;
 }
 
-// Resolve a user-typed name to a full path: bare names go under /rides.
+// Resolve a user-typed name to a full path: bare names go under /sessions.
 static String resolvePath(const char* arg) {
     String a = arg; a.trim();
     if (a.startsWith("/")) return a;
-    return String(RIDES_DIR) + "/" + a;
+    return String(SESSIONS_DIR) + "/" + a;
 }
 
 static void cmdList() {
-    File dir = LittleFS.open(RIDES_DIR);
-    if (!dir || !dir.isDirectory()) { Serial.println("(no rides yet)"); return; }
+    File dir = LittleFS.open(SESSIONS_DIR);
+    if (!dir || !dir.isDirectory()) { consoleOut().println("(no sessions yet)"); return; }
     int n = 0; size_t total = 0;
     for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
-        Serial.printf("  %-14s %8u B\n", f.name(), (unsigned)f.size());
+        consoleOut().printf("  %-14s %8u B\n", f.name(), (unsigned)f.size());
         total += f.size(); n++;
         f.close();
     }
     dir.close();
-    Serial.printf("%d file(s), %u B in /rides | FS %u/%u B used\n",
+    consoleOut().printf("%d file(s), %u B in /sessions | FS %u/%u B used\n",
                   n, (unsigned)total,
                   (unsigned)LittleFS.usedBytes(), (unsigned)LittleFS.totalBytes());
 }
@@ -55,37 +94,37 @@ static void cmdList() {
 static void cmdCat(const char* arg) {
     String path = resolvePath(arg);
     File f = LittleFS.open(path, "r");
-    if (!f) { Serial.println("not found: " + path); return; }
-    Serial.printf("----- %s (%u B) -----\n", path.c_str(), (unsigned)f.size());
+    if (!f) { consoleOut().println("not found: " + path); return; }
+    consoleOut().printf("----- %s (%u B) -----\n", path.c_str(), (unsigned)f.size());
     uint8_t buf[128];
     int n;
-    while ((n = f.read(buf, sizeof(buf))) > 0) Serial.write(buf, n);
+    while ((n = f.read(buf, sizeof(buf))) > 0) consoleOut().write(buf, n);
     f.close();
-    Serial.println("----- end -----");
+    consoleOut().println("----- end -----");
 }
 
 static void cmdRm(const char* arg) {
     String a = arg; a.trim();
-    if (a == "") { Serial.println("usage: rm <file|all>"); return; }
+    if (a == "") { consoleOut().println("usage: rm <file|all>"); return; }
     if (a == "all") {
-        // Goes through ridelog so the actively-logged file is closed first
-        // (you can't unlink a file with an open handle), then a fresh ride starts.
-        ridelogDeleteAll();
-        Serial.println("cleared all ride files");
+        // Goes through sessionLog so the active file handle is closed first,
+        // then a fresh board session file starts.
+        sessionLogDeleteAll();
+        consoleOut().println("cleared all session files");
         return;
     }
     String path = resolvePath(arg);
-    Serial.println(LittleFS.remove(path) ? "removed " + path : "failed: " + path);
+    consoleOut().println(LittleFS.remove(path) ? "removed " + path : "failed: " + path);
 }
 
 static void cmdLog(const char* arg) {
     String a = arg; a.trim();
-    if (a == "on")  { ridelogSetEnabled(true);  Serial.println("logging ON"); return; }
-    if (a == "off") { ridelogSetEnabled(false); Serial.println("logging OFF"); return; }
-    Serial.printf("logging %s%s | %u KB free\n",
-                  ridelogEnabled() ? "ON" : "OFF",
-                  ridelogFull() ? " (auto-stopped: low space)" : "",
-                  (unsigned)(ridelogFreeBytes() / 1024));
+    if (a == "on")  { sessionLogSetEnabled(true);  consoleOut().println("session logging ON"); return; }
+    if (a == "off") { sessionLogSetEnabled(false); consoleOut().println("session logging OFF"); return; }
+    consoleOut().printf("logging %s%s | %u KB free\n",
+                  sessionLogEnabled() ? "ON" : "OFF",
+                  sessionLogFull() ? " (auto-stopped: low space)" : "",
+                  (unsigned)(sessionLogFreeBytes() / 1024));
 }
 
 // Toggle the standalone log/OTA web service from USB serial — a test path for
@@ -93,37 +132,57 @@ static void cmdLog(const char* arg) {
 static void cmdWifi(const char* arg) {
     String a = arg; a.trim();
     if (a == "on") {
-        if (systemMode != MODE_DASHBOARD) { Serial.println("can't: exit bridge mode first"); return; }
-        if (webServiceActive()) { Serial.println("wifi export already ON"); return; }
+        if (systemMode != MODE_DASHBOARD) { consoleOut().println("can't: exit bridge mode first"); return; }
+        if (webServiceActive()) { consoleOut().println("wifi export already ON"); return; }
         webServiceStart();
-        Serial.println("wifi export ON - join ESK8-BRIDGE / esk8bridge, then http://192.168.4.1");
+        consoleOut().println("wifi export ON - join ESK8-BRIDGE / esk8bridge, then http://192.168.4.1");
         return;
     }
-    if (a == "off") { webServiceStop(); Serial.println("wifi export OFF"); return; }
-    Serial.printf("wifi export %s\n", webServiceActive() ? "ON" : "OFF");
+    if (a == "off") { webServiceStop(); consoleOut().println("wifi export OFF"); return; }
+    consoleOut().printf("wifi export %s\n", webServiceActive() ? "ON" : "OFF");
 }
 
 // ---- debug / status dumps ---------------------------------------------------
+static bool liveTelemetryAvailable() {
+    return telemetryLive && (gDemoMode || vescLinkOk);
+}
+
 static void cmdStat() {
+    if (!liveTelemetryAvailable()) {
+        consoleOut().printf("telemetry unavailable | demo %s | VESC link %s | fault %d\n",
+            gDemoMode ? "ON" : "OFF", vescLinkOk ? "OK" : "DOWN", vescFault);
+        consoleOut().println("live fields masked: speed/battery/volts/power/amps/temps/range");
+        return;
+    }
     const char* su = useMph ? "mph" : "kmh";
     float spd = useMph ? currentSpeedMph : currentSpeedKmh;
-    Serial.printf("spd %.1f %s | batt %d%% | %.1fV | link %s | fault %d\n",
+    consoleOut().printf("spd %.1f %s | batt %d%% | %.1fV | link %s | fault %d\n",
         spd, su, currentBatteryPercent, currentVoltage, vescLinkOk ? "OK" : "DOWN", vescFault);
-    Serial.printf("pwr %dW (peak %dW) | batA %.1f | motA %.1f | duty %d%%\n",
+    consoleOut().printf("pwr %dW (peak %dW) | batA %.1f | motA %.1f | duty %d%%\n",
         (int)currentWatts, (int)peakWatts, currentAmps, currentMotorAmps, (int)currentDuty);
-    Serial.printf("temp motor %dC | esc %dC | batt %dC\n",
+    consoleOut().printf("safety cell %.2fV | min loaded %.1fV | max batA %.1f | sag %d (%us home, %us limp)\n",
+        loadedCellVoltage, minVoltageUnderLoadSession, maxBatteryAmpsSession,
+        sagEventsSession, (unsigned)homeVoltageSecondsSession, (unsigned)limpVoltageSecondsSession);
+    consoleOut().printf("temp motor %dC | esc %dC | batt %dC\n",
         (int)currentMotorTemp, (int)currentEscTemp, (int)currentBatteryTemp);
-    Serial.printf("energy %dWh used | %dWh regen\n", (int)currentWattHours, (int)currentWhRegen);
+    consoleOut().printf("energy %dWh used | %dWh regen\n", (int)currentWattHours, (int)currentWhRegen);
 }
 
 static void cmdDiag() {
-    Serial.printf("remote: %s | throttle %+.3f (%s) | pulse %.4f ms\n",
+    if (!liveTelemetryAvailable()) {
+        consoleOut().printf("VESC telemetry unavailable | demo %s | link %s | last-fault %d\n",
+            gDemoMode ? "ON" : "OFF", vescLinkOk ? "OK" : "DOWN", gLastFault);
+        consoleOut().printf("remote: %s | throttle %+.3f | pulse %.4f ms\n",
+            gPpmConnected ? "CONNECTED" : "no signal", gPpmDecoded, gPpmPulseMs);
+        return;
+    }
+    consoleOut().printf("remote: %s | throttle %+.3f (%s) | pulse %.4f ms\n",
         gPpmConnected ? "CONNECTED" : "no signal", gPpmDecoded,
         gPpmDecoded > 0.02f ? "accel" : (gPpmDecoded < -0.02f ? "brake" : "center"), gPpmPulseMs);
-    Serial.printf("vesc fw %u.%u | slave(CAN) %s | fault %d | last-fault %d\n",
+    consoleOut().printf("vesc fw %u.%u | slave(CAN) %s | fault %d | last-fault %d\n",
         gVescFwMajor, gVescFwMinor, gSlaveOnline ? "online" : "offline", vescFault, gLastFault);
-    Serial.printf("motor A: master %.1f | slave %.1f\n", gMasterMotorAmps, gSlaveMotorAmps);
-    Serial.printf("temps C: motor m %.0f/s %.0f | esc m %.0f/s %.0f\n",
+    consoleOut().printf("motor A: master %.1f | slave %.1f\n", gMasterMotorAmps, gSlaveMotorAmps);
+    consoleOut().printf("temps C: motor m %.0f/s %.0f | esc m %.0f/s %.0f\n",
         gMasterMotorTemp, gSlaveMotorTemp, gMasterEscTemp, gSlaveEscTemp);
 }
 
@@ -139,56 +198,150 @@ static void cmdPpmScan() {
         if (fabsf(p - pPrev) > 0.0001f) { changes++; pPrev = p; }
         delay(30);
     }
-    Serial.printf("ppm scan (2.4s): pulse %.4f..%.4f spread %.4f ms, %d changes | throttle %.3f..%.3f | conn=%s\n",
+    consoleOut().printf("ppm scan (2.4s): pulse %.4f..%.4f spread %.4f ms, %d changes | throttle %.3f..%.3f | conn=%s\n",
         pMin, pMax, pMax - pMin, changes, dMin, dMax, gPpmConnected ? "Y" : "N");
 }
 
 static void cmdTrip(const char* arg) {
     if (!strcmp(arg, "reset")) {
         Esk8OS::App::resetTrip();
-        Serial.println("trip reset (distance + moving-time + session metrics)");
+        consoleOut().println("trip reset (distance + moving-time + session metrics)");
         return;
     }
     float cv = useMph ? 0.621371f : 1.0f;
     const char* u  = useMph ? "mi"  : "km";
     const char* su = useMph ? "mph" : "kmh";
-    Serial.printf("trip %.2f %s | tmov %02u:%02u:%02u | odo %.2f %s\n",
+    consoleOut().printf("trip %.2f %s | tmov %02u:%02u:%02u | odo %.2f %s\n",
         tripDistanceKm * cv, u, tripMovingSec / 3600, (tripMovingSec / 60) % 60, tripMovingSec % 60,
         totalDistanceKm * cv, u);
-    Serial.printf("avg %.1f %s | max %.1f %s | range est %.1f %s (rem %.1f) %s\n",
-        avgSpeedKmh * cv, su, maxSpeedKmh * cv, su, estimatedRangeKm * cv, u, remainingRangeKm * cv,
+    consoleOut().printf("avg %.1f %s | max %.1f %s | home %.1f %s (rem %.1f) | limp %.1f %s (rem %.1f) %s\n",
+        avgSpeedKmh * cv, su, maxSpeedKmh * cv, su,
+        estimatedRangeKm * cv, u, remainingRangeKm * cv,
+        estimatedLimpRangeKm * cv, u, remainingLimpRangeKm * cv,
         rangeEstimateReady ? "[learned]" : "[default]");
 }
 
 static void cmdSys() {
     unsigned long up = millis() / 1000;
-    Serial.printf("fw %s\n", FW_VERSION_FULL);
-    Serial.printf("uptime %02lu:%02lu:%02lu | reset-reason %d | fps %u\n",
+    consoleOut().printf("fw %s\n", FW_VERSION_FULL);
+    consoleOut().printf("uptime %02lu:%02lu:%02lu | reset-reason %d | fps %u\n",
         up / 3600, (up / 60) % 60, up % 60, (int)esp_reset_reason(), gFps);
-    Serial.printf("heap %u B free (min %u) | psram %u/%u B free\n",
+    consoleOut().printf("heap %u B free (min %u) | psram %u/%u B free\n",
         (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
         (unsigned)ESP.getFreePsram(), (unsigned)ESP.getPsramSize());
 }
 
+static void cmdI2c() {
+#if ESK8OS_DISPLAY_OLED
+    consoleOut().println("i2c scan:");
+    int found = 0;
+    for (uint8_t addr = 1; addr < 127; addr++) {
+        Wire.beginTransmission(addr);
+        uint8_t err = Wire.endTransmission();
+        if (err == 0) {
+            consoleOut().printf("  0x%02X\n", addr);
+            found++;
+        }
+    }
+    if (found == 0) consoleOut().println("  none");
+#else
+    consoleOut().println("i2c scan unavailable in this build");
+#endif
+}
+
 static void cmdCfg() {
-    Serial.printf("units %s | demo %s | bright %d%% | theme %d | rider %s\n",
-        useMph ? "mph" : "kmh", gDemoMode ? "ON" : "OFF", gBrightnessPct, gThemeIdx, RIDER_NAME);
-    Serial.printf("battery %d cells | pack %.1f Ah | stop %.2f V/cell | %.0f Wh/mi\n",
-        BATTERY_CELLS_COUNT, BATTERY_EFFECTIVE_CAPACITY_AH, BATTERY_STOP_CELL_V, RANGE_DEFAULT_WH_PER_MILE);
+    consoleOut().printf("units %s | demo %s | bright %d%% | rgb %s | oled %s | theme %d | rider %s\n",
+        useMph ? "mph" : "kmh", gDemoMode ? "ON" : "OFF", gBrightnessPct,
+        gStatusRgbEnabled ? "ON" : "OFF", gOledInvert ? "INVERT" : "NORMAL", gThemeIdx, RIDER_NAME);
+    consoleOut().printf("name %s | vtype %d (%s)\n", gDeviceName, gVehicleType, vehicleTypeName(gVehicleType));
+    consoleOut().printf("battery %d cells | pack %.1f Ah | home %.2f V/cell | limp %.2f V/cell | %.1f Wh/mi\n",
+        BATTERY_CELLS_COUNT, BATTERY_EFFECTIVE_CAPACITY_AH, BATTERY_HOME_CELL_V, BATTERY_STOP_CELL_V, RANGE_DEFAULT_WH_PER_MILE);
     WheelProfile& w = wheelProfiles[activeWheelProfile];
-    Serial.printf("wheel prof %d: %s (%.0f mm, %d/%d, %.1f pp)\n",
+    consoleOut().printf("wheel prof %d: %s (%.0f mm, %d/%d, %.1f pp)\n",
         activeWheelProfile, w.name, w.wheelDiameterM * 1000.0f, w.motorPulley, w.wheelPulley, w.polePairs);
+    const char* hud = "speed";
+    if (gHudFace == HUD_FACE_BATTERY) hud = (gBatteryFocus == BATTERY_FOCUS_VOLTS) ? "volts" : "battery";
+    else if (gHudFace == HUD_FACE_WATTS) hud = "watts";
+    else if (gHudFace == HUD_FACE_SAFETY) hud = "safety";
+    consoleOut().printf("hud %s\n", hud);
 }
 
 // ---- actions ----------------------------------------------------------------
+static void saveHudFace() {
+    prefs.putInt("hudFace", gHudFace);
+    prefs.putInt("batFocus", gBatteryFocus);
+    gRedrawAll = true;
+}
+
+static void cmdHud(const char* arg) {
+    String a = arg; a.trim(); a.toLowerCase();
+    if (a == "next") {
+        if (gHudFace == HUD_FACE_SPEED) {
+            gHudFace = HUD_FACE_BATTERY;
+            gBatteryFocus = BATTERY_FOCUS_PERCENT;
+        } else if (gHudFace == HUD_FACE_BATTERY && gBatteryFocus == BATTERY_FOCUS_PERCENT) {
+            gBatteryFocus = BATTERY_FOCUS_VOLTS;
+        } else if (gHudFace == HUD_FACE_BATTERY) {
+            gHudFace = HUD_FACE_WATTS;
+        } else if (gHudFace == HUD_FACE_WATTS) {
+            gHudFace = HUD_FACE_SAFETY;
+        } else {
+            gHudFace = HUD_FACE_SPEED;
+            gBatteryFocus = BATTERY_FOCUS_PERCENT;
+        }
+        saveHudFace();
+    } else if (a == "speed") {
+        gHudFace = HUD_FACE_SPEED;
+        saveHudFace();
+    } else if (a == "battery" || a == "pct" || a == "percent") {
+        gHudFace = HUD_FACE_BATTERY;
+        gBatteryFocus = BATTERY_FOCUS_PERCENT;
+        saveHudFace();
+    } else if (a == "volts" || a == "voltage") {
+        gHudFace = HUD_FACE_BATTERY;
+        gBatteryFocus = BATTERY_FOCUS_VOLTS;
+        saveHudFace();
+    } else if (a == "watts" || a == "power") {
+        gHudFace = HUD_FACE_WATTS;
+        saveHudFace();
+    } else if (a == "safety" || a == "range") {
+        gHudFace = HUD_FACE_SAFETY;
+        saveHudFace();
+    } else if (a.length()) {
+        consoleOut().println("usage: hud [speed|battery|volts|watts|safety|next]");
+        return;
+    }
+
+    const char* hud = "speed";
+    if (gHudFace == HUD_FACE_BATTERY) hud = (gBatteryFocus == BATTERY_FOCUS_VOLTS) ? "volts" : "battery";
+    else if (gHudFace == HUD_FACE_WATTS) hud = "watts";
+    else if (gHudFace == HUD_FACE_SAFETY) hud = "safety";
+    consoleOut().printf("hud %s\n", hud);
+}
+
 static void cmdDemo(const char* arg) {
     String a = arg; a.trim();
     if (a == "on" || a == "off") {
         gDemoMode = (a == "on");
         prefs.putBool("demo", gDemoMode);
         rideEnergyBaselineSet = false;     // re-baseline VESC energy on the next real poll
+        if (!gDemoMode) {
+            lastVescOkMs = 0;
+            vescLinkOk = false;
+            telemetryLive = false;
+            currentSpeedKmh = 0.0f;
+            currentSpeedMph = 0.0f;
+            currentAmps = 0.0f;
+            currentMotorAmps = 0.0f;
+            currentDuty = 0.0f;
+            currentWatts = 0.0f;
+            peakWatts = 0.0f;
+            gPpmConnected = false;
+            gPpmDecoded = 0.0f;
+            gPpmPulseMs = 0.0f;
+        }
     }
-    Serial.printf("demo %s\n", gDemoMode ? "ON" : "OFF");
+    consoleOut().printf("demo %s\n", gDemoMode ? "ON" : "OFF");
 }
 
 static void cmdUnits(const char* arg) {
@@ -198,7 +351,7 @@ static void cmdUnits(const char* arg) {
         prefs.putBool("mph", useMph);
         gRedrawAll = true;
     }
-    Serial.printf("units %s\n", useMph ? "mph" : "kmh");
+    consoleOut().printf("units %s\n", useMph ? "mph" : "kmh");
 }
 
 static void cmdBright(const char* arg) {
@@ -208,7 +361,53 @@ static void cmdBright(const char* arg) {
         prefs.putInt("bright", gBrightnessPct);
         applyBrightness();
     }
-    Serial.printf("bright %d%%\n", gBrightnessPct);
+    consoleOut().printf("bright %d%%\n", gBrightnessPct);
+}
+
+static void cmdRgb(const char* arg) {
+    String a = arg; a.trim(); a.toLowerCase();
+    if (a == "on" || a == "1" || a == "yes") {
+        gStatusRgbEnabled = true;
+        prefs.putBool("rgb", true);
+    } else if (a == "off" || a == "0" || a == "no") {
+        gStatusRgbEnabled = false;
+        prefs.putBool("rgb", false);
+#if ESK8OS_STATUS_RGB
+        neopixelWrite(ESK8OS_STATUS_RGB_PIN, 0, 0, 0);
+#endif
+    } else if (a.length()) {
+        consoleOut().println("usage: rgb [on|off]");
+        return;
+    }
+    consoleOut().printf("rgb %s\n", gStatusRgbEnabled ? "ON" : "OFF");
+}
+
+static void cmdOled(const char* arg) {
+    String a = arg; a.trim(); a.toLowerCase();
+    if (a == "invert" || a == "inverted" || a == "light" || a == "white") {
+        gOledInvert = true;
+        prefs.putBool("oledInv", true);
+        Esk8OS::UiRenderer::applyOledInvert();
+        gRedrawAll = true;
+    } else if (a == "normal" || a == "dark" || a == "black") {
+        gOledInvert = false;
+        prefs.putBool("oledInv", false);
+        Esk8OS::UiRenderer::applyOledInvert();
+        gRedrawAll = true;
+    } else if (a == "saver" || a == "screensaver" || a == "preview") {
+        Esk8OS::UiRenderer::previewOledScreensaver(20000UL);
+    } else if (a == "boot" || a == "splash") {
+        Esk8OS::UiRenderer::showBootSplash(12, "DISPLAY"); delay(160);
+        Esk8OS::UiRenderer::showBootSplash(35, "BOARD"); delay(160);
+        Esk8OS::UiRenderer::showBootSplash(60, "UART"); delay(160);
+        Esk8OS::UiRenderer::showBootSplash(82, "PHONE"); delay(160);
+        Esk8OS::UiRenderer::showBootSplash(100, "READY"); delay(300);
+        gRedrawAll = true;
+    } else if (a.length()) {
+        consoleOut().println("usage: oled [normal|invert|saver|boot]");
+        return;
+    }
+    consoleOut().printf("oled %s\n", gOledInvert ? "invert" : "normal");
 }
 
 static void cmdRider(const char* arg) {
@@ -218,29 +417,52 @@ static void cmdRider(const char* arg) {
         prefs.putString("rider", RIDER_NAME);
         gRedrawAll = true;
     }
-    Serial.printf("rider %s\n", RIDER_NAME);
+    consoleOut().printf("rider %s\n", RIDER_NAME);
+}
+
+static void cmdName(const char* arg) {
+    String a = arg; a.trim();
+    if (a.length()) {
+        strlcpy(gDeviceName, a.c_str(), sizeof(gDeviceName));
+        prefs.putString("devname", gDeviceName);
+    }
+    consoleOut().printf("name %s (reboot to re-advertise)\n", gDeviceName);
+}
+
+static void cmdVtype(const char* arg) {
+    String a = arg; a.trim();
+    if (a.length()) {
+        gVehicleType = constrain((int)a.toInt(), 0, VT_COUNT - 1);
+        prefs.putInt("vtype", gVehicleType);
+    }
+    consoleOut().printf("vtype %d (%s)  [0=skate 1=ebike 2=scooter 3=moped 4=car 5=other]\n",
+                        gVehicleType, vehicleTypeName(gVehicleType));
 }
 
 static void cmdHelp() {
-    Serial.println(F("commands:"));
-    Serial.println(F("  help            this list"));
-    Serial.println(F("  logs            list ride files + storage use"));
-    Serial.println(F("  cat <file>      dump a ride CSV (e.g. cat r0001.csv)"));
-    Serial.println(F("  rm <file|all>   delete one ride file, or all"));
-    Serial.println(F("  log [on|off]    logging switch / status"));
-    Serial.println(F("  wifi [on|off]   standalone log/OTA web service (http://192.168.4.1)"));
-    Serial.println(F("  free            partition usage"));
-    Serial.println(F("  odo [reset|set <v>]  odometer + trip (reset=0, set <v> in display unit)"));
-    Serial.println(F("  stat            live telemetry (speed/power/temps/energy)"));
-    Serial.println(F("  diag            remote/PPM throttle + VESC diagnostics"));
-    Serial.println(F("  trip [reset]    trip distance/time/avg/max/range, or full reset"));
-    Serial.println(F("  sys             fw, uptime, heap/psram, reset reason, fps"));
-    Serial.println(F("  cfg             units/demo/brightness/battery/wheel config"));
-    Serial.println(F("  demo [on|off]   simulate telemetry (persisted)"));
-    Serial.println(F("  units [mph|kmh] display units (persisted)"));
-    Serial.println(F("  bright <10-100> backlight % (persisted)"));
-    Serial.println(F("  rider [name]    rider name (persisted)"));
-    Serial.println(F("  reboot          restart the board"));
+    consoleOut().println(F("commands:"));
+    consoleOut().println(F("  help            this list"));
+    consoleOut().println(F("  logs            list board session files + storage use"));
+    consoleOut().println(F("  cat <file>      dump a session CSV (e.g. cat s0001.csv)"));
+    consoleOut().println(F("  rm <file|all>   delete one session file, or all"));
+    consoleOut().println(F("  log [on|off]    logging switch / status"));
+    consoleOut().println(F("  wifi [on|off]   standalone log/OTA web service (http://192.168.4.1)"));
+    consoleOut().println(F("  free            partition usage"));
+    consoleOut().println(F("  odo [reset|set <v>]  odometer + trip (reset=0, set <v> in display unit)"));
+    consoleOut().println(F("  stat            live telemetry (speed/power/temps/energy)"));
+    consoleOut().println(F("  diag            remote/PPM throttle + VESC diagnostics"));
+    consoleOut().println(F("  trip [reset]    trip distance/time/avg/max/range, or full reset"));
+    consoleOut().println(F("  sys             fw, uptime, heap/psram, reset reason, fps"));
+    consoleOut().println(F("  cfg             units/demo/brightness/battery/wheel config"));
+    consoleOut().println(F("  i2c             scan I2C bus (OLED builds)"));
+    consoleOut().println(F("  hud [face|next] speed/battery/volts/watts/safety"));
+    consoleOut().println(F("  demo [on|off]   simulate telemetry (persisted)"));
+    consoleOut().println(F("  units [mph|kmh] display units (persisted)"));
+    consoleOut().println(F("  bright <10-100> backlight % (persisted)"));
+    consoleOut().println(F("  rgb [on|off]    status RGB LED (persisted)"));
+    consoleOut().println(F("  oled [normal|invert|saver|boot] OLED pixels / previews"));
+    consoleOut().println(F("  rider [name]    rider name (persisted)"));
+    consoleOut().println(F("  reboot          restart the board"));
 }
 
 static void dispatch(char* line) {
@@ -256,36 +478,36 @@ static void dispatch(char* line) {
     else if (!strcmp(line, "rm")) {
         if (arg[0]) {
             char msg[80];
-            if (!strcmp(arg, "all")) strlcpy(msg, "delete ALL ride files", sizeof(msg));
-            else snprintf(msg, sizeof(msg), "delete ride file '%s'", arg);
+            if (!strcmp(arg, "all")) strlcpy(msg, "delete ALL session files", sizeof(msg));
+            else snprintf(msg, sizeof(msg), "delete session file '%s'", arg);
             if (!needConfirm(msg, orig)) return;
         }
         cmdRm(arg);
     }
     else if (!strcmp(line, "log"))  cmdLog(arg);
     else if (!strcmp(line, "wifi")) cmdWifi(arg);
-    else if (!strcmp(line, "free")) Serial.printf("FS %u/%u B used\n",
+    else if (!strcmp(line, "free")) consoleOut().printf("FS %u/%u B used\n",
                  (unsigned)LittleFS.usedBytes(), (unsigned)LittleFS.totalBytes());
     else if (!strcmp(line, "odo")) {
         if (!strcmp(arg, "reset")) {
             if (!needConfirm("reset the LIFETIME odometer to 0", orig)) return;
             totalDistanceKm = 0.0f;
             saveOdo();                          // persist the cleared lifetime total
-            Serial.println("odo reset -> 0");
+            consoleOut().println("odo reset -> 0");
         } else if (!strncmp(arg, "set ", 4)) {
             float v = atof(arg + 4);            // value in the active display unit
             if (v >= 0) {
                 if (!needConfirm("overwrite the lifetime odometer", orig)) return;
                 totalDistanceKm = useMph ? v / 0.621371f : v;
                 saveOdo();
-                Serial.printf("odo set -> %.2f %s\n", v, useMph ? "mi" : "km");
+                consoleOut().printf("odo set -> %.2f %s\n", v, useMph ? "mi" : "km");
             } else {
-                Serial.println("odo set: need a value >= 0");
+                consoleOut().println("odo set: need a value >= 0");
             }
         } else {
             float cv = useMph ? 0.621371f : 1.0f;
             const char* u = useMph ? "mi" : "km";
-            Serial.printf("odo %.2f %s | trip %.2f %s | tmov %02u:%02u:%02u\n",
+            consoleOut().printf("odo %.2f %s | trip %.2f %s | tmov %02u:%02u:%02u\n",
                  totalDistanceKm * cv, u, tripDistanceKm * cv, u,
                  tripMovingSec / 3600, (tripMovingSec / 60) % 60, tripMovingSec % 60);
         }
@@ -298,28 +520,32 @@ static void dispatch(char* line) {
         cmdTrip(arg);
     }
     else if (!strcmp(line, "sys"))  cmdSys();
+    else if (!strcmp(line, "i2c"))  cmdI2c();
     else if (!strcmp(line, "cfg") || !strcmp(line, "config")) cmdCfg();
+    else if (!strcmp(line, "hud")) cmdHud(arg);
     else if (!strcmp(line, "demo")) cmdDemo(arg);
     else if (!strcmp(line, "units")) cmdUnits(arg);
     else if (!strcmp(line, "bright")) cmdBright(arg);
+    else if (!strcmp(line, "rgb")) cmdRgb(arg);
+    else if (!strcmp(line, "oled")) cmdOled(arg);
     else if (!strcmp(line, "rider")) cmdRider(arg);
+    else if (!strcmp(line, "name")) cmdName(arg);
+    else if (!strcmp(line, "vtype")) cmdVtype(arg);
     else if (!strcmp(line, "reboot")) {
         if (!needConfirm("reboot the board", orig)) return;
-        Serial.println("rebooting...");
-        Serial.flush();
+        consoleOut().println("rebooting...");
+        consoleOut().flush();
         delay(100);
         ESP.restart();
     }
-    else if (line[0]) Serial.println("? unknown - try 'help'");
+    else if (line[0]) consoleOut().println("? unknown - try 'help'");
 }
 
-void consolePoll() {
+static void pollConsoleInput(Stream& in, char* line, size_t& len, int& esc) {
     // Skip ANSI escape sequences (arrow keys etc. send ESC [ <final>), so cursor
     // movement in the terminal doesn't leak control bytes into a command.
-    static int esc = 0;   // 0 = normal, 1 = saw ESC, 2 = inside CSI "ESC ["
-
-    while (Serial.available()) {
-        char c = Serial.read();
+    while (in.available()) {
+        char c = in.read();
 
         if (esc == 1) { esc = (c == '[') ? 2 : 0; continue; }
         if (esc == 2) { if (c >= 0x40 && c <= 0x7e) esc = 0; continue; }  // CSI final byte
@@ -329,27 +555,36 @@ void consolePoll() {
             // End of line on any terminator (\r, \n, or \r\n). The trailing
             // terminator of a \r\n pair sees an empty buffer and is ignored,
             // so a command never dispatches twice.
-            if (g_len > 0) {
-                g_line[g_len] = '\0';
+            if (len > 0) {
+                line[len] = '\0';
                 if (g_pending[0]) {
                     // Awaiting a [y/N] answer to a stashed destructive command.
                     // Anything but y/yes cancels (safe default).
-                    bool yes = (g_line[0] == 'y' || g_line[0] == 'Y');
+                    bool yes = (line[0] == 'y' || line[0] == 'Y');
                     char cmd[96];
                     strlcpy(cmd, g_pending, sizeof(cmd));
                     g_pending[0] = '\0';
                     if (yes) { g_confirmed = true; dispatch(cmd); g_confirmed = false; }
-                    else Serial.println("cancelled");
+                    else consoleOut().println("cancelled");
                 } else {
-                    dispatch(g_line);
+                    dispatch(line);
                 }
-                g_len = 0;
+                len = 0;
             }
         } else if (c == 0x08 || c == 0x7f) {     // backspace / delete
-            if (g_len > 0) g_len--;
+            if (len > 0) len--;
         } else if (c >= 0x20 && (uint8_t)c < 0x7f) {   // printable ASCII only
-            if (g_len < sizeof(g_line) - 1) g_line[g_len++] = c;
+            if (len < sizeof(g_line) - 1) line[len++] = c;
         }
         // other control bytes ignored
     }
+}
+
+void consolePoll() {
+    static int esc = 0;   // 0 = normal, 1 = saw ESC, 2 = inside CSI "ESC ["
+    pollConsoleInput(Serial, g_line, g_len, esc);
+#if ESK8OS_DUAL_CONSOLE
+    static int esc0 = 0;
+    pollConsoleInput(Serial0, g_line0, g_len0, esc0);
+#endif
 }

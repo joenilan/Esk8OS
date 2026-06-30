@@ -24,17 +24,25 @@ const Theme THEMES[] = {
 };
 const int THEME_COUNT = sizeof(THEMES) / sizeof(THEMES[0]);
 
+static uint16_t rgb565(RGB c) {
+#if ESK8OS_DISPLAY_TFT
+    return tft.color565(c.r, c.g, c.b);
+#else
+    return ((c.r & 0xF8) << 8) | ((c.g & 0xFC) << 3) | (c.b >> 3);
+#endif
+}
+
 void applyTheme(int idx) {
     if (idx < 0 || idx >= THEME_COUNT) idx = 0;
     const Theme& t = THEMES[idx];
-    COL_BG     = tft.color565(t.bg.r,     t.bg.g,     t.bg.b);
-    COL_BORDER = tft.color565(t.border.r, t.border.g, t.border.b);
-    COL_DIM    = tft.color565(t.dim.r,    t.dim.g,    t.dim.b);
-    COL_LABEL  = tft.color565(t.label.r,  t.label.g,  t.label.b);
-    COL_WHITE  = tft.color565(t.white.r,  t.white.g,  t.white.b);
-    COL_GREEN  = tft.color565(t.green.r,  t.green.g,  t.green.b);
-    COL_RED    = tft.color565(t.red.r,    t.red.g,    t.red.b);
-    COL_ACCENT = tft.color565(t.accent.r, t.accent.g, t.accent.b);
-    COL_YELLOW = tft.color565(t.yellow.r, t.yellow.g, t.yellow.b);
-    COL_ORANGE = tft.color565(t.orange.r, t.orange.g, t.orange.b);
+    COL_BG     = rgb565(t.bg);
+    COL_BORDER = rgb565(t.border);
+    COL_DIM    = rgb565(t.dim);
+    COL_LABEL  = rgb565(t.label);
+    COL_WHITE  = rgb565(t.white);
+    COL_GREEN  = rgb565(t.green);
+    COL_RED    = rgb565(t.red);
+    COL_ACCENT = rgb565(t.accent);
+    COL_YELLOW = rgb565(t.yellow);
+    COL_ORANGE = rgb565(t.orange);
 }

@@ -40,7 +40,7 @@ TelemetrySample getHistorySample(int ageIndex) {
     return history[idx];
 }
 
-// ---- persisted ride logs ----------------------------------------------------
+// ---- persisted compact ride summaries --------------------------------------
 void saveRideSummaryLog() {
     // Skip tiny accidental bench/test resets.
     if (tripDistanceKm < 0.05f && currentWattHours < 1.0f) return;
@@ -124,6 +124,7 @@ static void simulateTelemetry() {
     currentBatteryTemp += ((ambient + 12.0f * load) - currentBatteryTemp) * kBatt;
 
     lastVescOkMs = millis();      // demo link always "up"
+    telemetryLive = true;
     vescFault = 0;                // ...and fault-free: clear any stale fault left by a
                                   // real (e.g. unpowered) VESC read before demo was enabled,
                                   // so the board page isn't frozen behind a fault banner.
@@ -153,13 +154,22 @@ static float configuredNominalPackWh() {
     return BATTERY_EFFECTIVE_CAPACITY_AH * BATTERY_CELLS_COUNT * BATTERY_NOMINAL_CELL_V;
 }
 
-static float configuredUsablePackWh() {
+static int liionSocFromCellV(float v);
+
+static float configuredUsablePackWh(float floorCellV) {
     // Scale nominal pack Wh by the configured usable voltage window. This keeps
     // range conservative and aligned with the voltage where the dashboard says
     // to stop, instead of estimating all the way to a fully depleted cell.
-    float usableWindow = max(0.1f, BATTERY_FULL_CELL_V - BATTERY_STOP_CELL_V);
+    float usableWindow = max(0.1f, BATTERY_FULL_CELL_V - floorCellV);
     float nominalWindow = max(0.1f, BATTERY_FULL_CELL_V - 3.0f);
     return configuredNominalPackWh() * constrain(usableWindow / nominalWindow, 0.0f, 1.0f);
+}
+
+static float remainingWhToFloor(float floorCellV) {
+    int floorPct = liionSocFromCellV(floorCellV);
+    float usablePctWindow = max(1.0f, 100.0f - floorPct);
+    float remainingFrac = constrain((currentBatteryPercent - floorPct) / usablePctWindow, 0.0f, 1.0f);
+    return configuredUsablePackWh(floorCellV) * remainingFrac;
 }
 
 static float defaultWhPerKm() {
@@ -187,10 +197,13 @@ void updateRangeEstimate() {
     }
 
     avgWhPerKm = whPerKm;
-    float packWh = configuredUsablePackWh();
-    float remainingWh = packWh * constrain(currentBatteryPercent, 0, 100) / 100.0f;
-    estimatedRangeKm = packWh / avgWhPerKm;
-    remainingRangeKm = remainingWh / avgWhPerKm;
+    float homeFloorCell = max(BATTERY_HOME_CELL_V, BATTERY_STOP_CELL_V);
+    float homePackWh = configuredUsablePackWh(homeFloorCell);
+    float limpPackWh = configuredUsablePackWh(BATTERY_STOP_CELL_V);
+    estimatedRangeKm = homePackWh / avgWhPerKm;
+    remainingRangeKm = remainingWhToFloor(homeFloorCell) / avgWhPerKm;
+    estimatedLimpRangeKm = limpPackWh / avgWhPerKm;
+    remainingLimpRangeKm = remainingWhToFloor(BATTERY_STOP_CELL_V) / avgWhPerKm;
 }
 
 // ---- state-of-charge from a real Li-ion curve -------------------------------
@@ -232,7 +245,11 @@ void pollVescData() {
     useSim = gDemoMode;
     if (!useSim) {
         Esk8OS::Transports::RawVescData raw;
-        if (Esk8OS::Transports::getLatestVescData(&raw)) {
+        // Ignore reads from a VESC that's talking but not actually powered (logic
+        // alive over UART, power stage off): input voltage reads implausibly low
+        // and it emits a bogus DRV fault. Dropping the read lets the link go stale
+        // -> LINK LOST instead of a meaningless FAULT banner.
+        if (Esk8OS::Transports::getLatestVescData(&raw) && raw.inpVoltage >= VESC_MIN_OPERATIONAL_V) {
             float wheelRPM = (raw.rpm / profilePolePairs()) * profileGearRatio();
             currentSpeedKmh = (wheelRPM * profileCircumfM() * 60.0) / 1000.0;
             currentSpeedMph = currentSpeedKmh * 0.621371;
@@ -245,7 +262,19 @@ void pollVescData() {
             float vCell = vOpen / max(1, BATTERY_CELLS_COUNT);
             int rawSoc = liionSocFromCellV(vCell);
             if (gSocFilt < 0) gSocFilt = rawSoc;            // seed on first sample
-            else              gSocFilt += (rawSoc - gSocFilt) * 0.05f;   // ~2s EMA at 10 Hz
+            else {
+                float delta = rawSoc - gSocFilt;
+                float alpha = 0.05f;
+                // A full pack often drops from charger/surface voltage to its real
+                // loaded voltage in the first minute. Show that in volts, but don't
+                // let percent visibly plunge from 100% to low-90s on a short pull.
+                if (delta < 0 && gSocFilt > 85.0f && raw.avgInputCurrent > 2.0f) {
+                    alpha = 0.012f;
+                } else if (delta > 0 && raw.avgInputCurrent < 2.0f) {
+                    alpha = 0.08f;
+                }
+                gSocFilt += delta * alpha;
+            }
             currentBatteryPercent = constrain((int)lroundf(gSocFilt), 0, 100);
 
             currentMotorTemp = raw.tempMotor;
@@ -277,6 +306,7 @@ void pollVescData() {
             gMasterEscTemp = raw.masterTempMosfet;
             gSlaveEscTemp = raw.slaveTempMosfet;
             lastVescOkMs = millis();
+            telemetryLive = true;
         }
     }
     #endif
@@ -304,7 +334,30 @@ void pollVescData() {
     // Session extremes for the Power page SESSION card
     if (currentWatts > maxWattsSession)              maxWattsSession = currentWatts;
     if (currentVoltage < minVoltageSession)          minVoltageSession = currentVoltage;
+    if (fabs(currentAmps) > maxBatteryAmpsSession)   maxBatteryAmpsSession = fabs(currentAmps);
     if (fabs(currentMotorAmps) > maxMotorAmpsSession) maxMotorAmpsSession = fabs(currentMotorAmps);
+
+    // Battery safety readout. This intentionally uses loaded pack voltage, not
+    // sag-compensated open-circuit voltage, because VESC cutoffs/BMS trips happen
+    // under load. Evee reports it and warns; the VESC still owns current limiting.
+    loadedCellVoltage = currentVoltage / max(1, BATTERY_CELLS_COUNT);
+    bool discharging = currentAmps > 2.0f && currentWatts > 50.0f;
+    bool belowHomeLoaded = discharging && loadedCellVoltage <= BATTERY_HOME_CELL_V;
+    bool belowLimpLoaded = discharging && loadedCellVoltage <= (BATTERY_STOP_CELL_V + 0.03f);
+    if (discharging && currentVoltage < minVoltageUnderLoadSession) {
+        minVoltageUnderLoadSession = currentVoltage;
+    }
+    static bool wasBelowHomeLoaded = false;
+    if (belowHomeLoaded && !wasBelowHomeLoaded) sagEventsSession++;
+    wasBelowHomeLoaded = belowHomeLoaded;
+
+    static uint32_t lastSafetySec = 0;
+    uint32_t safetySec = millis() / 1000UL;
+    if (safetySec != lastSafetySec) {
+        lastSafetySec = safetySec;
+        if (belowHomeLoaded) homeVoltageSecondsSession++;
+        if (belowLimpLoaded) limpVoltageSecondsSession++;
+    }
 
     // Accumulate trip + odometer from speed (km), then persist to flash on
     // every stop and every 60s so they survive a disconnect / power-off.
@@ -346,11 +399,35 @@ void pollVescData() {
     wasMoving = moving;
 
     // Telemetry link freshness, session max + average speed
-    vescLinkOk = (millis() - lastVescOkMs < VESC_LINK_TIMEOUT_MS);
+    vescLinkOk = (lastVescOkMs != 0) && (millis() - lastVescOkMs < VESC_LINK_TIMEOUT_MS);
+    if (!useSim && !vescLinkOk) {
+        telemetryLive = false;
+        currentSpeedKmh = 0.0f;
+        currentSpeedMph = 0.0f;
+        currentAmps = 0.0f;
+        currentMotorAmps = 0.0f;
+        currentDuty = 0.0f;
+        currentWatts = 0.0f;
+        vescFault = 0;          // a lost link has no live fault — show LINK LOST, not a stale FAULT
+        gPpmConnected = false;
+        gPpmDecoded = 0.0f;
+        gPpmPulseMs = 0.0f;
+    }
     if (currentSpeedKmh > maxSpeedKmh) maxSpeedKmh = currentSpeedKmh;
     // AVG is a true moving-average: session distance / session MOVING-time, so it
     // doesn't sag while parked (the trip clock and distance both pause together).
     uint32_t sessionMovingSec = tripMovingSec - sessionMovingStartSec;
     if (sessionMovingSec > 0) avgSpeedKmh = (tripDistanceKm - sessionTripStartKm) / (sessionMovingSec / 3600.0f);
     updateRangeEstimate();
+
+    if (belowLimpLoaded || remainingLimpRangeKm <= RANGE_LIMP_HOME_KM) {
+        rangeAlertState = 3;  // LIMP HOME
+    } else if (belowHomeLoaded) {
+        rangeAlertState = 2;  // VOLT SAG
+    } else if (remainingRangeKm <= RANGE_TURN_HOME_KM &&
+               (tripDistanceKm - sessionTripStartKm) > 0.3f) {
+        rangeAlertState = 1;  // TURN HOME
+    } else {
+        rangeAlertState = 0;
+    }
 }

@@ -1,7 +1,10 @@
 #include "esk8os.h"        // shared core: types, enums, cross-module globals
 #include "ui.h"            // public UI entry points used by main.cpp
+#include "UiRenderer.h"
 #include "telemetry/telemetry.h"     // getHistorySample() for the graph pages
-#include "logging/ridelog.h"       // detailed-log status for the LOGS page warning
+#include "logging/sessionlog.h"    // board-session CSV status for the LOGS page warning
+
+#if ESK8OS_FULL_UI
 #include "BebasNeue18.h"   // condensed small labels
 #include "BebasNeue24.h"   // condensed medium — overlays, units
 #include "BebasNeue34.h"   // condensed large — panel values, battery %
@@ -42,6 +45,19 @@ static uint16_t dutyColor(int d) {
     if (d >= 85) return COL_ORANGE;
     if (d >= 70) return COL_YELLOW;
     return COL_WHITE;
+}
+
+static const char* hudFaceLabel() {
+    switch (gHudFace) {
+        case HUD_FACE_BATTERY: return "BATTERY";
+        case HUD_FACE_WATTS:   return "WATTS";
+        case HUD_FACE_SAFETY:  return "SAFETY";
+        default:               return "SPEED";
+    }
+}
+
+static const char* batteryFocusLabel() {
+    return gBatteryFocus == BATTERY_FOCUS_VOLTS ? "VOLTS" : "PCT";
 }
 
 // ==========================================
@@ -203,8 +219,17 @@ void waitForBootReady() {
     }
 
     unsigned long lastDraw = 0;
+    unsigned long connectStart = millis();
     int pulse = 0;
     while (!UART.getVescValues()) {
+        if (millis() - connectStart > 3500UL) {
+            telemetryLive = false;
+            vescLinkOk = false;
+            lastVescOkMs = 0;
+            drawBootProgress(100, "NO VESC - BLE READY", COL_YELLOW);
+            delay(700);
+            return;
+        }
         if (millis() - lastDraw > 350) {
             lastDraw = millis();
             int pct = 65 + (pulse % 26);  // pulse between 65% and 90% while waiting
@@ -266,8 +291,8 @@ static void drawStaticDash() {
     // Avg wh/dist (efficiency) lives on the TRIP page (deduped); DASH range keeps
     // just the estimate + remaining.
     drawCard(4, 198, 162, 54, "RANGE");
-    drawRowLabel("ESTIMATED", 216);
-    drawRowLabel("REMAINING", 232);
+    drawRowLabel("HOME", 216);
+    drawRowLabel("LIMP", 232);
 }
 
 // ── PAGE 1: POWER / ENERGY / SPEED static chrome ──
@@ -315,6 +340,16 @@ static void drawSettingLabel(const char* label, int y, int idx) {
     bool sel = (settingsCursor == idx);
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(TL_DATUM);
+    // EDIT MODE on the selected row: an inverse green highlight bar behind the
+    // label + cursor makes "this value is live now — taps change it" unmistakable.
+    // A plain accent->green text swap reads as too subtle against some themes.
+    if (sel && settingsEditing) {
+        GFX->fillRect(X0 + 2, y - 2, 84, 12, COL_GREEN);
+        GFX->setTextColor(COL_BG);
+        GFX->drawString(">", X0 + 4, y);
+        GFX->drawString(label, X0 + 12, y);
+        return;
+    }
     if (sel) {
         GFX->setTextColor(COL_ACCENT);
         GFX->drawString(">", X0 + 4, y);
@@ -325,7 +360,7 @@ static void drawSettingLabel(const char* label, int y, int idx) {
 
 // Settings is the tallest page; it hides the shared bottom strip + dots (see
 // drawStaticFrame) and spreads its rows across the full reclaimed height with
-// 17px spacing so every row sits inside its card and nothing tucks under the
+// tight row spacing so every row sits inside its card and nothing tucks under the
 // bottom bar. Keep these Y's in sync with updateSettings() below.
 static void drawStaticSettings() {
     drawCard(4, 22, 162, 84, "WHEEL PROFILE");
@@ -334,22 +369,25 @@ static void drawStaticSettings() {
     drawRowLabel("GEARING",  74);
     drawRowLabel("POLES",    91);
 
-    drawCard(4, 110, 162, 84, "DISPLAY");
-    drawSettingLabel("UNITS",      128, SET_UNITS);
-    drawSettingLabel("DEMO",       145, SET_DEMO);
-    drawSettingLabel("BRIGHTNESS", 162, SET_BRIGHT);
-    drawSettingLabel("THEME",      179, SET_THEME);
+    drawCard(4, 110, 162, 94, "DISPLAY");
+    drawSettingLabel("UNITS",     124, SET_UNITS);
+    drawSettingLabel("DEMO",      137, SET_DEMO);
+    drawSettingLabel("BRIGHT",    150, SET_BRIGHT);
+    drawSettingLabel("THEME",     163, SET_THEME);
+    drawSettingLabel("HUD",       176, SET_HUD_FACE);
+    drawSettingLabel("BATT",      188, SET_BATT_FOCUS);
 
-    drawCard(4, 198, 162, 84, "BATTERY");
-    drawSettingLabel("CELLS",   216, SET_CELLS);
-    drawSettingLabel("PACK AH", 233, SET_PACK_AH);
-    drawSettingLabel("STOP/C",  250, SET_STOP_CELL);
-    drawSettingLabel("WH/MI",   267, SET_WHMI);
+    drawCard(4, 208, 162, 74, "BATTERY");
+    drawSettingLabel("CELLS",   224, SET_CELLS);
+    drawSettingLabel("PACK AH", 239, SET_PACK_AH);
+    drawSettingLabel("STOP/C",  254, SET_STOP_CELL);
+    drawSettingLabel("WH/MI",   269, SET_WHMI);
 
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
-    GFX->drawString("L: select  R: change", X0 + UI_W / 2, 288);
+    GFX->drawString(settingsEditing ? "TAP -/+   HOLD = done" : "TAP = move   HOLD = edit",
+                    X0 + UI_W / 2, 288);
 }
 
 // Human-readable last-reset cause for the SYSTEM page.
@@ -389,11 +427,17 @@ static void drawStaticSystem() {
     // the version line clears everything instead of colliding with the battery bar.
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
+    // BLE pair code (MAC tail) — match it against the app's scan list to confirm
+    // you're connecting to THIS board.
+    if (gPairCode[0]) {
+        GFX->setTextColor(COL_ACCENT);
+        GFX->drawString(String("BLE PAIR  #") + gPairCode, X0 + UI_W / 2, 250);
+    }
     GFX->setTextColor(COL_DIM);
-    GFX->drawString(String("reset: ") + resetReasonStr(), X0 + UI_W / 2, 258);
-    GFX->drawString(String("canvas: ") + (gCanvasPsram ? "PSRAM" : "SRAM"), X0 + UI_W / 2, 272);
+    GFX->drawString(String("reset: ") + resetReasonStr(), X0 + UI_W / 2, 264);
+    GFX->drawString(String("canvas: ") + (gCanvasPsram ? "PSRAM" : "SRAM"), X0 + UI_W / 2, 277);
     GFX->setTextColor(COL_LABEL);
-    GFX->drawString(FW_VERSION_FULL, X0 + UI_W / 2, 286);
+    GFX->drawString(FW_VERSION_FULL, X0 + UI_W / 2, 290);
 }
 
 // ==========================================
@@ -423,15 +467,123 @@ static void drawHudSmallMetric(int x, int y, int w, const char* label, String va
     GFX->setFont(&fonts::Font0);
 }
 
-static void updateHud() {
-    static unsigned long lastMs = 0;
-    if (!gRedrawAll && millis() - lastMs < 200) return;
-    lastMs = millis();
+static void drawHudFaceLabel(const char* label) {
+    GFX->setFont(&fonts::Font0);
+    GFX->setTextDatum(TC_DATUM);
+    GFX->setTextColor(COL_DIM);
+    GFX->drawString(label, X0 + UI_W / 2, 24);
+}
 
-    // The HUD owns the whole panel below the status bar (no mid-screen cell strip
-    // or page dots); the shared bottom status bar still lives at y>=298.
-    GFX->fillRect(X0, 18, UI_W, 280, COL_BG);
+static void drawHudHeroMetric(String value, const char* unit, int y, uint16_t color) {
+    GFX->setFont(&BebasNeue80pt7b);
+    int vw = GFX->textWidth(value);
+    GFX->setFont(&BebasNeue24pt7b);
+    int uw = GFX->textWidth(unit);
+    int gap = unit[0] ? 4 : 0;
+    int x = X0 + (UI_W - (vw + gap + uw)) / 2;
 
+    GFX->setTextDatum(TL_DATUM);
+    GFX->setFont(&BebasNeue80pt7b);
+    GFX->setTextColor(COL_BG);
+    GFX->drawString(value, x - 2, y + 2);
+    GFX->drawString(value, x + 2, y + 2);
+    GFX->setTextColor(color);
+    GFX->drawString(value, x, y);
+
+    if (unit[0]) {
+        GFX->setFont(&BebasNeue24pt7b);
+        GFX->setTextColor(COL_BG);
+        GFX->drawString(unit, x + vw + gap - 1, y + 50);
+        GFX->drawString(unit, x + vw + gap + 1, y + 50);
+        GFX->setTextColor(COL_LABEL);
+        GFX->drawString(unit, x + vw + gap, y + 50);
+    }
+    GFX->setFont(&fonts::Font0);
+}
+
+static void drawHudHeroMetric110(String value, const char* unit, int y, uint16_t color) {
+    GFX->setFont(&BebasNeue110pt7b);
+    int vw = GFX->textWidth(value);
+    GFX->setFont(&BebasNeue24pt7b);
+    int uw = GFX->textWidth(unit);
+    int gap = unit[0] ? 4 : 0;
+    int x = X0 + (UI_W - (vw + gap + uw)) / 2;
+
+    GFX->setTextDatum(TL_DATUM);
+    GFX->setFont(&BebasNeue110pt7b);
+    GFX->setTextColor(COL_BG);
+    GFX->drawString(value, x - 2, y + 2);
+    GFX->drawString(value, x + 2, y + 2);
+    GFX->setTextColor(color);
+    GFX->drawString(value, x, y);
+
+    if (unit[0]) {
+        GFX->setFont(&BebasNeue24pt7b);
+        GFX->setTextColor(COL_BG);
+        GFX->drawString(unit, x + vw + gap - 1, y + 74);
+        GFX->drawString(unit, x + vw + gap + 1, y + 74);
+        GFX->setTextColor(COL_WHITE);
+        GFX->drawString(unit, x + vw + gap, y + 74);
+    }
+    GFX->setFont(&fonts::Font0);
+}
+
+static void drawHudGaugeText(String value, int px, int y, uint16_t color) {
+    if (px >= 34) GFX->setFont(&BebasNeue34pt7b);
+    else          GFX->setFont(&BebasNeue24pt7b);
+    GFX->setTextDatum(MC_DATUM);
+    GFX->setTextColor(COL_BG);
+    GFX->drawString(value, X0 + UI_W / 2 - 1, y + 1);
+    GFX->drawString(value, X0 + UI_W / 2 + 1, y + 1);
+    GFX->setTextColor(color);
+    GFX->drawString(value, X0 + UI_W / 2, y);
+    GFX->setFont(&fonts::Font0);
+}
+
+static void drawFullScreenBatteryGauge() {
+    const int gx = X0 + 6;
+    const int gy = 26;
+    const int gw = UI_W - 12;
+    const int gh = 266;
+    uint16_t fillCol = battColor(currentBatteryPercent);
+    int fillH = (int)round((gh - 2) * constrain(currentBatteryPercent, 0, 100) / 100.0f);
+
+    GFX->drawRect(gx - 1, gy - 1, gw + 2, gh + 2, COL_BORDER);
+    GFX->fillRect(gx + 1, gy + 1, gw - 2, gh - 2, COL_BG);
+    if (fillH > 0) {
+        GFX->fillRect(gx + 1, gy + gh - 1 - fillH, gw - 2, fillH, fillCol);
+    }
+
+    GFX->drawRect(gx, gy, gw, gh, COL_BORDER);
+    for (int i = 0; i < BATTERY_CELLS_COUNT; i++) {
+        int sy = gy + (i * gh) / BATTERY_CELLS_COUNT;
+        GFX->drawFastHLine(gx, sy, gw, COL_BORDER);
+    }
+}
+
+static void drawFullScreenWattsGauge(int watts) {
+    const int gx = X0 + 6;
+    const int gy = 26;
+    const int gw = UI_W - 12;
+    const int gh = 266;
+    const int segments = 10;
+    uint16_t fillCol = wattColor(watts);
+    int fillH = (int)round((gh - 2) * constrain(watts, 0, 3000) / 3000.0f);
+
+    GFX->drawRect(gx - 1, gy - 1, gw + 2, gh + 2, COL_BORDER);
+    GFX->fillRect(gx + 1, gy + 1, gw - 2, gh - 2, COL_BG);
+    if (fillH > 0) {
+        GFX->fillRect(gx + 1, gy + gh - 1 - fillH, gw - 2, fillH, fillCol);
+    }
+
+    GFX->drawRect(gx, gy, gw, gh, COL_BORDER);
+    for (int i = 0; i < segments; i++) {
+        int sy = gy + (i * gh) / segments;
+        GFX->drawFastHLine(gx, sy, gw, COL_BORDER);
+    }
+}
+
+static void drawHudSpeedFace() {
     int spdInt = (int)(useMph ? currentSpeedMph : currentSpeedKmh);   // truncate, never round
 
     // Hero speed: native BebasNeue110 (~79px digits) drawn at scale 1.0 — crisp,
@@ -471,6 +623,44 @@ static void updateHud() {
     drawHudSmallMetric(4,  250, 78, "RANGE", String(rangeDisplay, 1) + rangeUnit, COL_WHITE);
     drawHudSmallMetric(88, 250, 78, "TEMP", String((int)hottest) + "C",
                        hottest > MOTOR_TEMP_LIMIT ? COL_RED : COL_GREEN);
+}
+
+static void drawHudBatteryFace() {
+    drawFullScreenBatteryGauge();
+    bool voltsFocus = (gBatteryFocus == BATTERY_FOCUS_VOLTS);
+    if (voltsFocus) {
+        drawHudHeroMetric(String(currentVoltage, 1), "V", 82, COL_WHITE);
+        drawHudGaugeText(String(currentBatteryPercent) + "%", 34, 214, COL_WHITE);
+    } else {
+        drawHudHeroMetric110(String(currentBatteryPercent), "%", 70, COL_WHITE);
+        drawHudGaugeText(String(currentVoltage, 1) + "V", 34, 214, COL_WHITE);
+    }
+}
+
+static void drawHudWattsFace() {
+    int watts = (int)max(0.0f, currentWatts);
+    int peak = (int)max(0.0f, peakWatts);
+    drawFullScreenWattsGauge(watts);
+    drawHudHeroMetric110(String(watts), "W", 70, COL_WHITE);
+    drawHudGaugeText(String(peak) + "W PEAK", 34, 214, COL_WHITE);
+}
+
+static void updateHud() {
+    static unsigned long lastMs = 0;
+    if (!gRedrawAll && millis() - lastMs < 200) return;
+    lastMs = millis();
+
+    // The HUD owns the whole panel below the status bar (no mid-screen cell strip
+    // or page dots); the shared bottom status bar still lives at y>=298.
+    GFX->fillRect(X0, 18, UI_W, 280, COL_BG);
+
+    if (gHudFace == HUD_FACE_BATTERY) {
+        drawHudBatteryFace();
+    } else if (gHudFace == HUD_FACE_WATTS) {
+        drawHudWattsFace();
+    } else {
+        drawHudSpeedFace();
+    }
 
     markDirty(18, 280);
 }
@@ -639,33 +829,33 @@ static void updateGraphs() {
 }
 
 // ==========================================
-// PAGE 7: SAVED RIDE LOGS
+// PAGE 7: SAVED RIDE SUMMARIES
 // Shows the latest compact ride summaries stored in Preferences.
 // ==========================================
 static void drawStaticLogs() {
-    drawCard(4, 22, 162, 240, "RIDE LOGS");
+    drawCard(4, 22, 162, 240, "RIDE SUMMARIES");
 
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
-    GFX->drawString("saved on trip reset", X0 + UI_W / 2, 268);
+    GFX->drawString("CSV sessions via WiFi", X0 + UI_W / 2, 268);
 }
 
-// Detailed-log (LittleFS) status line near the bottom of the LOGS card: a
+// Session-log (LittleFS) status line near the bottom of the LOGS card: a
 // low-space failsafe warning, the off state, or free space. Bottom-aligned so it
 // never collides with the ride summaries above it.
 static void drawLogStatus(int y) {
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
-    if (ridelogFull()) {
+    if (sessionLogFull()) {
         GFX->setTextColor(COL_RED);
         GFX->drawString("! LOG STORAGE FULL", X0 + UI_W / 2, y);
-    } else if (!ridelogEnabled()) {
+    } else if (!sessionLogEnabled()) {
         GFX->setTextColor(COL_YELLOW);
-        GFX->drawString("DETAIL LOGGING OFF", X0 + UI_W / 2, y);
+        GFX->drawString("SESSION LOGGING OFF", X0 + UI_W / 2, y);
     } else {
         GFX->setTextColor(COL_DIM);
-        GFX->drawString("log: " + String(ridelogFreeBytes() / 1024) + " KB free", X0 + UI_W / 2, y);
+        GFX->drawString("session: " + String(sessionLogFreeBytes() / 1024) + " KB free", X0 + UI_W / 2, y);
     }
     GFX->setTextDatum(TL_DATUM);   // restore for any following list draws
 }
@@ -923,11 +1113,11 @@ static void updateTemps() {
 // UPDATE: Range Card
 // ==========================================
 static void updateRange() {
-    static float lastEst = -999, lastRem = -999;
+    static float lastHome = -999, lastLimp = -999;
     static bool lastUseMph = !useMph;
 
-    if (abs(estimatedRangeKm - lastEst) > 0.1 ||
-        abs(remainingRangeKm - lastRem) > 0.1 ||
+    if (abs(remainingRangeKm - lastHome) > 0.1 ||
+        abs(remainingLimpRangeKm - lastLimp) > 0.1 ||
         useMph != lastUseMph || gRedrawAll) {
 
         // Clear the values column for both rows
@@ -940,18 +1130,17 @@ static void updateRange() {
         String du = useMph ? "mi" : "km";
         float cv = useMph ? 0.621371 : 1.0;        // km -> mi for distances
 
-        // REMAINING also shows an estimated time-left (range / current avg speed),
-        // which riders tend to read more intuitively than distance.
-        String remStr = String(remainingRangeKm * cv, 1) + " " + du;
+        String homeStr = String(remainingRangeKm * cv, 1) + " " + du;
         if (avgSpeedKmh > 1.0) {
             int mins = (int)(remainingRangeKm / avgSpeedKmh * 60.0);
-            if (mins > 0 && mins < 1000) remStr += " " + String(mins) + "m";
+            if (mins > 0 && mins < 1000) homeStr += " " + String(mins) + "m";
         }
+        String limpStr = String(remainingLimpRangeKm * cv, 1) + " " + du;
 
-        GFX->drawString(String(estimatedRangeKm * cv, 1) + " " + du, X0 + 158, 216);
-        GFX->drawString(remStr,                                      X0 + 158, 232);
+        GFX->drawString(homeStr, X0 + 158, 216);
+        GFX->drawString(limpStr, X0 + 158, 232);
 
-        lastEst = estimatedRangeKm; lastRem = remainingRangeKm;
+        lastHome = remainingRangeKm; lastLimp = remainingLimpRangeKm;
         lastUseMph = useMph;
         markDirty(216, 28);
     }
@@ -1070,7 +1259,7 @@ static void updateTrip() {
     drawVal(56,  String(tripDistanceKm * cv, 1) + " " + du, COL_WHITE);
     drawVal(72,  String((int)(avgSpeedKmh * cv)) + " " + su, COL_WHITE);
     drawVal(88,  String((int)(maxSpeedKmh * cv)) + " " + su, COL_WHITE);
-    drawVal(104, String((int)avgWh) + " wh/" + du, COL_WHITE);
+    drawVal(104, String(avgWh, 1) + " wh/" + du, COL_WHITE);
     drawVal(150, String(totalDistanceKm * cv, 1) + " " + du, COL_WHITE);   // odo: 1 decimal (distance)
     markDirty(22, 172);
 }
@@ -1083,22 +1272,24 @@ static void updateSettings() {
     if (!gRedrawAll && millis() - lastMs < 400) return;
     lastMs = millis();
 
-    // Y's mirror drawStaticSettings() above (17px spacing, 4/4/4 cards).
+    // Y's mirror drawStaticSettings() above.
     WheelProfile &w = wheelProfiles[activeWheelProfile];
     drawVal(40,  String(w.name), COL_WHITE);
     drawVal(57,  String((int)round(w.wheelDiameterM * 1000)) + "mm", COL_WHITE);
     drawVal(74,  String(w.motorPulley) + ":" + String(w.wheelPulley), COL_WHITE);
     drawVal(91,  String((int)w.polePairs), COL_WHITE);
 
-    drawVal(128, String(useMph ? "MPH" : "KM/H"), COL_WHITE);
-    drawVal(145, String(gDemoMode ? "ON" : "OFF"), gDemoMode ? COL_YELLOW : COL_WHITE);
-    drawVal(162, String(gBrightnessPct) + "%", COL_WHITE);
-    drawVal(179, String(THEMES[gThemeIdx].name), COL_ACCENT);
+    drawVal(124, String(useMph ? "MPH" : "KM/H"), COL_WHITE);
+    drawVal(137, String(gDemoMode ? "ON" : "OFF"), gDemoMode ? COL_YELLOW : COL_WHITE);
+    drawVal(150, String(gBrightnessPct) + "%", COL_WHITE);
+    drawVal(163, String(THEMES[gThemeIdx].name), COL_ACCENT);
+    drawVal(176, String(hudFaceLabel()), COL_WHITE);
+    drawVal(188, String(batteryFocusLabel()), COL_WHITE);
 
-    drawVal(216, String(BATTERY_CELLS_COUNT) + "S", COL_WHITE);
-    drawVal(233, String(BATTERY_EFFECTIVE_CAPACITY_AH, 1) + "Ah", COL_WHITE);
-    drawVal(250, String(BATTERY_STOP_CELL_V, 2) + "V", COL_WHITE);
-    drawVal(267, String((int)round(RANGE_DEFAULT_WH_PER_MILE)), COL_WHITE);
+    drawVal(224, String(BATTERY_CELLS_COUNT) + "S", COL_WHITE);
+    drawVal(239, String(BATTERY_EFFECTIVE_CAPACITY_AH, 1) + "Ah", COL_WHITE);
+    drawVal(254, String(BATTERY_STOP_CELL_V, 2) + "V", COL_WHITE);
+    drawVal(269, String(RANGE_DEFAULT_WH_PER_MILE, 1), COL_WHITE);
 
     markDirty(22, 274);
 }
@@ -1135,7 +1326,7 @@ static void updateSystem() {
 
     drawVal(224, String(gFps) + " FPS | " + String(gLastPushUs / 1000) + "ms",
             gFps >= 30 ? COL_GREEN : COL_WHITE);
-    markDirty(22, 210);
+    markDirty(22, 216);   // cover through the last value row (y=224) now that the SYSTEM page no longer full-blits
 }
 
 void updateCurrentPageContent() {
@@ -1176,13 +1367,17 @@ static const char* faultName(int f) {
     }
 }
 
-// Highest-priority alert: 1 fault, 2 link-lost, 3 over-temp, 4 crit battery.
+// Highest-priority alert: 1 fault, 2 link-lost, 3 over-temp, 4 crit battery,
+// 7 limp floor, 8 loaded sag, 9 turn-home reserve.
 int alertState() {
     if (systemMode == MODE_BRIDGE_CONFIRM) return 5;
     if (systemMode == MODE_TRIP_RESET_CONFIRM) return 6;
     if (vescFault != 0) return 1;
     if (!vescLinkOk) return 2;
     if (currentMotorTemp > MOTOR_TEMP_LIMIT || currentEscTemp > ESC_TEMP_LIMIT) return 3;
+    if (rangeAlertState == 3) return 7;
+    if (rangeAlertState == 2) return 8;
+    if (rangeAlertState == 1) return 9;
     if (currentBatteryPercent < BATT_CRIT_PCT) return 4;
     return 0;
 }
@@ -1198,7 +1393,7 @@ void updateOverlays(int state) {
         return;
     }
 
-    bool crit = (state == 4);
+    bool crit = (state == 4 || state == 7);
     int by = crit ? 108 : 118;
     int bh = crit ? 92 : 64;
 
@@ -1216,6 +1411,18 @@ void updateOverlays(int state) {
     } else if (state == 6) {
         line1 = "RESET TRIP?";
         line2 = "L=YES    R=NO";
+    } else if (state == 7) {
+        line1 = "LIMP HOME";
+        line2 = "VOLTAGE LOW";
+        line3 = String(loadedCellVoltage, 2) + " V/CELL";
+    } else if (state == 8) {
+        line1 = "VOLT SAG";
+        line2 = "EASE THROTTLE";
+        line3 = String(currentVoltage, 1) + " V   " + String(currentAmps, 1) + " A";
+    } else if (state == 9) {
+        line1 = "TURN HOME";
+        line2 = String(useMph ? remainingRangeKm * 0.621371f : remainingRangeKm, 1) +
+                (useMph ? " MI LEFT" : " KM LEFT");
     } else {
         line1 = "LOW BATTERY";
         line2 = "STOP & CHARGE";
@@ -1225,8 +1432,10 @@ void updateOverlays(int state) {
     String textKey = line1 + "|" + line2 + "|" + line3;
     if (state != lastState || textKey != lastText || gRedrawAll) {
         bool confirmModal = (state == 5 || state == 6);
-        uint16_t bgColor = confirmModal ? COL_ACCENT : COL_RED;
+        uint16_t bgColor = confirmModal ? COL_ACCENT :
+                           (state == 8 ? COL_ORANGE : (state == 9 ? COL_YELLOW : COL_RED));
         uint16_t fgColor = confirmModal ? COL_BG : COL_WHITE;
+        if (state == 9) fgColor = COL_BG;
         GFX->fillRect(X0 + 8, by, UI_W - 16, bh, bgColor);
         GFX->setTextDatum(TC_DATUM);
         GFX->setTextColor(fgColor);
@@ -1256,3 +1465,52 @@ void updateOverlays(int state) {
     }
     lastState = state;
 }
+
+#else
+
+void waitForBootReady() {
+    Serial.println("[ui] display mode: " 
+#if ESK8OS_DISPLAY_OLED
+                   "ssd1306-oled"
+#else
+                   "headless"
+#endif
+    );
+}
+
+void showToast(const char* msg) {
+    if (!msg) return;
+    strlcpy(gToastMsg, msg, 20);
+    gToastUntil = millis() + 1200;
+    Serial.print("[toast] ");
+    Serial.println(msg);
+}
+
+void drawStaticFrame() {
+    gRedrawAll = true;
+}
+
+void updateClock() {}
+void updateBatteryCells() {}
+void updateBottomBar() {}
+
+int alertState() {
+    if (vescFault != 0) return 1;
+    if (!vescLinkOk) return 2;
+    if (currentMotorTemp > MOTOR_TEMP_LIMIT || currentEscTemp > ESC_TEMP_LIMIT) return 3;
+    if (rangeAlertState == 3) return 7;
+    if (rangeAlertState == 2) return 8;
+    if (rangeAlertState == 1) return 9;
+    if (currentBatteryPercent < BATT_CRIT_PCT) return 4;
+    return 0;
+}
+
+void updateOverlays(int state) {
+    (void)state;
+}
+
+void updateCurrentPageContent() {
+    Esk8OS::UiRenderer::renderMiniFrame(alertState());
+}
+
+#endif

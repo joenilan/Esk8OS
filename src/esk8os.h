@@ -12,7 +12,25 @@
 // ============================================================================
 #include <Arduino.h>
 #include <Preferences.h>
+
+#ifndef ESK8OS_DISPLAY_TFT
+#define ESK8OS_DISPLAY_TFT 0
+#endif
+#ifndef ESK8OS_DISPLAY_OLED
+#define ESK8OS_DISPLAY_OLED 0
+#endif
+#ifndef ESK8OS_HEADLESS
+#define ESK8OS_HEADLESS 0
+#endif
+#if defined(WOKWI_SIMULATION)
+#undef ESK8OS_DISPLAY_TFT
+#define ESK8OS_DISPLAY_TFT 1
+#endif
+#define ESK8OS_FULL_UI ESK8OS_DISPLAY_TFT
+
+#if ESK8OS_DISPLAY_TFT
 #include "LGFX_Config.h"   // LovyanGFX device/sprite types + fonts
+#endif
 #ifndef WOKWI_SIMULATION
 #include <VescUart.h>
 #endif
@@ -32,6 +50,18 @@ enum SystemMode {
     MODE_BRIDGE_CONFIRM,
     MODE_TRIP_RESET_CONFIRM   // hold-L trip reset waits here for L=yes / R=no
 };
+enum HudFace {
+    HUD_FACE_SPEED = 0,
+    HUD_FACE_BATTERY,
+    HUD_FACE_WATTS,
+    HUD_FACE_SAFETY,
+    HUD_FACE_COUNT
+};
+enum BatteryFocus {
+    BATTERY_FOCUS_PERCENT = 0,
+    BATTERY_FOCUS_VOLTS,
+    BATTERY_FOCUS_COUNT
+};
 extern int        currentPage;
 extern SystemMode systemMode;
 
@@ -44,7 +74,9 @@ extern bool gDemoMode;
 #endif
 
 // ---- display target + NZXT-CAM palette --------------------------------------
+#if ESK8OS_DISPLAY_TFT
 extern lgfx::LovyanGFX* GFX;       // active draw target (canvas, or panel)
+#endif
 extern uint16_t COL_BG, COL_BORDER, COL_DIM, COL_LABEL, COL_WHITE,
                 COL_GREEN, COL_RED, COL_ACCENT, COL_YELLOW, COL_ORANGE;
 
@@ -60,6 +92,12 @@ extern int        gOtaProgressPct;
 // ---- branding (defined in main.cpp; external linkage const char*) ------------
 extern const char* PRODUCT_NAME;
 extern char RIDER_NAME[16];   // mutable, NVS-persisted (settable from the app)
+extern char gDeviceName[20];  // BLE advertised name (settable; tells nearby boards apart)
+extern char gPairCode[5];     // BLE MAC tail in hex (e.g. "EEFF") — shown on board + app to confirm pairing
+// Vehicle kind — drives the icon the companion app shows for this board.
+enum VehicleType { VT_SKATE = 0, VT_EBIKE, VT_ESCOOTER, VT_EMOPED, VT_CAR, VT_OTHER, VT_COUNT };
+extern int gVehicleType;
+const char* vehicleTypeName(int t);
 
 // ---- shared compile-time UI constants ---------------------------------------
 // Battery warning thresholds over the configured usable pack window (display
@@ -74,8 +112,9 @@ const float ESC_TEMP_LIMIT   = 80.0;
 const char  DEG = (char)0xF8;
 
 // ---- settings page rows (cursor index -> SET_*; used by ui + checkButtons) ---
-enum { SET_PROFILE, SET_UNITS, SET_DEMO, SET_BRIGHT, SET_THEME, SET_CELLS,
-       SET_PACK_AH, SET_STOP_CELL, SET_WHMI, SETTINGS_COUNT };
+enum { SET_PROFILE, SET_UNITS, SET_DEMO, SET_BRIGHT, SET_THEME, SET_HUD_FACE,
+       SET_BATT_FOCUS, SET_CELLS, SET_PACK_AH, SET_STOP_CELL, SET_WHMI,
+       SETTINGS_COUNT };
 
 // ---- color themes (palette table; applied to the COL_* globals in main) ------
 struct RGB { uint8_t r, g, b; };
@@ -91,7 +130,12 @@ void applyTheme(int idx);         // recompute COL_* from THEMES[idx] (defined i
 // ---- UI runtime state (defined in main.cpp) ---------------------------------
 extern bool useMph;
 extern int  gBrightnessPct;
+extern bool gStatusRgbEnabled;
+extern bool gOledInvert;
+extern int  gHudFace;
+extern int  gBatteryFocus;
 extern int  settingsCursor;
+extern bool settingsEditing;
 extern int  motorHealthPct, batteryHealthPct, escHealthPct;
 extern unsigned long gToastUntil;
 extern char gToastMsg[];
@@ -104,6 +148,7 @@ extern bool          gCanvasPsram;   // true if the frame buffer landed in PSRAM
 
 // ---- shared helpers (defined in main.cpp) -----------------------------------
 void pushCanvasFull();
+void pushCanvas();          // blit only the accumulated dirty regions (partial)
 void markDirty(int y, int h);
 void drawStaticFrame();
 void saveOdo();
@@ -111,13 +156,22 @@ void saveOdo();
 // ---- configuration constants shared with the telemetry module ---------------
 const float BATTERY_NOMINAL_CELL_V = 3.7;
 const float BATTERY_FULL_CELL_V    = 4.20;
-const float RANGE_LEARN_MIN_DISTANCE_KM = 1.6;
+const float RANGE_LEARN_MIN_DISTANCE_KM = 3.2;   // about 2 mi; enough distance for stable Wh/mi
 const float RANGE_LEARN_MIN_WH = 20.0;
+const float RANGE_TURN_HOME_KM = 3.2;     // about 2 mi; conservative reserve prompt
+const float RANGE_LIMP_HOME_KM = 1.6;     // about 1 mi; emergency reserve prompt
 const unsigned long VESC_LINK_TIMEOUT_MS = 3000;
+// A VESC whose logic is alive over UART but whose power stage is off (battery
+// disconnected, or its 5V back-fed from the board on the bench) reports garbage
+// telemetry and a spurious DRV fault. No real esk8 pack reads anywhere near this
+// low, so a read below this means "VESC not actually powered" — ignore it so the
+// link goes LINK LOST instead of surfacing a meaningless FAULT.
+const float VESC_MIN_OPERATIONAL_V = 6.0f;
 
 // ---- runtime battery/range config (mutable; defined in main, edited in Settings)
 extern float BATTERY_EFFECTIVE_CAPACITY_AH;
 extern float BATTERY_STOP_CELL_V;
+extern float BATTERY_HOME_CELL_V;
 extern float RANGE_DEFAULT_WH_PER_MILE;
 extern int   BATTERY_CELLS_COUNT;
 extern float BATTERY_MAX_V;
@@ -147,9 +201,14 @@ extern float currentMotorTemp, currentBatteryTemp, currentEscTemp;
 extern float currentAmps, currentMotorAmps, currentDuty, currentWatts, peakWatts;
 extern float currentWattHours, currentWhRegen;
 extern float maxSpeedKmh, avgSpeedKmh;
-extern float maxWattsSession, minVoltageSession, maxMotorAmpsSession;
+extern float maxWattsSession, minVoltageSession, minVoltageUnderLoadSession;
+extern float maxMotorAmpsSession, maxBatteryAmpsSession;
+extern float loadedCellVoltage;
+extern uint32_t homeVoltageSecondsSession, limpVoltageSecondsSession;
+extern int rangeAlertState, sagEventsSession;
 extern int   vescFault;
 extern bool  vescLinkOk;
+extern bool  telemetryLive;
 // remote input + diagnostics (see VescUartTransport / telemetry)
 extern float gPpmDecoded;     // -1..1 throttle (brake..accel)
 extern float gPpmPulseMs;     // last PPM pulse length, ms
@@ -165,11 +224,11 @@ extern float sessionTripStartKm, tripDistanceKm, totalDistanceKm;
 extern uint32_t tripMovingSec;       // trip moving time (seconds rolling); persisted, board-authoritative
 extern uint32_t sessionMovingStartSec; // tripMovingSec baseline at session start (for the moving AVG)
 extern unsigned long lastMovedMs;    // millis() of last rolling sample; drives the parked auto-reset
-extern float estimatedRangeKm, remainingRangeKm, avgWhPerKm;
+extern float estimatedRangeKm, remainingRangeKm, estimatedLimpRangeKm, remainingLimpRangeKm, avgWhPerKm;
 extern float rideStartVescWh, rideStartVescWhRegen;
 extern bool  rideEnergyBaselineSet, rangeEstimateReady;
 
-// ---- telemetry history + ride logs (shared structs; data defined in main) ----
+// ---- telemetry history + compact ride summaries (shared structs) ------------
 struct TelemetrySample {
     float speedKmh, volts, watts, batteryAmps, motorAmps, duty, motorTemp, escTemp;
     int   batteryPct;

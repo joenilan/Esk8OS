@@ -2,7 +2,7 @@
 #include <Arduino.h>
 
 // ============================================================================
-// USB-serial command console — ride-log management + diagnostics over the
+// USB-serial command console — session-log management + diagnostics over the
 // serial monitor, and the general "terminal" for poking the board without
 // building dedicated screen UI for each action. The command backend here is
 // reused by the WiFi HTTP export later.

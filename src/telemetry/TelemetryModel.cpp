@@ -18,11 +18,19 @@ float maxSpeedKmh = 0.0;
 float avgSpeedKmh = 0.0;        
 float maxWattsSession = 0.0;            
 float minVoltageSession = 42.0; 
-float maxMotorAmpsSession = 0.0;        
+float minVoltageUnderLoadSession = 42.0;
+float maxMotorAmpsSession = 0.0;
+float maxBatteryAmpsSession = 0.0;
+float loadedCellVoltage = 4.2;
+uint32_t homeVoltageSecondsSession = 0;
+uint32_t limpVoltageSecondsSession = 0;
+int rangeAlertState = 0;
+int sagEventsSession = 0;
 
 int vescFault = 0;
 unsigned long lastVescOkMs = 0;
-bool vescLinkOk = true;
+bool vescLinkOk = false;
+bool telemetryLive = false;
 
 // --- remote input + diagnostics (from the VESC; see VescUartTransport) ---
 float gPpmDecoded = 0;          // -1..1 throttle (brake..accel)
@@ -44,6 +52,8 @@ uint32_t sessionMovingStartSec = 0;  // tripMovingSec at session start; AVG uses
 unsigned long lastMovedMs = 0;       // millis() at the last rolling sample (0 = not yet moved this boot)
 float estimatedRangeKm = 0.0;
 float remainingRangeKm = 0.0;
+float estimatedLimpRangeKm = 0.0;
+float remainingLimpRangeKm = 0.0;
 float avgWhPerKm = 0.0;
 float rideStartVescWh = 0.0;
 float rideStartVescWhRegen = 0.0;

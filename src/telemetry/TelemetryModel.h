@@ -32,10 +32,18 @@ extern float maxSpeedKmh;
 extern float avgSpeedKmh;
 extern float maxWattsSession;
 extern float minVoltageSession;
+extern float minVoltageUnderLoadSession;
 extern float maxMotorAmpsSession;
+extern float maxBatteryAmpsSession;
+extern float loadedCellVoltage;
+extern uint32_t homeVoltageSecondsSession;
+extern uint32_t limpVoltageSecondsSession;
+extern int rangeAlertState;
+extern int sagEventsSession;
 
 extern int   vescFault;
 extern bool  vescLinkOk;
+extern bool  telemetryLive;
 extern unsigned long lastVescOkMs;
 
 // remote input + diagnostics (see VescUartTransport)
@@ -58,6 +66,8 @@ extern uint32_t sessionMovingStartSec; // tripMovingSec baseline at session star
 extern unsigned long lastMovedMs;    // millis() of last rolling sample; drives the parked auto-reset
 extern float estimatedRangeKm;
 extern float remainingRangeKm;
+extern float estimatedLimpRangeKm;
+extern float remainingLimpRangeKm;
 extern float avgWhPerKm;
 extern float rideStartVescWh;
 extern float rideStartVescWhRegen;

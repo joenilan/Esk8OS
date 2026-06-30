@@ -4,6 +4,20 @@
 // Variables previously in main.cpp
 const char* PRODUCT_NAME = "ESK8OS";
 char RIDER_NAME[16]      = "JOE";   // mutable: settable from the app, persisted to NVS
+char gDeviceName[20]     = "ESK8-BLE";   // BLE advertised name (settable; tells nearby boards apart)
+char gPairCode[5]        = "";           // BLE MAC tail hex; filled once at BLE init (companionBleBegin)
+int  gVehicleType        = VT_SKATE;     // VehicleType; drives the app's vehicle icon
+
+const char* vehicleTypeName(int t) {
+    switch (t) {
+        case VT_SKATE:    return "SKATE";
+        case VT_EBIKE:    return "E-BIKE";
+        case VT_ESCOOTER: return "SCOOTER";
+        case VT_EMOPED:   return "MOPED";
+        case VT_CAR:      return "CAR";
+        default:          return "OTHER";
+    }
+}
 const bool  USE_MPH_DEFAULT = true;
 const int   STORAGE_SCHEMA_VERSION = 2;
 const bool  DEMO_MODE_DEFAULT = true;
@@ -13,6 +27,7 @@ bool gDemoMode = DEMO_MODE_DEFAULT;
 const int BATTERY_PARALLEL_COUNT = 6;
 const int BATTERY_CELL_CAPACITY_MAH = 2800;
 float BATTERY_EFFECTIVE_CAPACITY_AH = 16.5;
+float BATTERY_HOME_CELL_V = 3.40;
 float BATTERY_STOP_CELL_V = 3.30;
 float RANGE_DEFAULT_WH_PER_MILE = 22.0;
 
@@ -37,7 +52,11 @@ float profilePolePairs()    { return wheelProfiles[activeWheelProfile].polePairs
 
 bool useMph = USE_MPH_DEFAULT;
 int gBrightnessPct = 100;
+bool gStatusRgbEnabled = true;
+bool gOledInvert = false;
 int gThemeIdx = 0;
+int gHudFace = HUD_FACE_SPEED;
+int gBatteryFocus = BATTERY_FOCUS_PERCENT;
 const int BRIGHTNESS_STEPS[] = { 25, 50, 75, 100 };
 const int BRIGHTNESS_STEP_COUNT = sizeof(BRIGHTNESS_STEPS) / sizeof(BRIGHTNESS_STEPS[0]);
 
@@ -79,17 +98,26 @@ void begin() {
     gDemoMode      = prefs.getBool("demo", DEMO_MODE_DEFAULT);
     useMph         = prefs.getBool("mph", USE_MPH_DEFAULT);
     { String r = prefs.getString("rider", "JOE"); strlcpy(RIDER_NAME, r.c_str(), sizeof(RIDER_NAME)); }
+    { String n = prefs.getString("devname", "ESK8-BLE"); strlcpy(gDeviceName, n.c_str(), sizeof(gDeviceName)); }
+    gVehicleType = constrain(prefs.getInt("vtype", VT_SKATE), 0, VT_COUNT - 1);
     gBrightnessPct = constrain(prefs.getInt("bright", 100), 10, 100);
+    gStatusRgbEnabled = prefs.getBool("rgb", true);
+    gOledInvert = prefs.getBool("oledInv", false);
     gThemeIdx      = constrain(prefs.getInt("theme", 0), 0, THEME_COUNT - 1);
+    gHudFace       = constrain(prefs.getInt("hudFace", HUD_FACE_SPEED), 0, HUD_FACE_COUNT - 1);
+    gBatteryFocus  = constrain(prefs.getInt("batFocus", BATTERY_FOCUS_PERCENT), 0, BATTERY_FOCUS_COUNT - 1);
 
     BATTERY_CELLS_COUNT = constrain(prefs.getInt("cells", BATTERY_CELLS_COUNT), 6, 14);
     BATTERY_EFFECTIVE_CAPACITY_AH = constrain(prefFloat("packAh", BATTERY_EFFECTIVE_CAPACITY_AH), 4.0f, 40.0f);
     BATTERY_STOP_CELL_V = constrain(prefFloat("stopCell", BATTERY_STOP_CELL_V), 3.00f, 3.60f);
+    BATTERY_HOME_CELL_V = constrain(prefFloat("homeCell", BATTERY_HOME_CELL_V), BATTERY_STOP_CELL_V, BATTERY_FULL_CELL_V);
     RANGE_DEFAULT_WH_PER_MILE = constrain(prefFloat("whmi", RANGE_DEFAULT_WH_PER_MILE), 14.0f, 40.0f);
     
     recalcBatteryBounds();
     currentVoltage = BATTERY_MAX_V;
     minVoltageSession = BATTERY_MAX_V;
+    minVoltageUnderLoadSession = BATTERY_MAX_V;
+    loadedCellVoltage = BATTERY_FULL_CELL_V;
 }
 
 } // namespace Settings

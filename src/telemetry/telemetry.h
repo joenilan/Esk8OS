@@ -3,7 +3,7 @@
 
 // Telemetry data layer: reads the VESC (or the demo simulation), integrates trip/
 // energy, maintains the range estimate, the RAM history buffer, and persisted
-// odometer + ride logs. Operates on the shared globals declared in esk8os.h.
+// odometer + compact ride summaries. Operates on shared globals in esk8os.h.
 
 void pollVescData();          // one poll cycle (real VESC or simulation)
 void updateRangeEstimate();   // recompute estimated/remaining range + avg Wh
