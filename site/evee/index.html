@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EVEE — open telemetry for personal electric vehicles</title>
+<meta name="description" content="EVEE is an open telemetry platform for personal electric vehicles. ESK8OS is its electric-skateboard edition: a VESC dashboard, ride logger, and companion app.">
+<meta name="theme-color" content="#0f1216">
+<meta property="og:type" content="website">
+<meta property="og:title" content="EVEE — open telemetry for personal electric vehicles">
+<meta property="og:description" content="On-vehicle dashboards, honest battery math, ride logging, and OTA updates. ESK8OS is the electric-skateboard edition.">
+<meta property="og:url" content="https://evee.zombie.digital/">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1216'/%3E%3Cpath d='M10 7h13v4h-8v3h7v4h-7v3h8v4H10z' fill='%23b950d7'/%3E%3Crect x='6' y='7' width='2.5' height='18' rx='1' fill='%234fd8eb'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="evee.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <a class="brand" href="#top" aria-label="EVEE — back to top">EVEE<span class="brand-tick"></span></a>
+    <nav class="topnav">
+      <a href="#esk8os">ESK8OS</a>
+      <a href="#firmware">Firmware</a>
+      <a href="#app">App</a>
+      <a href="#ota">Updates</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <!-- ── Hero: thesis + the instrument itself ─────────────────────────── -->
+  <section class="hero wrap">
+    <div class="hero-copy">
+      <p class="eyebrow">Open PEV telemetry</p>
+      <h1>Your vehicle already knows everything.<br>EVEE puts it in front of you.</h1>
+      <p class="lede">
+        EVEE is an open telemetry platform for personal electric vehicles —
+        boards, bikes, scooters, anything with an ESC and a battery. On-vehicle
+        dashboards, honest battery math, ride logging, and a phone app that
+        tracks every trip. Built in the open, updated over the air.
+      </p>
+      <div class="hero-cta">
+        <a class="btn primary" href="#firmware">Get the firmware</a>
+        <a class="btn" href="#esk8os">What is ESK8OS?</a>
+      </div>
+      <p class="hero-note mono" id="release-line">firmware — · app — · self-hosted</p>
+    </div>
+
+    <!-- The signature: the board's actual rendered HUD in a device frame -->
+    <div class="hero-device">
+      <div class="device">
+        <img class="device-screen" src="img/preview_hud_speed.png" width="510" height="960"
+             alt="ESK8OS speed HUD: 27 MPH, battery cells at 78%, watts, volts, range and temperature readouts">
+        <div class="device-btn b1"></div>
+        <div class="device-btn b2"></div>
+      </div>
+      <p class="device-caption mono">actual firmware output — LilyGo T-Display-S3</p>
+    </div>
+  </section>
+
+  <!-- ── Real screens strip ───────────────────────────────────────────── -->
+  <section class="wrap section screens-strip" aria-label="More ESK8OS screens">
+    <div class="screens">
+      <figure><img src="img/preview_hud_battery_pct.png" alt="Battery percent HUD face" loading="lazy"><figcaption class="mono">battery</figcaption></figure>
+      <figure><img src="img/preview_hud_battery_volts.png" alt="Voltage HUD face" loading="lazy"><figcaption class="mono">volts</figcaption></figure>
+      <figure><img src="img/preview_hud_watts.png" alt="Power HUD face" loading="lazy"><figcaption class="mono">watts</figcaption></figure>
+      <figure><img src="img/preview_settings.png" alt="On-board settings page" loading="lazy"><figcaption class="mono">settings</figcaption></figure>
+    </div>
+  </section>
+
+  <!-- ── Editions ─────────────────────────────────────────────────────── -->
+  <section id="esk8os" class="wrap section">
+    <p class="eyebrow">The platform</p>
+    <h2>One platform. Editions per vehicle.</h2>
+    <div class="cards">
+      <article class="card live">
+        <header class="card-head"><h3>ESK8OS</h3><span class="tag mono">available</span></header>
+        <p>The electric-skateboard edition. Reads dual VESCs over UART/CAN,
+        drives a color dashboard, learns your real Wh/mi, and warns you before
+        the battery lies to you. Bridge mode lets VESC Tool configure the ESC
+        wirelessly through the display.</p>
+        <ul class="spec mono">
+          <li>LilyGo T-Display-S3 · ESP32-S3 OLED · headless</li>
+          <li>Li-ion SoC curve + sag compensation</li>
+          <li>Session CSV logs · WiFi export · OTA</li>
+        </ul>
+      </article>
+      <article class="card">
+        <header class="card-head"><h3>E-bike / scooter</h3><span class="tag mono">planned</span></header>
+        <p>The same telemetry core, tuned for bar-mounted displays and
+        bigger packs. The companion protocol already carries a vehicle type —
+        the scan list shows the right icon today.</p>
+      </article>
+      <article class="card">
+        <header class="card-head"><h3>Companion app</h3><span class="tag mono">available</span></header>
+        <p>Android app with live telemetry, GPS ride recording, trip history
+        with map playback, graphs, GPX export, and full board settings —
+        connected over BLE, working in your pocket with the screen off.</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- ── Firmware downloads (live from the release contract) ──────────── -->
+  <section id="firmware" class="wrap section">
+    <p class="eyebrow">Firmware</p>
+    <h2>Latest release</h2>
+    <div class="release-card">
+      <div class="release-meta">
+        <span class="release-ver mono" id="fw-version">—</span>
+        <span class="release-date mono" id="fw-date"></span>
+      </div>
+      <p id="fw-notes" class="release-notes">Loading release feed…</p>
+      <div class="dl-list" id="fw-files"></div>
+      <p class="fine mono">sha256 sums published beside every artifact ·
+        <a href="https://apps.zombie.digital/downloads/esk8os-firmware/latest.json">release feed</a></p>
+    </div>
+  </section>
+
+  <!-- ── App ──────────────────────────────────────────────────────────── -->
+  <section id="app" class="wrap section">
+    <p class="eyebrow">Companion app</p>
+    <h2>The ride, recorded.</h2>
+    <p class="lede narrow">
+      Start a trip and the app keeps recording — screen off, phone pocketed —
+      under a proper foreground service. GPS route, board speed vs GPS speed,
+      battery and power at every point, elevation, and a map playback of the
+      whole ride. Android first; the APK will be published here.
+    </p>
+    <div class="hero-cta">
+      <a class="btn" id="apk-btn" href="#" aria-disabled="true">Android APK — coming soon</a>
+    </div>
+  </section>
+
+  <!-- ── OTA story ────────────────────────────────────────────────────── -->
+  <section id="ota" class="wrap section">
+    <p class="eyebrow">Updates</p>
+    <h2>Over-the-air, no cables in the rain.</h2>
+    <ol class="ota-steps">
+      <li><b>Check.</b> The app reads this site's release feed and compares it to your board's version.</li>
+      <li><b>Fetch.</b> It downloads the signed build for your hardware, checksum verified.</li>
+      <li><b>Flash.</b> The board raises its own WiFi, takes the image over HTTP, verifies, and reboots. Your odometer and settings stay put.</li>
+    </ol>
+  </section>
+</main>
+
+<footer class="wrap footer">
+  <a class="brand small" href="#top">EVEE</a>
+  <span class="mono">an open project by <a href="https://apps.zombie.digital">zombie.digital</a> · <span id="year"></span></span>
+</footer>
+
+<script src="evee.js" defer></script>
+</body>
+</html>
