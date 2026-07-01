@@ -15,7 +15,7 @@ __pycache__/
 *.pyc
 
 # Generated design previews (regenerate with `python preview.py`)
-preview*.png
+/preview*.png
 
 # Auto-generated firmware version header (stamped from version.txt + git state)
 src/version.h
