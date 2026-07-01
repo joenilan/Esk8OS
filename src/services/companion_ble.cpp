@@ -132,10 +132,14 @@ static void buildSettingsJson(char* out, size_t cap) {
     serializeJson(doc, out, cap);
 }
 
+// Rebuild the advert (name + vtype/pair-code) and restart it so a live change
+// from the app shows up in the scan list without a reboot. Defined below.
+static void companionRefreshAdvertising();
+
 static void applySettings(const char* json) {
     JsonDocument doc;
     if (deserializeJson(doc, json)) return;       // parse error -> ignore
-    bool repaint = false, themeChanged = false;
+    bool repaint = false, themeChanged = false, advDirty = false;
 
     if (doc["mph"].is<bool>()) {
         useMph = doc["mph"];
@@ -236,11 +240,13 @@ static void applySettings(const char* json) {
     }
     if (doc["name"].is<const char*>()) {
         strlcpy(gDeviceName, doc["name"], sizeof(gDeviceName));
-        prefs.putString("devname", gDeviceName);   // new BLE name applies on next reboot
+        prefs.putString("devname", gDeviceName);
+        advDirty = true;                            // refresh the live advert (scan-list name)
     }
     if (doc["vtype"].is<int>()) {
         gVehicleType = constrain((int)doc["vtype"], 0, VT_COUNT - 1);
         prefs.putInt("vtype", gVehicleType);
+        advDirty = true;                            // refresh manuf data (scan-list icon)
     }
     if (doc["hud"].is<const char*>()) {
         const char* h = doc["hud"];
@@ -283,6 +289,7 @@ static void applySettings(const char* json) {
         repaint = true;
     }
     if (repaint) { drawStaticFrame(); gRedrawAll = true; }
+    if (advDirty) companionRefreshAdvertising();   // name/vtype changed -> update scan list live
 }
 
 class SettingsCallbacks : public NimBLECharacteristicCallbacks {
@@ -351,6 +358,24 @@ static void computePairCode() {
     snprintf(gPairCode, sizeof(gPairCode), "%02X%02X", g_macHi, g_macLo);
 }
 
+// (Re)build the advert and restart it. Manufacturer data (company 0xFFFF) carries
+// [vtype, macHi, macLo] so the app shows the right icon + pair code before
+// connecting; the scan response carries the device name + NUS UUID. Called once
+// at boot and again whenever the app changes the name or vtype, so the scan list
+// reflects the change live instead of only after a reboot.
+static void companionRefreshAdvertising() {
+    NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+    NimBLEDevice::setDeviceName(gDeviceName);       // GAP name seen once connected
+    uint8_t mfg[] = { 0xFF, 0xFF, (uint8_t)gVehicleType, g_macHi, g_macLo };
+    adv->setManufacturerData(std::string((const char*)mfg, sizeof(mfg)));
+    NimBLEAdvertisementData scanResp;
+    scanResp.setName(gDeviceName);
+    scanResp.setCompleteServices(NimBLEUUID(bleBridgeServiceUuid()));
+    adv->setScanResponseData(scanResp);
+    adv->stop();                                    // no-op if not yet advertising
+    adv->start();
+}
+
 void companionBleBegin() {
     NimBLEDevice::init(gDeviceName);
     NimBLEDevice::setMTU(517);              // request a large MTU; JSON exceeds the 20-byte default
@@ -381,17 +406,10 @@ void companionBleBegin() {
     // time). The scan response carries the name + NUS UUID so VESC Tool still
     // discovers it without overflowing the 31-byte adv packet.
     adv->addServiceUUID(SVC_COMPANION);
-    // Manufacturer data (company 0xFFFF = local/testing): [vtype, macHi, macLo].
-    // Lets the app show the right vehicle icon + the pair code BEFORE connecting.
-    // Fits the 31-byte adv packet alongside the 128-bit service UUID (~28 used).
-    uint8_t mfg[] = { 0xFF, 0xFF, (uint8_t)gVehicleType, g_macHi, g_macLo };
-    adv->setManufacturerData(std::string((const char*)mfg, sizeof(mfg)));
-    NimBLEAdvertisementData scanResp;
-    scanResp.setName(gDeviceName);
-    scanResp.setCompleteServices(NimBLEUUID(bleBridgeServiceUuid()));
-    adv->setScanResponseData(scanResp);
     adv->setScanResponse(true);
-    adv->start();
+    // Manufacturer data + scan-response name + start advertising. Shared with the
+    // settings handler so a live name/vtype change updates the scan list.
+    companionRefreshAdvertising();
 }
 
 void companionBleTick() {
