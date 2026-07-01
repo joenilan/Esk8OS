@@ -333,7 +333,8 @@ void pollVescData() {
 
     // Session extremes for the Power page SESSION card
     if (currentWatts > maxWattsSession)              maxWattsSession = currentWatts;
-    if (currentVoltage < minVoltageSession)          minVoltageSession = currentVoltage;
+    // Gate on telemetryLive so the 0 boot-seed (no VESC yet) can't latch min-volt to 0.
+    if (telemetryLive && currentVoltage < minVoltageSession) minVoltageSession = currentVoltage;
     if (fabs(currentAmps) > maxBatteryAmpsSession)   maxBatteryAmpsSession = fabs(currentAmps);
     if (fabs(currentMotorAmps) > maxMotorAmpsSession) maxMotorAmpsSession = fabs(currentMotorAmps);
 
@@ -420,7 +421,12 @@ void pollVescData() {
     if (sessionMovingSec > 0) avgSpeedKmh = (tripDistanceKm - sessionTripStartKm) / (sessionMovingSec / 3600.0f);
     updateRangeEstimate();
 
-    if (belowLimpLoaded || remainingLimpRangeKm <= RANGE_LIMP_HOME_KM) {
+    // Range alerts need real SoC. With no live telemetry the battery reads its 0
+    // boot-seed, which would falsely latch LIMP-HOME (0 remaining range) and, e.g.,
+    // block the screensaver from ever engaging. No data -> no range alert.
+    if (!telemetryLive) {
+        rangeAlertState = 0;
+    } else if (belowLimpLoaded || remainingLimpRangeKm <= RANGE_LIMP_HOME_KM) {
         rangeAlertState = 3;  // LIMP HOME
     } else if (belowHomeLoaded) {
         rangeAlertState = 2;  // VOLT SAG

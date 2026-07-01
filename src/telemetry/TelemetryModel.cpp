@@ -2,8 +2,8 @@
 
 float currentSpeedKmh = 0.0;
 float currentSpeedMph = 0.0;
-float currentVoltage = 42.0; // Overwritten at boot by BATTERY_MAX_V
-int   currentBatteryPercent = 100;
+float currentVoltage = 0.0; // 0 until a real VESC read — no fake full-charge before telemetry
+int   currentBatteryPercent = 0;
 float currentMotorTemp = 0.0;
 float currentBatteryTemp = 0.0;
 float currentEscTemp = 0.0;

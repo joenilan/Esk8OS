@@ -432,6 +432,23 @@ void dashboardLoop() {
         tftIdleSinceMs = 0;
     }
     bool tftScreensaverActive = tftIdleSinceMs != 0 && now - tftIdleSinceMs > 30000UL;
+
+    // Dim the panel while the screensaver is up (like the OLED path); on wake, go
+    // back to the user's brightness — or the low-power level if that's active.
+    static bool tftSaverWasActive = false;
+    if (tftScreensaverActive != tftSaverWasActive) {
+        if (tftScreensaverActive) {
+            int dim = (int)(gBrightnessPct * 255 / 100) / 4;   // ~25% of the user's brightness
+            if (dim < 8) dim = 8;
+            if (lowPowerActive && dim > 25) dim = 25;          // don't out-bright the low-power dim
+            Esk8OS::Board::setBacklight((uint8_t)dim);
+        } else if (lowPowerActive) {
+            Esk8OS::Board::setBacklight(25);
+        } else {
+            applyBrightness();                                 // restore the user's setting
+        }
+        tftSaverWasActive = tftScreensaverActive;
+    }
 #endif
 
     // OTA via the standalone web service: show progress over the dashboard the

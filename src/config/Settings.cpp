@@ -114,8 +114,8 @@ void begin() {
     RANGE_DEFAULT_WH_PER_MILE = constrain(prefFloat("whmi", RANGE_DEFAULT_WH_PER_MILE), 14.0f, 40.0f);
     
     recalcBatteryBounds();
-    currentVoltage = BATTERY_MAX_V;
-    minVoltageSession = BATTERY_MAX_V;
+    currentVoltage = 0;                       // show 0 (no reading) until the VESC is polled, not a fake 42V
+    minVoltageSession = BATTERY_MAX_V;         // min-tracking must start high (see telemetry.cpp:336)
     minVoltageUnderLoadSession = BATTERY_MAX_V;
     loadedCellVoltage = BATTERY_FULL_CELL_V;
 }

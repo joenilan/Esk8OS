@@ -52,6 +52,14 @@ void setup() {
     #endif
 
     waitForBootReady();
+    // If the boot search actually found the VESC (lastVescOkMs set), pull that real
+    // reading into the display now — the background poll task already has it — so the
+    // first HUD frame shows true telemetry instead of the 0 placeholder (no flash /
+    // no VESC-LINK-LOST blip). Skipped entirely when no VESC, so the bench adds no delay.
+    if (lastVescOkMs != 0) {
+        unsigned long t0 = millis();
+        while (!telemetryLive && millis() - t0 < 250) { pollVescData(); delay(5); }
+    }
     Esk8OS::UiRenderer::showBootSplash(92, "TELEMETRY");
     drawStaticFrame();
     updateRangeEstimate();
