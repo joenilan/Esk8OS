@@ -21,7 +21,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 a { color: var(--cyan); text-decoration: none; }
-a:hover { text-decoration: underline; }
+/* underlines only for inline prose links — never nav, brand, buttons, or cards */
+p a:hover, .fine a:hover, .footer a:hover { text-decoration: underline; }
 :focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 
 .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
@@ -52,9 +53,9 @@ a.brand, a.brand:hover, a.brand:focus { text-decoration: none; color: var(--text
 .brand-tick { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 8px var(--cyan); transition: transform 0.2s; }
 .brand:hover .brand-tick { transform: scale(1.4); }
 .brand.small { font-size: 1.2rem; }
-.topnav a { color: var(--dim); margin-left: 22px; font-size: 0.9rem; padding-bottom: 4px; border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s; }
+.topnav a { color: var(--dim); margin-left: 22px; font-size: 0.9rem; transition: color 0.15s; }
 .topnav a:hover { color: var(--text); text-decoration: none; }
-.topnav a.active { color: var(--text); border-bottom-color: var(--violet); }
+.topnav a.active { color: var(--violet); }
 
 /* hero */
 .hero { display: grid; grid-template-columns: 1.35fr 1fr; gap: 48px; align-items: center; padding-top: 72px; padding-bottom: 48px; }
@@ -89,10 +90,10 @@ a.brand, a.brand:hover, a.brand:focus { text-decoration: none; color: var(--text
 
 /* real-screens strip */
 .screens-strip { padding-top: 0; border-top: 0; }
-.screens { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+.screens { display: flex; justify-content: center; gap: 22px; flex-wrap: wrap; }
 .screens figure { margin: 0; text-align: center; }
 .screens img {
-  width: 100%; border-radius: 8px; border: 1px solid var(--line); display: block;
+  width: 148px; height: auto; border-radius: 8px; border: 1px solid var(--line); display: block;
   transition: border-color 0.2s, transform 0.2s;
 }
 .screens figure:hover img { border-color: var(--dim); transform: translateY(-2px); }
@@ -151,7 +152,8 @@ a.brand, a.brand:hover, a.brand:focus { text-decoration: none; color: var(--text
   .hero { grid-template-columns: 1fr; padding-top: 48px; }
   .hero-device { order: -1; }
   .cards { grid-template-columns: 1fr; }
-  .screens { grid-template-columns: repeat(2, 1fr); }
+  .screens { gap: 14px; }
+  .screens img { width: 120px; }
   .topnav a { margin-left: 14px; }
 }
 /* scroll reveal — sections ease in once; JS adds .in, no-JS stays visible */
