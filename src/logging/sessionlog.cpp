@@ -95,6 +95,13 @@ void sessionLogEnd() {
 
 void sessionLogStart() {
     if (!g_mounted || !g_enabled || g_active) return;
+    // Storage previously found full: don't re-walk /sessions + spam serial on
+    // every tick — retry at most every 30s (files may have been deleted via web).
+    static unsigned long lastFullRetryMs = 0;
+    if (g_full) {
+        if (millis() - lastFullRetryMs < 30000UL) return;
+        lastFullRetryMs = millis();
+    }
     pruneIfNeeded();
     if (sessionLogFreeBytes() < MIN_FREE_BYTES) {
         Serial.println("[sessionlog] storage low - logging STOPPED");
@@ -189,6 +196,7 @@ void sessionLogDeleteAll() {
         }
         dir.close();
     }
+    g_full = false;   // space was just reclaimed — let sessionLogStart retry immediately
     sessionLogStart();
 }
 

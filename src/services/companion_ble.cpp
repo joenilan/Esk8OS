@@ -14,6 +14,7 @@
 #include "ui/UiRenderer.h"
 #include "app/App.h"
 #include "telemetry/telemetry.h"
+#include "logging/sessionlog.h"
 #include "board/BoardLilyGoTDisplayS3.h"
 
 // Custom companion service + characteristics (docs/companion_api_spec.md §2).
@@ -321,7 +322,7 @@ static void dispatchCommand(const char* cmd) {
     else if (!strcmp(cmd, "BRIDGE_TOGGLE"))     { if (systemMode == MODE_VESC_BRIDGE) exitBridgeMode(); else enterBridgeMode(); }
     else if (!strcmp(cmd, "WIFI_EXPORT_START")) { if (!webServiceActive()) { webServiceStart(); showToast("WIFI EXPORT"); } }  // standalone AP + http (logs/OTA); telemetry stays live
     else if (!strcmp(cmd, "WIFI_EXPORT_STOP"))  { if (webServiceActive())  { webServiceStop();  showToast("WIFI OFF"); } }
-    else if (!strcmp(cmd, "REBOOT"))          { delay(100); ESP.restart(); }
+    else if (!strcmp(cmd, "REBOOT"))          { saveOdo(); sessionLogEnd(); delay(100); ESP.restart(); }
 }
 
 class CommandCallbacks : public NimBLECharacteristicCallbacks {
@@ -468,8 +469,10 @@ void companionBleTick() {
     doc["mpw"]   = (int)maxWattsSession;         // session max W ("max ride")
     // Energy / session
     doc["whr"]   = r1(currentWhRegen);           // regen Wh
-    doc["minv"]  = r1(minVoltageSession);        // session min volt
-    doc["minvl"] = r1(minVoltageUnderLoadSession); // lowest loaded/discharge V
+    // Min-volt trackers start seeded at BATTERY_MAX_V; until telemetry has been
+    // live they hold that seed, which would show as a bogus "session min".
+    doc["minv"]  = live ? r1(minVoltageSession) : 0.0f;        // session min volt
+    doc["minvl"] = live ? r1(minVoltageUnderLoadSession) : 0.0f; // lowest loaded/discharge V
     doc["mba"]   = r1(maxBatteryAmpsSession);    // max session battery A
     doc["cellv"] = live ? roundf(loadedCellVoltage * 100.0f) / 100.0f : 0.0f;
     doc["rwarn"] = live ? rangeAlertState : 0;   // 0 ok, 1 turn-home, 2 sag, 3 limp
@@ -499,6 +502,14 @@ void companionBleTick() {
 
     char buf[768];
     size_t n = serializeJson(doc, buf, sizeof(buf));
+    // A notify is silently truncated past ATT_MTU-3 (514 at our requested MTU of
+    // 517), which the app then drops as unparseable JSON — telemetry would just
+    // go dark. Warn while there's still headroom so we trim the payload first.
+    static bool sizeWarned = false;
+    if (n > 480 && !sizeWarned) {
+        sizeWarned = true;
+        Serial.printf("[ble] telemetry JSON %u bytes — nearing the 514-byte notify limit\n", (unsigned)n);
+    }
     g_tel->setValue((uint8_t*)buf, n);
     g_tel->notify();
 }

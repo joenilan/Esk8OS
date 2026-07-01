@@ -4,6 +4,7 @@
 #include <LittleFS.h>
 #include <Update.h>
 #include "esk8os.h"
+#include "logging/sessionlog.h"
 
 // Instantiate OTA state globals
 bool gOtaInProgress = false;
@@ -77,9 +78,15 @@ static void handleUpdateComplete() {
     server.sendHeader("Connection", "close");
     server.send(200, "text/plain", Update.hasError() ? "Update Failed" : "Update Success! Rebooting...");
     if (!Update.hasError()) {
+        saveOdo();          // don't lose up to 60s of odometer/trip across the reboot
+        sessionLogEnd();
         delay(1000);
         ESP.restart();
     }
+    // Failed update: drop the UPDATING overlay so the dashboard (and the bridge
+    // idle-timeout / web-service AP timeout) resume normally.
+    gOtaInProgress = false;
+    gRedrawAll = true;
 }
 
 static void handleUpdateUpload() {
@@ -94,16 +101,19 @@ static void handleUpdateUpload() {
     } else if (upload.status == UPLOAD_FILE_WRITE) {
         if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
             Update.printError(Serial);
-        } else {
-            gOtaProgressPct = (int)((upload.totalSize * 100) / server.client().available());
-            // rough estimation if Content-Length isn't fully reliable
-            // We just let the UI draw UPDATING.
+        } else if (server.header("Content-Length").length() > 0) {
+            // Approximate: multipart overhead makes this read slightly low, which
+            // is fine — it never divides by zero and never exceeds 100.
+            long total = server.header("Content-Length").toInt();
+            if (total > 0) gOtaProgressPct = (int)min(100UL, (upload.totalSize * 100UL) / (unsigned long)total);
         }
     } else if (upload.status == UPLOAD_FILE_END) {
         if (Update.end(true)) {
             gOtaProgressPct = 100;
         } else {
             Update.printError(Serial);
+            gOtaInProgress = false;   // failed flash: clear the overlay state
+            gRedrawAll = true;
         }
     } else if (upload.status == UPLOAD_FILE_ABORTED) {
         Update.end();
@@ -114,6 +124,10 @@ static void handleUpdateUpload() {
 
 void webExportStart() {
     if (g_running) return;
+    // Needed for the OTA progress percent: WebServer only exposes headers that
+    // were explicitly collected before begin().
+    static const char* hdrs[] = { "Content-Length" };
+    server.collectHeaders(hdrs, 1);
     server.on("/", HTTP_GET, handleIndex);
     server.on("/dl", HTTP_GET, handleDownload);
     server.on("/update", HTTP_POST, handleUpdateComplete, handleUpdateUpload);

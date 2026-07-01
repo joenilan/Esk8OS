@@ -22,3 +22,9 @@ src/version.h
 
 # Manual local backups
 *.bak
+
+# secrets + release staging + scratch
+.env.raspi
+release/
+cfg.json
+cfg_put.json
