@@ -81,8 +81,8 @@ a.brand, a.brand:hover, a.brand:focus { text-decoration: none; color: var(--text
   box-shadow: 0 24px 60px rgba(0,0,0,0.5), 0 0 80px rgba(185,80,215,0.07);
 }
 .device-screen {
-  display: block; width: 100%; aspect-ratio: 170 / 320; border-radius: 8px;
-  background: var(--hud-bg); border: 1px solid #000; object-fit: cover;
+  display: block; width: 100%; height: auto; border-radius: 8px;
+  background: var(--hud-bg); border: 1px solid #000;
 }
 .device-btn { position: absolute; right: -3px; width: 3px; height: 26px; background: #2a323d; border-radius: 2px; }
 .device-btn.b1 { top: 90px; } .device-btn.b2 { top: 130px; }
