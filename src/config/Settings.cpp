@@ -7,6 +7,8 @@ char RIDER_NAME[16]      = "";   // empty = no rider line; settable from the app
 char gDeviceName[20]     = "ESK8-BLE";   // BLE advertised name (settable; tells nearby boards apart)
 char gPairCode[5]        = "";           // BLE MAC tail hex; filled once at BLE init (companionBleBegin)
 int  gVehicleType        = VT_SKATE;     // VehicleType; drives the app's vehicle icon
+char gVehicleLabel[20]   = "";           // custom vehicle name (VT_CUSTOM)
+int  gVehicleCustomIcon  = 0;            // app icon index chosen for VT_CUSTOM
 
 const char* vehicleTypeName(int t) {
     switch (t) {
@@ -15,7 +17,10 @@ const char* vehicleTypeName(int t) {
         case VT_ESCOOTER: return "SCOOTER";
         case VT_EMOPED:   return "MOPED";
         case VT_CAR:      return "CAR";
-        default:          return "OTHER";
+        case VT_EUC:      return "EUC";
+        case VT_ONEWHEEL: return "ONEWHEEL";
+        case VT_CUSTOM:   return gVehicleLabel[0] ? gVehicleLabel : "CUSTOM";
+        default:          return "CUSTOM";
     }
 }
 const bool  USE_MPH_DEFAULT = true;
@@ -100,6 +105,8 @@ void begin() {
     { String r = prefs.getString("rider", ""); strlcpy(RIDER_NAME, r.c_str(), sizeof(RIDER_NAME)); }
     { String n = prefs.getString("devname", "ESK8-BLE"); strlcpy(gDeviceName, n.c_str(), sizeof(gDeviceName)); }
     gVehicleType = constrain(prefs.getInt("vtype", VT_SKATE), 0, VT_COUNT - 1);
+    { String vl = prefs.getString("vlabel", ""); strlcpy(gVehicleLabel, vl.c_str(), sizeof(gVehicleLabel)); }
+    gVehicleCustomIcon = constrain(prefs.getInt("vicon", 0), 0, 15);
     gBrightnessPct = constrain(prefs.getInt("bright", 100), 10, 100);
     gStatusRgbEnabled = prefs.getBool("rgb", true);
     gOledInvert = prefs.getBool("oledInv", false);

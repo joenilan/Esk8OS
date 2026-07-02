@@ -302,6 +302,7 @@ void setVescPollPaused(bool paused) {
 }
 
 bool peekVescData(RawVescData* outData) {
+#ifndef WOKWI_SIMULATION
     if (gDataMutex == NULL) return false;
     bool any = false;
     if (xSemaphoreTake(gDataMutex, 0) == pdTRUE) {
@@ -310,6 +311,10 @@ bool peekVescData(RawVescData* outData) {
         xSemaphoreGive(gDataMutex);
     }
     return any;
+#else
+    (void)outData;
+    return false;   // no real transport in the Wokwi build
+#endif
 }
 
 void getVescLinkDebug(VescLinkDebug* out) {

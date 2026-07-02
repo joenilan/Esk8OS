@@ -143,6 +143,8 @@ static void buildSettingsJson(char* out, size_t cap) {
     doc["bfocus"]   = batteryFocusName(gBatteryFocus);
     doc["name"]     = gDeviceName;
     doc["vtype"]    = gVehicleType;
+    doc["vlabel"]   = gVehicleLabel;        // custom vehicle name (used when vtype = VT_CUSTOM)
+    doc["vicon"]    = gVehicleCustomIcon;    // app icon index for the custom vehicle
     // Read-only: the board's log/OTA AP credentials, so the app can show the
     // rider the per-device password (it's no longer a fixed public string).
     doc["wifiSsid"] = wifiBridgeSsid();
@@ -273,6 +275,15 @@ static void applySettings(const char* json) {
         gVehicleType = constrain((int)doc["vtype"], 0, VT_COUNT - 1);
         prefs.putInt("vtype", gVehicleType);
         advDirty = true;                            // refresh manuf data (scan-list icon)
+    }
+    if (doc["vlabel"].is<const char*>()) {          // custom vehicle name
+        strlcpy(gVehicleLabel, doc["vlabel"], sizeof(gVehicleLabel));
+        prefs.putString("vlabel", gVehicleLabel);
+        repaint = true;
+    }
+    if (doc["vicon"].is<int>()) {                   // custom vehicle icon index
+        gVehicleCustomIcon = constrain((int)doc["vicon"], 0, 15);
+        prefs.putInt("vicon", gVehicleCustomIcon);
     }
     if (doc["hud"].is<const char*>()) {
         const char* h = doc["hud"];

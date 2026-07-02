@@ -481,7 +481,7 @@ static void cmdVtype(const char* arg) {
         gVehicleType = constrain((int)a.toInt(), 0, VT_COUNT - 1);
         prefs.putInt("vtype", gVehicleType);
     }
-    consoleOut().printf("vtype %d (%s)  [0=skate 1=ebike 2=scooter 3=moped 4=car 5=other]\n",
+    consoleOut().printf("vtype %d (%s)  [0=skate 1=ebike 2=scooter 3=moped 4=car 5=custom 6=euc 7=onewheel]\n",
                         gVehicleType, vehicleTypeName(gVehicleType));
 }
 

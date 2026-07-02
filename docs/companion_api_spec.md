@@ -162,6 +162,10 @@ When the Android app connects, it reads this characteristic to get the board's c
 | `rider` | string | ✅ | rider name shown in the header (≤15 chars), persisted to NVS |
 | `hud` | string | ✅ | board HUD face: `speed`, `battery`, or `watts` |
 | `bfocus` | string | ✅ | battery HUD hero value: `pct` or `volts` |
+| `name` | string | ✅ | BLE advertised board name (scan list); reboot to re-advertise |
+| `vtype` | int | ✅ | vehicle kind — see the table below; drives the app's vehicle icon/label |
+| `vlabel` | string | ✅ | fw 0.9.5+: rider-typed name for a **custom** vehicle (`vtype` 5), ≤18 chars |
+| `vicon` | int | ✅ | fw 0.9.5+: app icon index for a custom vehicle, 0–11 |
 | `calR` | int | ❌ | fw 0.9.5+: learned pack internal resistance, mΩ |
 | `calA` | float | ❌ | fw 0.9.5+: typical riding battery draw, A |
 | `calWhmi` | float | ❌ | fw 0.9.5+: board-learned consumption Wh/mi; `0` until learned |
@@ -171,6 +175,12 @@ When the Android app connects, it reads this characteristic to get the board's c
 > own range model on-device (consumption, pack IR, deliverable energy). The app
 > must not auto-push a learned `whmi` over it — explicit user-initiated writes
 > remain fine.
+
+**`vtype` values** (a wire contract — new kinds are appended, never reordered):
+`0` skateboard · `1` e-bike · `2` scooter · `3` moped · `4` car · `5` custom ·
+`6` EUC (electric unicycle) · `7` onewheel. For `5` (custom), the rider sets
+`vlabel` (name) and `vicon` (icon). EUC and onewheel have no Material glyph, so
+the app renders them as vector icons; pre-0.9.5 apps fall back to a generic icon.
 
 ### Write
 The Android app writes a JSON object to this characteristic to change settings. The ESP32 parses it, saves to non-volatile storage (NVS), and immediately repaints the display. *You can send partial updates.*

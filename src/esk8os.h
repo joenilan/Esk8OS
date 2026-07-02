@@ -92,9 +92,21 @@ extern const char* PRODUCT_NAME;
 extern char RIDER_NAME[16];   // mutable, NVS-persisted (settable from the app)
 extern char gDeviceName[20];  // BLE advertised name (settable; tells nearby boards apart)
 extern char gPairCode[5];     // BLE MAC tail in hex (e.g. "EEFF") — shown on board + app to confirm pairing
-// Vehicle kind — drives the icon the companion app shows for this board.
-enum VehicleType { VT_SKATE = 0, VT_EBIKE, VT_ESCOOTER, VT_EMOPED, VT_CAR, VT_OTHER, VT_COUNT };
-extern int gVehicleType;
+// Vehicle kind — drives the icon + label the companion app shows for this
+// board. Values are a wire contract (BLE `vtype`), so NEW types are APPENDED
+// (never reordered) to keep already-configured boards reading correctly.
+// VT_CUSTOM is the "anything else" type: the rider gives it a free-text name
+// (gVehicleLabel) and picks an icon (gVehicleCustomIcon) in the app.
+enum VehicleType {
+    VT_SKATE = 0, VT_EBIKE, VT_ESCOOTER, VT_EMOPED, VT_CAR,
+    VT_CUSTOM,          // was VT_OTHER (5) — same slot, now rider-nameable
+    VT_EUC,             // 6: electric unicycle
+    VT_ONEWHEEL,        // 7: one-wheel board
+    VT_COUNT
+};
+extern int  gVehicleType;
+extern char gVehicleLabel[20];   // custom vehicle name (VT_CUSTOM); NVS "vlabel"
+extern int  gVehicleCustomIcon;  // app icon index for VT_CUSTOM; NVS "vicon"
 const char* vehicleTypeName(int t);
 
 // ---- shared compile-time UI constants ---------------------------------------
