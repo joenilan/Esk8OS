@@ -263,6 +263,12 @@ class State:
     # SESSION card
     max_watts = 1320
     min_voltage = 36.4
+    # SAFETY HUD face (v0.9.4)
+    cell_v = 3.86        # loaded cell voltage (hero metric)
+    range_alert = 0      # 0 ok, 1 turn home, 2 volt sag, 3 limp home
+    sag_events = 0
+    limp_km = 4.2        # remaining limp-home range
+    low_volt_secs = 0    # seconds spent under the home-voltage floor
     # settings — wheel profile + display + battery (cursor 0..7 -> SET_* enum)
     wheel_name = "8IN PNEU"
     wheel_diam_mm = 203
@@ -364,8 +370,12 @@ def draw(p, s):
 def draw_topbar(p, s):
     p.set_datum(TL); p.set_color(DIM)
     p.draw_string(s.product, 4, 4)
-    p.set_datum(TC); p.set_color(DIM)
-    p.draw_string("RIDER: " + s.rider, 85, 4)
+    # firmware v0.9.4: the center slot flags demo mode; otherwise the rider name
+    p.set_datum(TC)
+    if s.demo:
+        p.set_color(YELLOW); p.draw_string("DEMO MODE", 85, 4)
+    else:
+        p.set_color(DIM); p.draw_string("RIDER: " + s.rider, 85, 4)
     p.set_datum(TR); p.set_color(WHITE)
     p.draw_string(s.clock, 166, 4)
     p.hline(0, 16, W, BORDER)
@@ -759,10 +769,10 @@ def draw_splash(p, s, progress=0.7):
     p.set_datum(MC); p.set_color(DIM)
     p.draw_string("RIDE DASHBOARD", W // 2, 188)
 
-    # controls legend
+    # controls legend (v0.9.4 wording)
     p.set_datum(MC); p.set_color(DIM)
-    p.draw_string("L: page     R: units", W // 2, 196)
-    p.draw_string("hold L: reset trip", W // 2, 210)
+    p.draw_string("tap L / R: pages", W // 2, 196)
+    p.draw_string("hold L: units  R: HUD", W // 2, 210)
     p.draw_string("hold L+R: bridge mode", W // 2, 224)
 
     # version (top-right)
@@ -916,6 +926,37 @@ def _draw_hud_watts(p, s):
     _hud_gauge_text(p, "%dW PEAK" % watts, 214, WHITE)
 
 
+def _draw_hud_safety(p, s):
+    """SAFETY face (v0.9.4 drawHudSafetyFace): loaded cell voltage as the hero,
+    alert state spelled out, session floor stats in the SPEED-face tile grid."""
+    _hud_face_label(p, "SAFETY - CELL V")
+
+    hero_col = (RED if s.range_alert >= 3 else ORANGE if s.range_alert == 2
+                else YELLOW if s.range_alert == 1 else GREEN)
+    state_txt = ("LIMP HOME" if s.range_alert >= 3 else "VOLT SAG" if s.range_alert == 2
+                 else "TURN HOME" if s.range_alert == 1 else "PACK OK")
+    _hud_hero_metric(p, "%.2f" % s.cell_v, "V", 44, hero_col)
+
+    p.set_datum(MC); p.set_color(hero_col)
+    p.draw_string(state_txt, W // 2, 128, px=24)
+
+    p.hline(8, 146, W - 16, BORDER)   # separator
+
+    _cells(p, s, 150, 18)
+    p.set_datum(MC); p.set_color(WHITE)
+    p.draw_string("%d%%" % s.batt_pct, W // 2, 184, px=34)
+
+    limp = s.limp_km * dist_cv(s)
+    limp_unit = dist_unit(s)
+    _hud_tile(p, 4, 202, 78, "MIN V", "%.1f" % s.min_voltage,
+              RED if 0 < s.min_voltage <= s.batt_min_v else WHITE)
+    _hud_tile(p, 88, 202, 78, "SAG", str(s.sag_events),
+              ORANGE if s.sag_events > 0 else GREEN)
+    _hud_tile(p, 4, 250, 78, "LIMP", "%.1f%s" % (limp, limp_unit), WHITE)
+    _hud_tile(p, 88, 250, 78, "LOW", "%ds" % s.low_volt_secs,
+              ORANGE if s.low_volt_secs > 0 else GREEN)
+
+
 def draw_hud(p, s):
     """PAGE 0: Big HUD. One physical page with selectable speed/battery/watts faces."""
     p.fill_screen(BG)
@@ -925,6 +966,8 @@ def draw_hud(p, s):
         _draw_hud_battery(p, s)
     elif s.hud_face == "watts":
         _draw_hud_watts(p, s)
+    elif s.hud_face == "safety":
+        _draw_hud_safety(p, s)
     else:
         _draw_hud_speed(p, s)
 
@@ -962,9 +1005,11 @@ def main():
     ap.add_argument("--toast", default="", help="overlay a confirmation banner, e.g. RECHARGED")
     ap.add_argument("--progress", type=float, default=0.7)
     ap.add_argument("--batt", type=int, default=State.batt_pct, help="battery %% for color test")
+    ap.add_argument("--no-demo", action="store_true",
+                    help="render as if demo mode is off (rider name in the topbar)")
     ap.add_argument("--watts", type=int, default=State.watts)
     ap.add_argument("--hud-face", default=State.hud_face,
-                    choices=["speed", "battery", "watts"], help="HUD face")
+                    choices=["speed", "battery", "watts", "safety"], help="HUD face")
     ap.add_argument("--battery-focus", default=State.battery_focus,
                     choices=["pct", "volts"], help="battery HUD hero value")
     ap.add_argument("--page", type=int, default=0,
@@ -989,6 +1034,8 @@ def main():
     s.battery_focus = a.battery_focus
     s.page = 0 if a.hud else a.page
     s.fault = a.fault
+    if a.no_demo:
+        s.demo = False
     s.log_state = a.logstate
     # keep test voltage consistent with the battery level (3.2-4.2 V/cell)
     s.voltage = round(32.0 + (42.0 - 32.0) * a.batt / 100.0, 1)

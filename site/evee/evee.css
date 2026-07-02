@@ -1,15 +1,20 @@
-/* EVEE — telemetry-instrument landing. Palette: asphalt, violet, signal cyan. */
+/* EVEE — the firmware's design system, on the web.
+   Every color token mirrors src/ui/Theme.cpp; evee.js swaps the whole set
+   when a firmware theme is picked. Defaults below = CAM (shipping look). */
 :root {
-  --bg: #0f1216;
-  --panel: #151a21;
-  --line: #232b36;
-  --text: #e8eaee;
-  --dim: #8a93a0;
-  --violet: #b950d7;
-  --cyan: #4fd8eb;
-  --hud-bg: #06080b;
-  --max: 1080px;
+  --bg: #0e0e10;        /* page: device bg, one stop darker so screens glow */
+  --panel: #1a1a1a;     /* device COL_BG — cards are literally screen-colored */
+  --line: #3a3a3c;      /* device COL_BORDER, dimmed a step for hairlines */
+  --text: #ffffff;      /* COL_WHITE */
+  --label: #aaaaaa;     /* COL_LABEL */
+  --dim: #8a8f96;       /* COL_DIM */
+  --accent: #b950d7;    /* COL_ACCENT */
+  --green: #00c864;     /* COL_GREEN — live/ok status only, like on-device */
+  --yellow: #ffcd00;    /* COL_YELLOW */
+  --max: 1120px;
+  color-scheme: dark;
 }
+:root.light { color-scheme: light; }
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
@@ -17,145 +22,234 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 16px/1.65 "Inter", system-ui, sans-serif;
+  font: 16px/1.65 "IBM Plex Sans", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
 }
-a { color: var(--cyan); text-decoration: none; }
-/* underlines only for inline prose links — never nav, brand, buttons, or cards */
+::selection { background: var(--accent); color: var(--bg); }
+a { color: var(--accent); text-decoration: none; }
+/* underlines only for inline prose links — never nav, brand, buttons, cards */
 p a:hover, .fine a:hover, .footer a:hover { text-decoration: underline; }
-:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
 .mono { font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; }
 
-/* type */
-h1, h2, h3, .brand, .hud-big, .hud-unit, .release-ver {
-  font-family: "Bebas Neue", "Inter", sans-serif;
+/* type — Bebas is the device's numeral face; it carries the display voice */
+h1, h2, h3, .brand, .release-ver {
+  font-family: "Bebas Neue", sans-serif;
   font-weight: 400;
   letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
-h1 { font-size: clamp(2.4rem, 5.4vw, 4rem); line-height: 1.02; margin: 0.4rem 0 1rem; }
-h2 { font-size: clamp(1.8rem, 3.4vw, 2.6rem); margin: 0.2rem 0 1.2rem; }
+h1 { font-size: clamp(3.2rem, 7.2vw, 5.4rem); line-height: 0.96; margin: 0.4rem 0 1.1rem; }
+h2 { font-size: clamp(2rem, 4vw, 3rem); line-height: 1.02; margin: 0.2rem 0 1.2rem; }
 h3 { font-size: 1.5rem; margin: 0; }
 .eyebrow {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.75rem; letter-spacing: 0.22em; text-transform: uppercase;
-  color: var(--violet); margin: 0;
+  color: var(--accent); margin: 0;
 }
-.lede { color: var(--dim); max-width: 34rem; }
+.lede { color: var(--dim); max-width: 36rem; }
+.lede b { color: var(--label); font-weight: 500; }
 .lede.narrow { max-width: 40rem; }
 
-/* topbar */
-.topbar { position: sticky; top: 0; z-index: 10; background: rgba(15,18,22,0.88); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
-.topbar-in { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+/* topbar — mirrors the device status bar: name left, clock right */
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.topbar-in { display: flex; align-items: center; gap: 20px; height: 56px; }
 a.brand, a.brand:hover, a.brand:focus { text-decoration: none; color: var(--text); }
-.brand { font-size: 1.6rem; letter-spacing: 0.14em; color: var(--text); display: inline-flex; align-items: center; gap: 8px; }
-.brand-tick { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 8px var(--cyan); transition: transform 0.2s; }
+.brand { font-size: 1.6rem; letter-spacing: 0.14em; display: inline-flex; align-items: center; gap: 8px; }
+.brand-tick { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); transition: transform 0.2s; }
 .brand:hover .brand-tick { transform: scale(1.4); }
 .brand.small { font-size: 1.2rem; }
+.topnav { margin-left: auto; }
 .topnav a { color: var(--dim); margin-left: 22px; font-size: 0.9rem; transition: color 0.15s; }
 .topnav a:hover { color: var(--text); text-decoration: none; }
-.topnav a.active { color: var(--violet); }
+.topnav a.active { color: var(--accent); }
+.top-clock { color: var(--dim); min-width: 3.2em; text-align: right; }
 
 /* hero */
-.hero { display: grid; grid-template-columns: 1.35fr 1fr; gap: 48px; align-items: center; padding-top: 72px; padding-bottom: 48px; }
+.hero { display: grid; grid-template-columns: 1.3fr 1fr; gap: 48px; align-items: center; padding-top: 72px; padding-bottom: 56px; }
 .hero-cta { display: flex; gap: 12px; margin: 1.4rem 0 1rem; flex-wrap: wrap; }
 .btn {
   display: inline-block; padding: 11px 22px; border-radius: 6px;
   border: 1px solid var(--line); color: var(--text); font-weight: 500; font-size: 0.95rem;
+  background: none; cursor: pointer;
   transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s, filter 0.15s;
 }
 .btn:hover { border-color: var(--dim); text-decoration: none; transform: translateY(-1px); }
 .btn:active { transform: translateY(0); }
-.btn.primary { background: var(--violet); border-color: var(--violet); color: #fff; }
-.btn.primary:hover { filter: brightness(1.1); box-shadow: 0 6px 20px rgba(185,80,215,0.3); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.btn.primary:hover { filter: brightness(1.1); box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 30%, transparent); }
 .btn[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
 .hero-note { color: var(--dim); }
 
-/* the device */
+/* the device — a working frame; the top side button cycles HUD faces */
 .hero-device { justify-self: center; text-align: center; }
 .device {
-  position: relative; width: 210px; padding: 14px 12px 26px; border-radius: 22px;
-  background: linear-gradient(160deg, #1d232c, #10141a);
+  position: relative; width: 224px; padding: 14px 12px 26px; border-radius: 22px;
+  background: linear-gradient(160deg, #23262c, #101216);
   border: 1px solid var(--line);
-  box-shadow: 0 24px 60px rgba(0,0,0,0.5), 0 0 80px rgba(185,80,215,0.07);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.5),
+              0 0 80px color-mix(in srgb, var(--accent) 8%, transparent);
 }
+.device-stack { position: relative; aspect-ratio: 510 / 960; }
 .device-screen {
-  display: block; width: 100%; height: auto; border-radius: 8px;
-  background: var(--hud-bg); border: 1px solid #000;
+  position: absolute; inset: 0; width: 100%; height: auto; border-radius: 8px;
+  background: #06080b; border: 1px solid #000;
+  opacity: 0; transition: opacity 0.45s ease;
 }
-.device-btn { position: absolute; right: -3px; width: 3px; height: 26px; background: #2a323d; border-radius: 2px; }
-.device-btn.b1 { top: 90px; } .device-btn.b2 { top: 130px; }
-.device-caption { color: var(--dim); margin-top: 14px; }
-
-/* real-screens strip */
-.screens-strip { padding-top: 0; border-top: 0; }
-.screens { display: flex; justify-content: center; gap: 22px; flex-wrap: wrap; }
-.screens figure { margin: 0; text-align: center; }
-.screens img {
-  width: 148px; height: auto; border-radius: 8px; border: 1px solid var(--line); display: block;
-  transition: border-color 0.2s, transform 0.2s;
+.device-screen.active { opacity: 1; }
+.device-btn {
+  position: absolute; right: -4px; width: 4px; height: 28px;
+  background: #2a323d; border: 0; border-radius: 2px; padding: 0;
 }
-.screens figure:hover img { border-color: var(--dim); transform: translateY(-2px); }
-.screens figcaption { color: var(--dim); margin-top: 8px; font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; }
+.device-btn.b1 { top: 88px; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+.device-btn.b1:hover { background: var(--accent); }
+.device-btn.b1:active { transform: translateX(1px); }
+.device-btn.b2 { top: 130px; }
+.face-dots { display: flex; justify-content: center; gap: 10px; margin-top: 16px; }
+.face-dots button {
+  width: 9px; height: 9px; border-radius: 50%; padding: 0; cursor: pointer;
+  border: 1px solid var(--line); background: none; transition: background 0.15s, border-color 0.15s;
+}
+.face-dots button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); }
+.face-dots button:hover { border-color: var(--dim); }
+.device-caption { color: var(--dim); margin-top: 10px; }
+.device-caption #face-label { color: var(--label); letter-spacing: 0.14em; }
 
 /* sections */
-.section { padding: 56px 24px; border-top: 1px solid var(--line); }
+.section { padding: 64px 24px; border-top: 1px solid var(--line); }
 
-/* editions */
+/* screens gallery */
+.screens { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; margin-top: 8px; }
+.screens figure { margin: 0; text-align: center; min-width: 0; }
+.screens img {
+  width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); display: block;
+  transition: border-color 0.2s, transform 0.2s;
+}
+.screens figure:hover img { border-color: var(--dim); transform: translateY(-3px); }
+.screens figcaption { margin-top: 10px; display: grid; gap: 2px; }
+.screens figcaption .mono { color: var(--label); font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; }
+.cap-sub { color: var(--dim); font-size: 0.78rem; }
+
+/* split feature sections (safety, themes) */
+.split { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 56px; align-items: center; }
+.split.rev .split-copy { order: 2; }
+.split.rev .split-shot { order: 1; }
+.split-shot { margin: 0; justify-self: center; text-align: center; }
+.split-shot img {
+  width: 216px; height: auto; border-radius: 10px; border: 1px solid var(--line); display: block;
+}
+.split-shot figcaption { color: var(--dim); margin-top: 12px; }
+.spec-rows { list-style: none; margin: 1.4rem 0 0; padding: 0; max-width: 34rem; }
+.spec-rows li {
+  display: grid; grid-template-columns: 5.5em 1fr; gap: 14px; align-items: baseline;
+  padding: 9px 0; border-top: 1px dashed var(--line); color: var(--dim); font-size: 0.92rem;
+}
+.spec-rows .k { color: var(--label); letter-spacing: 0.12em; }
+
+/* theme chips — the firmware theme table, clickable */
+.theme-chips { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; margin: 1.4rem 0 0.8rem; max-width: 34rem; }
+.theme-chip {
+  display: flex; align-items: center; gap: 9px; padding: 9px 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+  color: var(--dim); font-family: "IBM Plex Mono", monospace; font-size: 0.72rem;
+  letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.theme-chip:hover { border-color: var(--dim); color: var(--text); }
+.theme-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--text); }
+.theme-swatch { width: 14px; height: 14px; border-radius: 3px; flex: none; border: 1px solid rgba(0,0,0,0.4); }
+
+/* editions — cards drawn like the firmware card(): bordered, centered
+   mono-ish title, hairline underline */
 .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  padding: 22px; color: var(--dim); font-size: 0.94rem;
   transition: border-color 0.2s, transform 0.2s;
 }
 .card:hover { border-color: var(--dim); transform: translateY(-2px); }
-.card.live { border-color: rgba(185,80,215,0.45); }
-.card.live:hover { border-color: var(--violet); }
-.card-head { display: flex; align-items: baseline; justify-content: space-between; color: var(--text); margin-bottom: 8px; }
-.tag { font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cyan); }
-.card p { margin: 0 0 10px; }
-.spec { list-style: none; margin: 0; padding: 0; color: var(--dim); }
+.card.live { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.card.live:hover { border-color: var(--accent); }
+.card-head {
+  position: relative; text-align: center; padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.card-head h3 { color: var(--text); }
+.tag {
+  position: absolute; top: 16px; right: 14px;
+  font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--green);
+}
+.card-body { padding: 16px 20px 20px; color: var(--dim); font-size: 0.94rem; }
+.card-body p { margin: 0 0 10px; }
+.spec { list-style: none; margin: 0; padding: 0; }
 .spec li { padding: 4px 0; border-top: 1px dashed var(--line); font-size: 0.75rem; }
 
 /* release */
 .release-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 26px; }
 .release-meta { display: flex; align-items: baseline; gap: 16px; }
-.release-ver { font-size: 2.4rem; color: var(--text); }
+.release-ver { font-size: 3.4rem; line-height: 1; color: var(--text); }
 .release-date { color: var(--dim); }
-.release-notes { color: var(--dim); margin: 6px 0 18px; }
+.release-notes { color: var(--dim); margin: 10px 0 18px; }
 .dl-list { display: grid; gap: 10px; }
 .dl-item {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
   border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px;
-  position: relative; transition: border-color 0.15s, background 0.15s;
+  transition: border-color 0.15s, background 0.15s;
 }
 .dl-item::after {
   content: "↓"; font-family: "IBM Plex Mono", monospace; color: var(--dim);
   margin-left: 4px; transition: color 0.15s, transform 0.15s;
 }
-.dl-item:hover { border-color: var(--violet); background: rgba(185,80,215,0.06); text-decoration: none; }
-.dl-item:hover::after { color: var(--violet); transform: translateY(2px); }
+.dl-item:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); text-decoration: none; }
+.dl-item:hover::after { color: var(--accent); transform: translateY(2px); }
 .dl-item .k { color: var(--text); font-weight: 500; }
-.dl-item .f { color: var(--dim); font-size: 0.78rem; }
+.dl-item .f { color: var(--dim); font-size: 0.78rem; overflow-wrap: anywhere; }
+.dl-item > span { min-width: 0; }
 .fine { color: var(--dim); margin-top: 16px; }
 
-/* ota */
+/* ota — the boot-splash progress bar, filled when the section arrives */
+.boot-bar {
+  width: min(320px, 100%); height: 10px; margin: 4px 0 22px;
+  border: 1px solid var(--line); border-radius: 2px; padding: 1px;
+}
+.boot-fill { display: block; height: 100%; width: 0; background: var(--green); transition: width 1.4s ease-out; }
+.boot-bar.go .boot-fill { width: 100%; }
 .ota-steps { color: var(--dim); max-width: 42rem; padding-left: 1.2rem; }
 .ota-steps li { margin-bottom: 10px; }
 .ota-steps b { color: var(--text); }
 
 /* footer */
-.footer { display: flex; justify-content: space-between; align-items: center; padding-top: 32px; padding-bottom: 40px; border-top: 1px solid var(--line); color: var(--dim); }
+.footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding-top: 32px; padding-bottom: 40px; border-top: 1px solid var(--line); color: var(--dim); }
 
+@media (max-width: 960px) {
+  .screens { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .split { grid-template-columns: 1fr; gap: 32px; }
+  .split.rev .split-copy { order: 1; }
+  .split.rev .split-shot { order: 2; }
+}
 @media (max-width: 860px) {
   .hero { grid-template-columns: 1fr; padding-top: 48px; }
   .hero-device { order: -1; }
   .cards { grid-template-columns: 1fr; }
-  .screens { gap: 14px; }
-  .screens img { width: 120px; }
+  .theme-chips { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .topnav a { margin-left: 14px; }
+  .top-clock { display: none; }
 }
+@media (max-width: 640px) {
+  /* the nav doesn't fit beside the brand — wrap it onto its own row */
+  .topbar-in { flex-wrap: wrap; height: auto; padding: 10px 0 9px; }
+  .topnav { margin-left: 0; width: 100%; display: flex; gap: 16px; }
+  .topnav a { margin-left: 0; font-size: 0.85rem; }
+  .screens { gap: 14px; }
+}
+
 /* scroll reveal — sections ease in once; JS adds .in, no-JS stays visible */
 .reveal { opacity: 1; transform: none; }
 .js .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.6s ease, transform 0.6s ease; }
@@ -164,5 +258,6 @@ a.brand, a.brand:hover, a.brand:focus { text-decoration: none; color: var(--text
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .js .reveal { opacity: 1; transform: none; transition: none; }
-  .btn, .card, .dl-item, .brand-tick { transition: none; }
+  .btn, .card, .dl-item, .brand-tick, .device-screen, .boot-fill { transition: none; }
+  .boot-bar .boot-fill { width: 100%; }
 }
