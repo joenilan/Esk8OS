@@ -183,6 +183,11 @@ a.brand, a.brand:hover, a.brand:focus { text-decoration: none; color: var(--text
 .cap-name { color: var(--text); font-weight: 600; font-size: 0.9rem; }
 .cap-sub { color: var(--dim); font-size: 0.8rem; }
 
+/* app screenshots — real phone captures, 3 across (taller than board renders) */
+.app-screens { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; max-width: 60rem; margin-inline: auto; }
+.app-screens .shot { padding: 0; border-radius: 22px; background: #06080b; }
+.app-screens .shot img { border-radius: 22px; }
+
 /* split feature sections */
 .split { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: 72px; align-items: center; }
 .split.rev .split-copy { order: 2; }
@@ -199,13 +204,14 @@ a.brand, a.brand:hover, a.brand:focus { text-decoration: none; color: var(--text
 .spec-rows .k { color: var(--label); letter-spacing: 0.12em; }
 
 /* theme chips */
-.theme-chips { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 1.8rem 0 0; max-width: 34rem; }
+.theme-chips { display: flex; flex-wrap: wrap; gap: 10px; margin: 1.8rem 0 0; max-width: 34rem; }
 .theme-chip {
-  display: flex; align-items: center; gap: 10px; padding: 10px 13px;
+  display: flex; align-items: center; gap: 8px; padding: 10px 13px;
   background: var(--panel); border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
   border-radius: var(--r-sm);
-  color: var(--dim); font-family: inherit; font-size: 0.78rem; font-weight: 600;
-  letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer;
+  color: var(--dim); font-family: inherit; font-size: 0.74rem; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase; cursor: pointer;
+  white-space: nowrap; flex: 0 0 auto;
   transition: border-color 0.15s, color 0.15s;
 }
 .theme-chip:hover { border-color: var(--dim); color: var(--text); }

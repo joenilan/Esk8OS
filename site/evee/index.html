@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="preload" as="image" href="img/preview_hud_speed.png?v=2">
-<link rel="stylesheet" href="evee.css?v=6">
+<link rel="stylesheet" href="evee.css?v=7">
 </head>
 <body>
 
@@ -192,11 +192,11 @@
       <article class="card">
         <header class="card-head">
           <h3>Companion app</h3>
-          <span class="pill ok">Available</span>
+          <span class="pill">Beta</span>
         </header>
         <p>Android app with live telemetry, GPS ride recording, trip
         history with map playback, graphs, GPX export, and full board
-        settings — over BLE, in your pocket, screen off.</p>
+        settings — over BLE, in your pocket, screen off. APK coming soon.</p>
       </article>
     </div>
   </section>
@@ -221,12 +221,27 @@
   <!-- ── App ──────────────────────────────────────────────────────────── -->
   <section id="app" class="wrap section">
     <p class="eyebrow">Companion app</p>
-    <h2>The ride, recorded.</h2>
+    <h2>The ride, in your pocket.</h2>
     <p class="lede narrow">
-      Start a trip and the app keeps recording — screen off, phone
-      pocketed — under a proper foreground service. Android first; the APK
-      will be published here.
+      Everything the board shows, on your phone over Bluetooth — plus GPS
+      recording, map playback and graphs. Start a trip and it keeps
+      recording with the screen off, under a proper foreground service.
+      Every screen below is a real capture from a live board.
     </p>
+    <div class="screens app-screens">
+      <figure><span class="shot"><img src="img/app_hud.png?v=1" alt="App HUD: hero speed, battery cells at 100%, live watts, volts, range and temperature" loading="lazy"></span>
+        <figcaption><span class="cap-name">Live HUD</span><span class="cap-sub">speed · battery · range</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/app_dash.png?v=1" alt="App dashboard: volts and watts, per-motor and battery current, duty, temperatures and range" loading="lazy"></span>
+        <figcaption><span class="cap-name">Dashboard</span><span class="cap-sub">volts · current · temps</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/app_diag.png?v=1" alt="App diagnostics: remote throttle, VESC firmware, second motor over CAN, per-motor current, runtime" loading="lazy"></span>
+        <figcaption><span class="cap-name">Diagnostics</span><span class="cap-sub">dual-motor · remote · VESC</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/app_graphs.png?v=1" alt="App graphs: rolling speed, power and voltage line charts" loading="lazy"></span>
+        <figcaption><span class="cap-name">Graphs</span><span class="cap-sub">speed · power · volts</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/app_settings.png?v=1" alt="App settings: rider and board name, vehicle type, units, and board theme sync" loading="lazy"></span>
+        <figcaption><span class="cap-name">Settings</span><span class="cap-sub">board config over BLE</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/app_pair.png?v=1" alt="App pairing screen: scan and connect to the board over Bluetooth" loading="lazy"></span>
+        <figcaption><span class="cap-name">Pair</span><span class="cap-sub">Bluetooth, one tap</span></figcaption></figure>
+    </div>
     <ul class="feature-list">
       <li>Live telemetry over BLE with the board's own theme</li>
       <li>GPS route recording alongside board speed and power</li>
