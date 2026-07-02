@@ -19,6 +19,10 @@
 #include "board/BoardLilyGoTDisplayS3.h"
 #include "version.h"
 
+#ifndef ESK8OS_STATUS_RGB
+#define ESK8OS_STATUS_RGB 0
+#endif
+
 // Custom companion service + characteristics (docs/companion_api_spec.md §2).
 static const char* DEVICE_NAME   = "ESK8-BLE";   // same name VESC Tool scans for
 static const char* SVC_COMPANION = "5043697A-0000-4682-93CB-33BB0A149F7E";
@@ -127,7 +131,11 @@ static void buildSettingsJson(char* out, size_t cap) {
     doc["stopCell"] = roundf(BATTERY_STOP_CELL_V * 100.0f) / 100.0f;
     doc["whmi"]     = r1(RANGE_DEFAULT_WH_PER_MILE);
     doc["bright"]   = gBrightnessPct;
+#if ESK8OS_STATUS_RGB
+    // Only builds with a controllable status LED report the setting at all —
+    // its absence tells the app to hide the toggle (T-Display has no LED).
     doc["rgb"]      = gStatusRgbEnabled;
+#endif
     doc["oled_inv"] = gOledInvert;
     doc["demo"]     = gDemoMode;
     doc["rider"]    = RIDER_NAME;
