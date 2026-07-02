@@ -114,10 +114,16 @@ void begin() {
     RANGE_DEFAULT_WH_PER_MILE = constrain(prefFloat("whmi", RANGE_DEFAULT_WH_PER_MILE), 14.0f, 40.0f);
 
     // Adaptive battery calibration learned on rides (telemetry.cpp; `cal` cmd).
+    // 0 = "not learned yet" for the two learned-energy values; any stored number
+    // outside a physically sane band is treated as corrupt and reset to that
+    // sentinel, so a bad NVS read can't drive the range math to absurd values
+    // (a near-zero Wh/km would otherwise blow the range estimate up to ~infinity).
     gPackROhm        = constrain(prefFloat("packR", gPackROhm), 0.01f, 0.50f);
     gTypicalRideAmps = constrain(prefFloat("typA", gTypicalRideAmps), 2.0f, 60.0f);
     gLearnedPackWh   = prefFloat("packWhL", 0.0f);
+    if (gLearnedPackWh < 50.0f || gLearnedPackWh > 5000.0f) gLearnedPackWh = 0.0f;   // Wh
     gLearnedWhPerKm  = prefFloat("whkmL", 0.0f);
+    if (gLearnedWhPerKm < 5.0f || gLearnedWhPerKm > 35.0f) gLearnedWhPerKm = 0.0f;   // Wh/km
 
 
     recalcBatteryBounds();
