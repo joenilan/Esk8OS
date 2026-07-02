@@ -48,7 +48,8 @@ enum SystemMode {
     MODE_DASHBOARD,
     MODE_VESC_BRIDGE,
     MODE_BRIDGE_CONFIRM,
-    MODE_TRIP_RESET_CONFIRM   // hold-L trip reset waits here for L=yes / R=no
+    MODE_TRIP_RESET_CONFIRM,  // hold-L trip reset waits here for L=yes / R=no
+    MODE_WIFI_CONFIRM         // app asked for the log/OTA AP; rider must OK on-board
 };
 enum HudFace {
     HUD_FACE_SPEED = 0,

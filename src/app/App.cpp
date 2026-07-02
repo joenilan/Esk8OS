@@ -106,6 +106,7 @@ static void changeSetting(int dir) {
         case SET_DEMO:
             gDemoMode = !gDemoMode;
             prefs.putBool("demo", gDemoMode);
+            drawStaticFrame();   // the DEMO MODE badge lives in the static top bar
             rideEnergyBaselineSet = false;
             if (!gDemoMode) {
                 lastVescOkMs = 0;
@@ -195,6 +196,10 @@ void pollVescData();
 
 namespace Esk8OS {
 namespace App {
+
+// BLE PAGE_NEXT/PREV step through the same PAGE_ORDER the buttons use, so the
+// app's remote paging visits pages in the order the rider knows.
+void pageRel(int dir) { gotoPageRel(dir); }
 
 // Zero the current ride/trip metrics and repaint. Shared by the LEFT long-press and
 // the companion app's TRIP_RESET command — both run on the UI thread.
@@ -286,6 +291,25 @@ void checkButtons() {
         return;
     }
 
+    // WIFI CONFIRMATION: the app requested the log/OTA AP over BLE; the AP only
+    // rises after a physical L press here, so a nearby attacker with a BLE radio
+    // can't raise it unattended. R (or the 30s timeout in dashboardLoop) cancels.
+    if (systemMode == MODE_WIFI_CONFIRM) {
+        if (left == LOW && lastLeftBtn == HIGH) {
+            systemMode = MODE_DASHBOARD;
+            webServiceStart();
+            showToast("WIFI EXPORT");
+            drawStaticFrame();
+            gRedrawAll = true;
+        } else if (right == LOW && lastRightBtn == HIGH) {
+            systemMode = MODE_DASHBOARD;
+            drawStaticFrame();
+            gRedrawAll = true;
+        }
+        lastLeftBtn = left; lastRightBtn = right;
+        return;
+    }
+
     // TRIP RESET CONFIRMATION: a fresh L press confirms, R cancels. Requires the
     // hold-L to be released first (needs a HIGH->LOW edge), so it can't auto-confirm.
     if (systemMode == MODE_TRIP_RESET_CONFIRM) {
@@ -358,6 +382,22 @@ void checkButtons() {
 void dashboardLoop() {
     unsigned long now = millis();
 
+    // A confirm modal left unanswered (rider away from the board, or an app
+    // request they never saw) auto-cancels after 30s instead of parking the UI
+    // on the question forever.
+    static unsigned long confirmSinceMs = 0;
+    if (systemMode == MODE_BRIDGE_CONFIRM || systemMode == MODE_WIFI_CONFIRM ||
+        systemMode == MODE_TRIP_RESET_CONFIRM) {
+        if (confirmSinceMs == 0) confirmSinceMs = now;
+        if (now - confirmSinceMs > 30000UL) {
+            systemMode = MODE_DASHBOARD;
+            drawStaticFrame();
+            gRedrawAll = true;
+        }
+    } else {
+        confirmSinceMs = 0;
+    }
+
     if (now - lastDataPoll > 100) {
         pollVescData();
         recordHistorySample();
@@ -380,10 +420,9 @@ void dashboardLoop() {
     // Serve the standalone log/OTA web service (if running) without leaving the
     // dashboard — telemetry/BLE keep flowing. No-op unless WIFI_EXPORT_START ran.
     webServiceTick();
-    Esk8OS::StatusLed::tick();
 
     int alert = alertState();
-    updateClock();
+    bool toastUp = (long)(gToastUntil - millis()) > 0;
 
     // -- Dynamic Low Power Mode --
     // Dim the backlight to 10% (25/255) when battery is low to squeeze out range.
@@ -398,22 +437,6 @@ void dashboardLoop() {
         lowPowerActive = false;
         applyBrightness(); // restore user's setting
     }
-
-    if (
-#if ESK8OS_FULL_UI
-        alert == 0 || gRedrawAll
-#else
-        true
-#endif
-    ) {
-        updateCurrentPageContent();
-    }
-
-    updateBatteryCells();
-    updateBottomBar();
-    updateOverlays(alert);
-
-    gRedrawAll = false;
 
 #if ESK8OS_FULL_UI
     static unsigned long tftIdleSinceMs = 0;
@@ -449,27 +472,60 @@ void dashboardLoop() {
         }
         tftSaverWasActive = tftScreensaverActive;
     }
+
+    // While the saver (or the OTA banner) owns the screen, the page draws are
+    // invisible — skip them entirely instead of painting frames the saver
+    // immediately fills over. On wake, repaint the static chrome the saver
+    // painted over (page value draws alone don't restore card borders etc).
+    bool saverOwnsScreen = tftScreensaverActive && !toastUp;
+    static bool saverOwnedScreen = false;
+    if (saverOwnedScreen && !saverOwnsScreen) drawStaticFrame();
+    saverOwnedScreen = saverOwnsScreen;
+    bool skipPageDraw = saverOwnsScreen || gOtaInProgress;
+#else
+    const bool skipPageDraw = false;   // OLED/headless render is driven by
+                                       // updateCurrentPageContent — never skip
 #endif
+
+    if (!skipPageDraw) {
+        updateClock();
+        if (
+#if ESK8OS_FULL_UI
+            alert == 0 || gRedrawAll
+#else
+            true
+#endif
+        ) {
+            updateCurrentPageContent();
+        }
+        updateBatteryCells();
+        updateBottomBar();
+        updateOverlays(alert);
+    }
 
     // OTA via the standalone web service: show progress over the dashboard the
     // same way bridge mode does (the upload itself blocks handleClient, so this
-    // mainly covers the start/finish and a stuck-failed update).
+    // mainly covers the start/finish and a stuck-failed update). 100 ms cap —
+    // the progress percent doesn't change faster than that anyway.
     if (gOtaInProgress) {
 #if ESK8OS_FULL_UI
-        GFX->fillRect(X0 + 8, 140, UI_W - 16, 60, COL_ACCENT);
-        GFX->setTextDatum(MC_DATUM);
-        GFX->setTextColor(COL_BG);
-        GFX->setFont(&BebasNeue24pt7b);
-        GFX->drawString("UPDATING...", X0 + UI_W / 2, 154);
-        GFX->setFont(&BebasNeue18pt7b);
-        GFX->drawString(String(gOtaProgressPct) + "%", X0 + UI_W / 2, 184);
-        GFX->setFont(&fonts::Font0);
-        markDirty(140, 60);
+        static unsigned long lastOtaPaint = 0;
+        if (now - lastOtaPaint > 100 || gRedrawAll) {
+            lastOtaPaint = now;
+            GFX->fillRect(X0 + 8, 140, UI_W - 16, 60, COL_ACCENT);
+            GFX->setTextDatum(MC_DATUM);
+            GFX->setTextColor(COL_BG);
+            GFX->setFont(&BebasNeue24pt7b);
+            GFX->drawString("UPDATING...", X0 + UI_W / 2, 154);
+            GFX->setFont(&BebasNeue18pt7b);
+            GFX->drawString(String(gOtaProgressPct) + "%", X0 + UI_W / 2, 184);
+            GFX->setFont(&fonts::Font0);
+            markDirty(140, 60);
+        }
 #endif
     }
 
     static bool toastWasUp = false;
-    bool toastUp = (long)(gToastUntil - millis()) > 0;
     if (toastUp) {
 #if ESK8OS_FULL_UI
         GFX->setFont(&BebasNeue18pt7b);
@@ -491,10 +547,12 @@ void dashboardLoop() {
     toastWasUp = toastUp;
 
 #if ESK8OS_FULL_UI
-    if (tftScreensaverActive && !toastUp) {
+    if (saverOwnsScreen) {
         Esk8OS::UiRenderer::renderTftScreensaver();
     }
 #endif
+
+    gRedrawAll = false;
 
     pushCanvas();   // blit only the regions that changed this frame, not the whole panel
 
@@ -505,13 +563,13 @@ void dashboardLoop() {
     fpsCount++;
     if (now - fpsWindow >= 1000) { gFps = fpsCount; fpsCount = 0; fpsWindow = now; }
 
-    delay(2);
+    delay(5);
 }
 
 void loop() {
     consolePoll();
     checkButtons();
-    Esk8OS::StatusLed::tick();
+    Esk8OS::StatusLed::tick();   // sole tick — dashboardLoop must not double it
 
     if (systemMode == MODE_VESC_BRIDGE) {
         companionBleTick();

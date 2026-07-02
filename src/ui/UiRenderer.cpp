@@ -469,6 +469,15 @@ void applyDisplayBrightness() {
 
 void renderTftScreensaver() {
 #if ESK8OS_DISPLAY_TFT
+    // ~30 fps cap. The caller runs at loop rate (hundreds of Hz); repainting +
+    // full-canvas blitting every iteration burned max CPU/bus power in exactly
+    // the idle state the saver exists to save. The bounce physics below steps
+    // on its own >=30 ms clock, so capping the paint changes nothing visually.
+    static unsigned long lastPaint = 0;
+    unsigned long nowMs = millis();
+    if (nowMs - lastPaint < 33 && !gRedrawAll) return;
+    lastPaint = nowMs;
+
     static const uint16_t colors[] = {
         0x07FF, // cyan
         0xF81F, // magenta

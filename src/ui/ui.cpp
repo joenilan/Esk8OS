@@ -181,16 +181,19 @@ static void drawBootSplashFrame() {
     GFX->setTextColor(COL_DIM);
     GFX->drawString("RIDE DASHBOARD", X0 + UI_W / 2, 188);
 
-    // Controls legend (boot-time reference; keeps the dashboard itself uncluttered)
+    // Controls legend (boot-time reference; keeps the dashboard itself
+    // uncluttered). Keep in sync with checkButtons() in App.cpp.
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
-    GFX->drawString("L: page     R: units", X0 + UI_W / 2, 196);
-    GFX->drawString("hold L: reset trip",   X0 + UI_W / 2, 210);
-    GFX->drawString("hold L+R: bridge mode", X0 + UI_W / 2, 224);
+    GFX->drawString("tap L / R: pages",          X0 + UI_W / 2, 196);
+    GFX->drawString("hold L: units  R: HUD",     X0 + UI_W / 2, 210);
+    GFX->drawString("hold L+R: bridge mode",     X0 + UI_W / 2, 224);
 
-    GFX->setTextColor(COL_LABEL);
-    GFX->drawString(String("RIDER: ") + RIDER_NAME, X0 + UI_W / 2, 300);
+    if (RIDER_NAME[0]) {
+        GFX->setTextColor(COL_LABEL);
+        GFX->drawString(String("RIDER: ") + RIDER_NAME, X0 + UI_W / 2, 300);
+    }
 
     int bw = 120, bh = 8, by = 250;
     int bx = X0 + (UI_W - bw) / 2;
@@ -218,10 +221,16 @@ void waitForBootReady() {
         return;
     }
 
+    // The background poll task (VescUartTransport, core 0) owns the UART — issuing
+    // a second getVescValues() from this thread raced it on the same Serial1 and
+    // shared VescUart object. Watch the task's result via pollVescData() instead:
+    // it consumes the mutex-protected snapshot and sets lastVescOkMs on success.
     unsigned long lastDraw = 0;
     unsigned long connectStart = millis();
     int pulse = 0;
-    while (!UART.getVescValues()) {
+    while (true) {
+        pollVescData();
+        if (lastVescOkMs != 0) break;
         if (millis() - connectStart > 3500UL) {
             telemetryLive = false;
             vescLinkOk = false;
@@ -239,7 +248,6 @@ void waitForBootReady() {
         delay(25);
     }
 
-    lastVescOkMs = millis();
     drawBootProgress(100, "VESC LINKED", COL_GREEN);
     delay(500);
     #endif
@@ -645,6 +653,53 @@ static void drawHudWattsFace() {
     drawHudGaugeText(String(peak) + "W PEAK", 34, 214, COL_WHITE);
 }
 
+// SAFETY face: loaded cell voltage as the hero (the number the sag/limp alerts
+// key off), the alert state spelled out, and the session floor stats in the
+// same cells-row + 2x2 tile layout as the SPEED face.
+static void drawHudSafetyFace() {
+    bool haveData = telemetryLive;
+    drawHudFaceLabel("SAFETY - CELL V");
+
+    uint16_t heroCol = !haveData ? COL_DIM :
+                       rangeAlertState >= 3 ? COL_RED :
+                       rangeAlertState == 2 ? COL_ORANGE :
+                       rangeAlertState == 1 ? COL_YELLOW : COL_GREEN;
+    drawHudHeroMetric(haveData ? String(loadedCellVoltage, 2) : String("-.--"),
+                      "V", 44, heroCol);
+
+    const char* stateTxt = !haveData ? "NO DATA" :
+                           rangeAlertState >= 3 ? "LIMP HOME" :
+                           rangeAlertState == 2 ? "VOLT SAG" :
+                           rangeAlertState == 1 ? "TURN HOME" : "PACK OK";
+    GFX->setFont(&BebasNeue24pt7b);
+    GFX->setTextDatum(MC_DATUM);
+    GFX->setTextColor(heroCol);
+    GFX->drawString(stateTxt, X0 + UI_W / 2, 128);
+    GFX->setFont(&fonts::Font0);
+
+    GFX->drawFastHLine(X0 + 8, 146, UI_W - 16, COL_BORDER);   // separator
+
+    drawBatteryCellsRow(150, 18, true);
+    GFX->setFont(&BebasNeue34pt7b);
+    GFX->setTextDatum(MC_DATUM);
+    GFX->setTextColor(COL_WHITE);
+    GFX->drawString(String(currentBatteryPercent) + "%", X0 + UI_W / 2, 184);
+
+    // Min-volt tracker holds its BATTERY_MAX_V seed until telemetry is live.
+    float minVl = haveData ? minVoltageUnderLoadSession : 0.0f;
+    float limp  = useMph ? remainingLimpRangeKm * 0.621371f : remainingLimpRangeKm;
+    String limpUnit = useMph ? "mi" : "km";
+
+    drawHudSmallMetric(4,  202, 78, "MIN V",  String(minVl, 1),
+                       minVl > 0 && minVl <= BATTERY_MIN_V ? COL_RED : COL_WHITE);
+    drawHudSmallMetric(88, 202, 78, "SAG",    String(sagEventsSession),
+                       sagEventsSession > 0 ? COL_ORANGE : COL_GREEN);
+    drawHudSmallMetric(4,  250, 78, "LIMP",   String(haveData ? limp : 0.0f, 1) + limpUnit,
+                       COL_WHITE);
+    drawHudSmallMetric(88, 250, 78, "LOW",    String((unsigned)homeVoltageSecondsSession) + "s",
+                       homeVoltageSecondsSession > 0 ? COL_ORANGE : COL_GREEN);
+}
+
 static void updateHud() {
     static unsigned long lastMs = 0;
     if (!gRedrawAll && millis() - lastMs < 200) return;
@@ -658,6 +713,8 @@ static void updateHud() {
         drawHudBatteryFace();
     } else if (gHudFace == HUD_FACE_WATTS) {
         drawHudWattsFace();
+    } else if (gHudFace == HUD_FACE_SAFETY) {
+        drawHudSafetyFace();
     } else {
         drawHudSpeedFace();
     }
@@ -931,8 +988,16 @@ void drawStaticFrame() {
     GFX->setTextColor(COL_DIM);
     GFX->drawString(PRODUCT_NAME, X0 + 4, 4);
     GFX->setTextDatum(TC_DATUM);
-    GFX->setTextColor(COL_DIM);
-    GFX->drawString(String("RIDER: ") + RIDER_NAME, X0 + 85, 4);
+    // Demo mode takes over the centre slot on every page — the simulated
+    // telemetry is convincing enough that a first-time user with a real VESC
+    // wired up must never mistake it for live data.
+    if (gDemoMode) {
+        GFX->setTextColor(COL_YELLOW);
+        GFX->drawString("DEMO MODE", X0 + 85, 4);
+    } else if (RIDER_NAME[0]) {
+        GFX->setTextColor(COL_DIM);
+        GFX->drawString(String("RIDER: ") + RIDER_NAME, X0 + 85, 4);
+    }
     drawHLine(X0, 16, UI_W, COL_BORDER);
 
     if (currentPage == PAGE_HUD)           drawStaticHud();
@@ -1368,10 +1433,11 @@ static const char* faultName(int f) {
 }
 
 // Highest-priority alert: 1 fault, 2 link-lost, 3 over-temp, 4 crit battery,
-// 7 limp floor, 8 loaded sag, 9 turn-home reserve.
+// 7 limp floor, 8 loaded sag, 9 turn-home reserve, 10 wifi confirm.
 int alertState() {
     if (systemMode == MODE_BRIDGE_CONFIRM) return 5;
     if (systemMode == MODE_TRIP_RESET_CONFIRM) return 6;
+    if (systemMode == MODE_WIFI_CONFIRM) return 10;
     if (vescFault != 0) return 1;
     if (!vescLinkOk) return 2;
     if (currentMotorTemp > MOTOR_TEMP_LIMIT || currentEscTemp > ESC_TEMP_LIMIT) return 3;
@@ -1393,6 +1459,13 @@ void updateOverlays(int state) {
         return;
     }
 
+    // Re-evaluating an unchanged banner builds several Strings per call, and this
+    // runs at loop rate — cap the re-check at 10 Hz. State changes bypass the cap
+    // so a new alert still paints immediately.
+    static unsigned long lastEvalMs = 0;
+    if (state == lastState && !gRedrawAll && millis() - lastEvalMs < 100) return;
+    lastEvalMs = millis();
+
     bool crit = (state == 4 || state == 7);
     int by = crit ? 108 : 118;
     int bh = crit ? 92 : 64;
@@ -1410,6 +1483,9 @@ void updateOverlays(int state) {
         line2 = "L=YES    R=NO";
     } else if (state == 6) {
         line1 = "RESET TRIP?";
+        line2 = "L=YES    R=NO";
+    } else if (state == 10) {
+        line1 = "ALLOW WIFI?";
         line2 = "L=YES    R=NO";
     } else if (state == 7) {
         line1 = "LIMP HOME";
@@ -1431,7 +1507,7 @@ void updateOverlays(int state) {
 
     String textKey = line1 + "|" + line2 + "|" + line3;
     if (state != lastState || textKey != lastText || gRedrawAll) {
-        bool confirmModal = (state == 5 || state == 6);
+        bool confirmModal = (state == 5 || state == 6 || state == 10);
         uint16_t bgColor = confirmModal ? COL_ACCENT :
                            (state == 8 ? COL_ORANGE : (state == 9 ? COL_YELLOW : COL_RED));
         uint16_t fgColor = confirmModal ? COL_BG : COL_WHITE;

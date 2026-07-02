@@ -1,13 +1,33 @@
 #include "wifi_bridge.h"
 #include <WiFi.h>
+#include "esk8os.h"
 
 // VESC Tool WiFi-TCP transport. Owns the softAP credentials + TCP server and
 // forwards raw bytes between the TCP client (desktop VESC Tool) and Serial1 (the
 // ESC UART). See wifi_bridge.h for how this slots under the bridge coordinator.
 
 static const char*    WIFI_SSID = "ESK8-BRIDGE";
-static const char*    WIFI_PASS = "esk8bridge";   // must be >= 8 chars
 static const uint16_t WIFI_PORT = 65102;
+
+// Per-device AP password: "esk8-" + the board's pair code. A fixed password
+// shipped in public source meant every board shared one key — and the AP fronts
+// OTA flashing and VESC motor config, so it must differ per board. The suffix
+// matches the BLE pair code shown on the SYSTEM page / screensaver when BLE is
+// up (companionBleBegin fills gPairCode before any AP can start); headless
+// non-BLE builds fall back to the factory MAC tail. Always >= 8 chars (WPA2).
+static const char* wifiPassword() {
+    static char buf[12] = "";
+    if (!buf[0]) {
+        if (gPairCode[0]) {
+            snprintf(buf, sizeof(buf), "esk8-%s", gPairCode);
+        } else {
+            uint64_t mac = ESP.getEfuseMac();
+            snprintf(buf, sizeof(buf), "esk8-%02X%02X",
+                     (uint8_t)(mac >> 32), (uint8_t)(mac >> 40));
+        }
+    }
+    return buf;
+}
 
 static WiFiServer    g_server(WIFI_PORT);
 static WiFiClient    g_client;
@@ -16,7 +36,7 @@ static unsigned long g_tx = 0;   // ESC -> app, bytes this session
 
 void wifiBridgeStart() {
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(WIFI_SSID, WIFI_PASS);
+    WiFi.softAP(WIFI_SSID, wifiPassword());
     g_server.begin();
     g_server.setNoDelay(true);
     g_rx = 0;
@@ -34,7 +54,7 @@ void wifiBridgeStop() {
 // log/OTA pages are reachable without entering VESC bridge mode.
 void wifiApStart() {
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(WIFI_SSID, WIFI_PASS);
+    WiFi.softAP(WIFI_SSID, wifiPassword());
 }
 
 void wifiApStop() {
@@ -74,6 +94,6 @@ unsigned long wifiBridgeRxBytes() { return g_rx; }
 unsigned long wifiBridgeTxBytes() { return g_tx; }
 
 const char* wifiBridgeSsid() { return WIFI_SSID; }
-const char* wifiBridgePass() { return WIFI_PASS; }
+const char* wifiBridgePass() { return wifiPassword(); }
 String wifiBridgeIpPort() { return WiFi.softAPIP().toString() + ":" + String(WIFI_PORT); }
 int wifiBridgeStationNum() { return WiFi.softAPgetStationNum(); }

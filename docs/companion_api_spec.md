@@ -13,15 +13,31 @@ The Android app acts as a read/write client to this custom service.
 
 | Characteristic | UUID | Properties | Purpose |
 | :--- | :--- | :--- | :--- |
-| **Telemetry** | `5043697A-0001-4682-93CB-33BB0A149F7E` | `NOTIFY` | High-frequency ride data (Speed, Battery, etc) |
+| **Telemetry** | `5043697A-0001-4682-93CB-33BB0A149F7E` | `NOTIFY` | 5 Hz core ride data (Speed, Battery, etc) |
 | **Settings** | `5043697A-0002-4682-93CB-33BB0A149F7E` | `READ`, `WRITE` | Board configuration (Theme, Wheel size, MPH/KMH) |
 | **Command** | `5043697A-0003-4682-93CB-33BB0A149F7E` | `WRITE` | Triggers for actions (Trip Reset, Change Page) |
+| **Session** | `5043697A-0004-4682-93CB-33BB0A149F7E` | `NOTIFY` | 1 Hz trip/session statistics (fw 0.9.4+) |
 
 ---
 
-## 3. Telemetry (Characteristic `0001`)
-The ESP32 pushes a JSON payload at **5Hz (every 200ms)** while the board is on. 
-The companion app simply subscribes to notifications on this characteristic and parses the JSON to update its UI.
+## 3. Telemetry (Characteristics `0001` + `0004`)
+Since fw 0.9.4 telemetry is split across two notify characteristics so neither
+payload can approach the BLE notify size limit (a notify silently truncates past
+ATT_MTU−3; the old merged payload measured ~503 bytes mid-ride):
+
+- **`0001` core, 5 Hz (every 200 ms):** the fast-changing ride fields — `live`,
+  `vesc`, `mph`, `spd`, `bat`, `v`, `w`, `mtr_t`, `esc_t`, `btemp`, `rng`,
+  `bata`, `mota`, `duty`, `pkw`, `cellv`, `rwarn`, `fault`, `ppm`, `ppmok`,
+  `slave`, `m1a`, `m2a`.
+- **`0004` session, 1 Hz:** trip/session statistics — `max_s`, `wh`, `whr`,
+  `mpw`, `minv`, `minvl`, `mba`, `sagc`, `thome`, `tlimp`, `avs`, `trip`,
+  `odo`, `est`, `lrng`, `lest`, `eff`, `rtime`, `tmov`, `lfault`, `fw`.
+
+The app subscribes to both, caches the latest session frame, and folds it under
+each core frame (`{...session, ...core}`) so the rest of the app still sees one
+merged telemetry object. Firmware older than 0.9.4 has no `0004` characteristic
+and sends **all** fields on `0001` — the same merge handles that transparently.
+The combined field reference below is unchanged.
 
 All distance/speed/range/efficiency values are in the **board's configured display
 unit** (mph + miles when `mph:true`, otherwise km/h + km), already converted by the
@@ -166,8 +182,8 @@ Writing a raw ASCII string to this characteristic triggers immediate physical ac
 | `"PAGE_NEXT"` | Swipes the physical ESP32 display to the next page. |
 | `"PAGE_PREV"` | Swipes the physical ESP32 display to the previous page. |
 | `"PAGE_SET:<n>"` | Jumps the display to an **absolute** page index (0=HUD,1=DASH,2=POWER,3=TRIP,4=SETTINGS,5=SYSTEM,6=GRAPHS,7=LOGS). Use this for page-swipe sync when the app's page set doesn't 1:1 the board's. |
-| `"BRIDGE_MODE"` | Halts telemetry and forces the board into VESC Tool Bridge Mode. |
-| `"WIFI_EXPORT_START"`| Turns on the ESP32's WiFi AP and HTTP server (logs + OTA) without entering VESC bridge mode — telemetry/BLE keep streaming. |
+| `"BRIDGE_MODE"` | Requests VESC Tool Bridge Mode. On boards with buttons the display shows **START BRIDGE? L=YES R=NO** — the rider must physically confirm (30 s timeout) because the BLE link is unauthenticated and the bridge exposes motor config. Buttonless builds enter directly. |
+| `"WIFI_EXPORT_START"`| Requests the ESP32's WiFi AP + HTTP server (logs + OTA) without entering VESC bridge mode — telemetry/BLE keep streaming. On boards with buttons the display shows **ALLOW WIFI? L=YES R=NO** (30 s timeout); the AP only rises after the rider confirms. |
 | `"WIFI_EXPORT_STOP"` | Drops the standalone WiFi AP / HTTP server started by `WIFI_EXPORT_START`. |
 | `"REBOOT"` | Reboots the ESP32 display. |
 
@@ -176,8 +192,8 @@ The ESP32 writes one board session CSV from dashboard boot until power-off/reboo
 
 To download historical logs, the Android app should use a **Hybrid Transfer**:
 1. The app writes `"WIFI_EXPORT_START"` to the Command characteristic (`0003`).
-2. The ESP32 immediately spins up its `ESK8-BRIDGE` WiFi Access Point.
-3. The Android app prompts the user to join the `ESK8-BRIDGE` network (Password: `esk8bridge`).
+2. The rider confirms **ALLOW WIFI?** on the board (L=YES); the ESP32 then spins up its `ESK8-BRIDGE` WiFi Access Point.
+3. The Android app prompts the user to join the `ESK8-BRIDGE` network. The password is **per-device** (fw 0.9.4+): `esk8-` + the board's pair code — read it from the `wifiPass` settings field (§4) or the board's bridge screen. Firmware older than 0.9.4 uses the legacy fixed password `esk8bridge`.
 4. The Android app hits the ESP32's internal HTTP Web Server (`http://192.168.4.1/`) to download the raw session CSV files over fast TCP.
 5. Once downloaded, the user disconnects from the WiFi, and the board seamlessly resumes BLE telemetry.
 
@@ -190,7 +206,7 @@ The ESP32 side of this spec is implemented in `src/services/companion_ble.cpp` (
 
 - **Always-on service.** The companion service initializes in `setup()` and advertises 100% of the time. The device name is **`ESK8-BLE`** (the companion service UUID is in the primary advertisement; the name + VESC-Tool NUS UUID are in the scan response). Use **active scanning** and filter by the service UUID `5043697A-0000-…`.
 - **Co-existence with VESC Bridge mode.** The VESC-Tool NUS bridge shares the *same* NimBLE server. Entering Bridge mode (physically, or via the `BRIDGE_MODE` command) does not tear down the companion service — but **telemetry notifications pause** while bridging (consistent with §6), and queued Settings/Command writes are applied once the dashboard resumes.
-- **Settings reads (§4):** `hw`, `display`, `ui`, and `buttons` are read-only capability fields so the app can adapt for full TFT, mini OLED, and headless firmware targets.
+- **Settings reads (§4):** `hw`, `display`, `ui`, and `buttons` are read-only capability fields so the app can adapt for full TFT, mini OLED, and headless firmware targets. `wifiSsid` / `wifiPass` (fw 0.9.4+) are the read-only log/OTA AP credentials — the password is per-device.
 - **Settings writes (§4):** `mph` (bool), `theme` (string, case-insensitive), `bat_s` (int, 6–14), `profile` (int index), `packAh` (float, 4.0–40.0), `homeCell` (float, `stopCell`–4.20), `stopCell` (float, 3.00–3.60), `whmi` (float, 14.0–40.0), `bright` (int, 10–100), `demo` (bool), `hud` (`speed`/`battery`/`watts`), and `bfocus` (`pct`/`volts`) are honored and persisted to NVS; numeric fields are clamped to the listed ranges. `poles`, `wheel`, and `gear` are **read-only** — they are derived from the selected wheel preset, not independently settable. To change them, write **`profile`** (int index) to select a preset. `gear` is reported as the firmware's motor:wheel pulley ratio. Writing `homeCell`/`stopCell` recomputes home/limp range; `packAh`/`whmi` refresh the range estimate; `bright` applies to the backlight immediately.
 - **`WIFI_EXPORT_START` / `WIFI_EXPORT_STOP` (§5/§6):** runs a *standalone* web service — it raises the `ESK8-BRIDGE` AP + `http://192.168.4.1/` (board session-log download **and** OTA firmware upload) **without** entering VESC Bridge mode, so the dashboard keeps running and BLE telemetry keeps streaming (true "hybrid" transfer). The same pages are also served while in VESC Bridge mode (over the bridge's own AP), so logs/OTA are reachable in either state — bridged or unbridged. The standalone AP auto-drops after 10 min idle. On-device, the same service can be toggled over USB serial with `wifi on` / `wifi off`.
 - **Settings/Command writes** are processed on the firmware's UI thread (BLE callbacks only enqueue), so display repaints triggered by a write are race-free.

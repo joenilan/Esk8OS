@@ -3,7 +3,7 @@
 
 // Variables previously in main.cpp
 const char* PRODUCT_NAME = "ESK8OS";
-char RIDER_NAME[16]      = "JOE";   // mutable: settable from the app, persisted to NVS
+char RIDER_NAME[16]      = "";   // empty = no rider line; settable from the app, NVS-persisted
 char gDeviceName[20]     = "ESK8-BLE";   // BLE advertised name (settable; tells nearby boards apart)
 char gPairCode[5]        = "";           // BLE MAC tail hex; filled once at BLE init (companionBleBegin)
 int  gVehicleType        = VT_SKATE;     // VehicleType; drives the app's vehicle icon
@@ -97,7 +97,7 @@ void begin() {
 
     gDemoMode      = prefs.getBool("demo", DEMO_MODE_DEFAULT);
     useMph         = prefs.getBool("mph", USE_MPH_DEFAULT);
-    { String r = prefs.getString("rider", "JOE"); strlcpy(RIDER_NAME, r.c_str(), sizeof(RIDER_NAME)); }
+    { String r = prefs.getString("rider", ""); strlcpy(RIDER_NAME, r.c_str(), sizeof(RIDER_NAME)); }
     { String n = prefs.getString("devname", "ESK8-BLE"); strlcpy(gDeviceName, n.c_str(), sizeof(gDeviceName)); }
     gVehicleType = constrain(prefs.getInt("vtype", VT_SKATE), 0, VT_COUNT - 1);
     gBrightnessPct = constrain(prefs.getInt("bright", 100), 10, 100);

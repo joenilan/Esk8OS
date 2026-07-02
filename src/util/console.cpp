@@ -4,6 +4,7 @@
 #include "version.h"
 #include "logging/sessionlog.h"
 #include "services/webexport.h"
+#include "services/wifi_bridge.h"
 #include "ui/UiRenderer.h"
 #include <LittleFS.h>
 #include <esp_system.h>
@@ -135,7 +136,8 @@ static void cmdWifi(const char* arg) {
         if (systemMode != MODE_DASHBOARD) { consoleOut().println("can't: exit bridge mode first"); return; }
         if (webServiceActive()) { consoleOut().println("wifi export already ON"); return; }
         webServiceStart();
-        consoleOut().println("wifi export ON - join ESK8-BRIDGE / esk8bridge, then http://192.168.4.1");
+        consoleOut().printf("wifi export ON - join %s / %s, then http://192.168.4.1\n",
+                            wifiBridgeSsid(), wifiBridgePass());
         return;
     }
     if (a == "off") { webServiceStop(); consoleOut().println("wifi export OFF"); return; }
@@ -340,6 +342,8 @@ static void cmdDemo(const char* arg) {
             gPpmDecoded = 0.0f;
             gPpmPulseMs = 0.0f;
         }
+        drawStaticFrame();   // the DEMO MODE badge lives in the static top bar
+        gRedrawAll = true;
     }
     consoleOut().printf("demo %s\n", gDemoMode ? "ON" : "OFF");
 }

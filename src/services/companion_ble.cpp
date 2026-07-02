@@ -10,6 +10,7 @@
 #include "ble_bridge.h"
 #include "bridge.h"
 #include "webexport.h"
+#include "wifi_bridge.h"
 #include "ui/ui.h"
 #include "ui/UiRenderer.h"
 #include "app/App.h"
@@ -20,14 +21,16 @@
 // Custom companion service + characteristics (docs/companion_api_spec.md §2).
 static const char* DEVICE_NAME   = "ESK8-BLE";   // same name VESC Tool scans for
 static const char* SVC_COMPANION = "5043697A-0000-4682-93CB-33BB0A149F7E";
-static const char* CH_TELEMETRY  = "5043697A-0001-4682-93CB-33BB0A149F7E"; // NOTIFY
+static const char* CH_TELEMETRY  = "5043697A-0001-4682-93CB-33BB0A149F7E"; // NOTIFY (5 Hz core)
 static const char* CH_SETTINGS   = "5043697A-0002-4682-93CB-33BB0A149F7E"; // READ | WRITE
 static const char* CH_COMMAND    = "5043697A-0003-4682-93CB-33BB0A149F7E"; // WRITE
+static const char* CH_SESSION    = "5043697A-0004-4682-93CB-33BB0A149F7E"; // NOTIFY (1 Hz stats)
 
 static const float KM2MI = 0.621371f;
 
 static NimBLEServer*         g_server = nullptr;
 static NimBLECharacteristic* g_tel    = nullptr;
+static NimBLECharacteristic* g_ses    = nullptr;
 
 // Payloads handed from the BLE task to the UI loop (see THREADING note in .h).
 static portMUX_TYPE  g_mux        = portMUX_INITIALIZER_UNLOCKED;
@@ -130,6 +133,10 @@ static void buildSettingsJson(char* out, size_t cap) {
     doc["bfocus"]   = batteryFocusName(gBatteryFocus);
     doc["name"]     = gDeviceName;
     doc["vtype"]    = gVehicleType;
+    // Read-only: the board's log/OTA AP credentials, so the app can show the
+    // rider the per-device password (it's no longer a fixed public string).
+    doc["wifiSsid"] = wifiBridgeSsid();
+    doc["wifiPass"] = wifiBridgePass();
     serializeJson(doc, out, cap);
 }
 
@@ -312,15 +319,38 @@ class SettingsCallbacks : public NimBLECharacteristicCallbacks {
 
 // ---- Command characteristic (0003) ----------------------------------------
 
+// Radio-initiated bridge / WiFi-AP requests must be confirmed on the board
+// itself (L=YES) on builds that have buttons: the BLE link is unauthenticated,
+// and both features front OTA flashing + VESC motor config. Buttonless builds
+// (headless/OLED) have no confirm surface, so they act directly — documented
+// limitation until BLE bonding lands.
+static void requestBridgeMode() {
+#if ESK8OS_FULL_UI
+    if (systemMode == MODE_DASHBOARD) { systemMode = MODE_BRIDGE_CONFIRM; gRedrawAll = true; }
+#else
+    enterBridgeMode();         // safety-checks speed internally
+#endif
+}
+
+static void requestWifiExport() {
+    if (webServiceActive()) return;
+#if ESK8OS_FULL_UI
+    if (systemMode == MODE_DASHBOARD) { systemMode = MODE_WIFI_CONFIRM; gRedrawAll = true; }
+#else
+    webServiceStart();
+    showToast("WIFI EXPORT");
+#endif
+}
+
 static void dispatchCommand(const char* cmd) {
     if      (!strcmp(cmd, "TRIP_RESET"))        Esk8OS::App::resetTrip();
-    else if (!strcmp(cmd, "PAGE_NEXT"))       { settingsCursor = 0; currentPage = (currentPage + 1) % PAGE_COUNT; drawStaticFrame(); gRedrawAll = true; }
-    else if (!strcmp(cmd, "PAGE_PREV"))       { settingsCursor = 0; currentPage = (currentPage + PAGE_COUNT - 1) % PAGE_COUNT; drawStaticFrame(); gRedrawAll = true; }
+    else if (!strcmp(cmd, "PAGE_NEXT"))         Esk8OS::App::pageRel(+1);   // same order as the buttons
+    else if (!strcmp(cmd, "PAGE_PREV"))         Esk8OS::App::pageRel(-1);
     else if (!strncmp(cmd, "PAGE_SET:", 9))   { int p = atoi(cmd + 9); if (p >= 0 && p < PAGE_COUNT) { settingsCursor = 0; currentPage = p; drawStaticFrame(); gRedrawAll = true; } }  // absolute page (app pages don't 1:1 the board's count)
-    else if (!strcmp(cmd, "BRIDGE_MODE"))       enterBridgeMode();         // safety-checks speed internally
+    else if (!strcmp(cmd, "BRIDGE_MODE"))       requestBridgeMode();
     else if (!strcmp(cmd, "BRIDGE_EXIT"))       { if (systemMode == MODE_VESC_BRIDGE) exitBridgeMode(); }
-    else if (!strcmp(cmd, "BRIDGE_TOGGLE"))     { if (systemMode == MODE_VESC_BRIDGE) exitBridgeMode(); else enterBridgeMode(); }
-    else if (!strcmp(cmd, "WIFI_EXPORT_START")) { if (!webServiceActive()) { webServiceStart(); showToast("WIFI EXPORT"); } }  // standalone AP + http (logs/OTA); telemetry stays live
+    else if (!strcmp(cmd, "BRIDGE_TOGGLE"))     { if (systemMode == MODE_VESC_BRIDGE) exitBridgeMode(); else requestBridgeMode(); }
+    else if (!strcmp(cmd, "WIFI_EXPORT_START")) requestWifiExport();        // standalone AP + http (logs/OTA); telemetry stays live
     else if (!strcmp(cmd, "WIFI_EXPORT_STOP"))  { if (webServiceActive())  { webServiceStop();  showToast("WIFI OFF"); } }
     else if (!strcmp(cmd, "REBOOT"))          { saveOdo(); sessionLogEnd(); delay(100); ESP.restart(); }
 }
@@ -387,6 +417,7 @@ void companionBleBegin() {
 
     NimBLEService* svc = g_server->createService(SVC_COMPANION);
     g_tel = svc->createCharacteristic(CH_TELEMETRY, NIMBLE_PROPERTY::NOTIFY);
+    g_ses = svc->createCharacteristic(CH_SESSION, NIMBLE_PROPERTY::NOTIFY);
 
     NimBLECharacteristic* set = svc->createCharacteristic(
         CH_SETTINGS, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
@@ -435,8 +466,14 @@ void companionBleTick() {
         applySettings(local);
     }
 
-    // 5 Hz telemetry notify (spec §3).
-    static unsigned long lastTel = 0;
+    // Telemetry notifies (spec §3), split across two characteristics so neither
+    // can brush the notify size limit: a notify silently truncates past
+    // ATT_MTU-3 (509 at the app's negotiated 512), and the merged payload
+    // measured ~503 bytes mid-ride — one wide odometer away from telemetry
+    // going dark. Core = fast-changing ride data at 5 Hz; session = trip /
+    // session statistics at 1 Hz. The app folds the latest session frame into
+    // each core frame.
+    static unsigned long lastTel = 0, lastSes = 0;
     unsigned long now = millis();
     if (now - lastTel < 200) return;
     lastTel = now;
@@ -447,6 +484,12 @@ void companionBleTick() {
     // match the conversions ui.cpp uses on the board's own pages.
     const float dCv = useMph ? KM2MI : 1.0f;     // km -> display distance
     const bool live = telemetryLive && (gDemoMode || vescLinkOk);
+
+    // Warn (once per characteristic) while there's still headroom to trim.
+    static bool coreWarned = false, sesWarned = false;
+    char buf[512];
+
+    // ---- 5 Hz core: what the rider watches while moving ----
     JsonDocument doc;
     doc["live"]  = live;
     doc["vesc"]  = vescLinkOk;
@@ -459,59 +502,65 @@ void companionBleTick() {
     doc["esc_t"] = live ? (int)currentEscTemp : 0;
     doc["btemp"] = live ? (int)currentBatteryTemp : 0;
     doc["rng"]   = live ? r1(useMph ? remainingRangeKm * KM2MI : remainingRangeKm) : 0.0f;
-    doc["max_s"] = r1(useMph ? maxSpeedKmh * KM2MI : maxSpeedKmh);
-    doc["wh"]    = r1(currentWattHours);
-    // Power detail
     doc["bata"]  = live ? r1(currentAmps) : 0.0f;              // battery A
     doc["mota"]  = live ? r1(currentMotorAmps) : 0.0f;         // motor A
     doc["duty"]  = live ? (int)currentDuty : 0;                // already %
     doc["pkw"]   = live ? (int)peakWatts : 0;                  // live peak-hold W ("peak now")
-    doc["mpw"]   = (int)maxWattsSession;         // session max W ("max ride")
-    // Energy / session
-    doc["whr"]   = r1(currentWhRegen);           // regen Wh
-    // Min-volt trackers start seeded at BATTERY_MAX_V; until telemetry has been
-    // live they hold that seed, which would show as a bogus "session min".
-    doc["minv"]  = live ? r1(minVoltageSession) : 0.0f;        // session min volt
-    doc["minvl"] = live ? r1(minVoltageUnderLoadSession) : 0.0f; // lowest loaded/discharge V
-    doc["mba"]   = r1(maxBatteryAmpsSession);    // max session battery A
     doc["cellv"] = live ? roundf(loadedCellVoltage * 100.0f) / 100.0f : 0.0f;
     doc["rwarn"] = live ? rangeAlertState : 0;   // 0 ok, 1 turn-home, 2 sag, 3 limp
-    doc["sagc"]  = sagEventsSession;
-    doc["thome"] = homeVoltageSecondsSession;    // seconds below ride-home floor under load
-    doc["tlimp"] = limpVoltageSecondsSession;    // seconds near limp floor under load
-    doc["avs"]   = r1(useMph ? avgSpeedKmh * KM2MI : avgSpeedKmh);
-    // Trip / odometer / range / efficiency (display units)
-    doc["trip"]  = r1(tripDistanceKm * dCv);
-    doc["odo"]   = r1(totalDistanceKm * dCv);
-    doc["est"]   = r1(estimatedRangeKm * dCv);
-    doc["lrng"]  = live ? r1(remainingLimpRangeKm * dCv) : 0.0f;
-    doc["lest"]  = r1(estimatedLimpRangeKm * dCv);
-    doc["eff"]   = r1(useMph ? avgWhPerKm / KM2MI : avgWhPerKm);      // Wh/mi (mph) or Wh/km
-    // System / fault
     doc["fault"] = live ? vescFault : 0;
-    doc["rtime"] = (uint32_t)(millis() / 1000UL);                     // board uptime this boot (seconds)
-    doc["tmov"]  = tripMovingSec;                                     // trip moving-time (seconds rolling) — board-authoritative
     // Remote input + diagnostics
     doc["ppm"]   = live ? r2(gPpmDecoded) : 0.0f; // throttle -1..1 (brake..accel)
     doc["ppmok"] = live && gPpmConnected;         // remote signal present
-    doc["lfault"]= gLastFault;                   // most recent fault (latched)
     doc["slave"] = live && gSlaveOnline;         // 2nd motor online over CAN
     doc["m1a"]   = live ? r1(gMasterMotorAmps) : 0.0f; // master motor current
     doc["m2a"]   = live ? r1(gSlaveMotorAmps) : 0.0f;  // slave motor current
-    { char fw[8]; snprintf(fw, sizeof(fw), "%u.%u", gVescFwMajor, gVescFwMinor); doc["fw"] = fw; }
 
-    char buf[768];
     size_t n = serializeJson(doc, buf, sizeof(buf));
-    // A notify is silently truncated past ATT_MTU-3 (514 at our requested MTU of
-    // 517), which the app then drops as unparseable JSON — telemetry would just
-    // go dark. Warn while there's still headroom so we trim the payload first.
-    static bool sizeWarned = false;
-    if (n > 480 && !sizeWarned) {
-        sizeWarned = true;
-        Serial.printf("[ble] telemetry JSON %u bytes — nearing the 514-byte notify limit\n", (unsigned)n);
+    if (n > 400 && !coreWarned) {
+        coreWarned = true;
+        Serial.printf("[ble] core telemetry JSON %u bytes — nearing the notify limit\n", (unsigned)n);
     }
     g_tel->setValue((uint8_t*)buf, n);
     g_tel->notify();
+
+    // ---- 1 Hz session: trip / odometer / session stats ----
+    if (!g_ses || now - lastSes < 1000) return;
+    lastSes = now;
+
+    JsonDocument ses;
+    ses["max_s"] = r1(useMph ? maxSpeedKmh * KM2MI : maxSpeedKmh);
+    ses["wh"]    = r1(currentWattHours);
+    ses["whr"]   = r1(currentWhRegen);           // regen Wh
+    ses["mpw"]   = (int)maxWattsSession;         // session max W ("max ride")
+    // Min-volt trackers start seeded at BATTERY_MAX_V; until telemetry has been
+    // live they hold that seed, which would show as a bogus "session min".
+    ses["minv"]  = live ? r1(minVoltageSession) : 0.0f;        // session min volt
+    ses["minvl"] = live ? r1(minVoltageUnderLoadSession) : 0.0f; // lowest loaded/discharge V
+    ses["mba"]   = r1(maxBatteryAmpsSession);    // max session battery A
+    ses["sagc"]  = sagEventsSession;
+    ses["thome"] = homeVoltageSecondsSession;    // seconds below ride-home floor under load
+    ses["tlimp"] = limpVoltageSecondsSession;    // seconds near limp floor under load
+    ses["avs"]   = r1(useMph ? avgSpeedKmh * KM2MI : avgSpeedKmh);
+    // Trip / odometer / range / efficiency (display units)
+    ses["trip"]  = r1(tripDistanceKm * dCv);
+    ses["odo"]   = r1(totalDistanceKm * dCv);
+    ses["est"]   = r1(estimatedRangeKm * dCv);
+    ses["lrng"]  = live ? r1(remainingLimpRangeKm * dCv) : 0.0f;
+    ses["lest"]  = r1(estimatedLimpRangeKm * dCv);
+    ses["eff"]   = r1(useMph ? avgWhPerKm / KM2MI : avgWhPerKm);      // Wh/mi (mph) or Wh/km
+    ses["rtime"] = (uint32_t)(millis() / 1000UL);                     // board uptime this boot (seconds)
+    ses["tmov"]  = tripMovingSec;                                     // trip moving-time (seconds rolling) — board-authoritative
+    ses["lfault"]= gLastFault;                   // most recent fault (latched)
+    { char fw[8]; snprintf(fw, sizeof(fw), "%u.%u", gVescFwMajor, gVescFwMinor); ses["fw"] = fw; }
+
+    n = serializeJson(ses, buf, sizeof(buf));
+    if (n > 400 && !sesWarned) {
+        sesWarned = true;
+        Serial.printf("[ble] session telemetry JSON %u bytes — nearing the notify limit\n", (unsigned)n);
+    }
+    g_ses->setValue((uint8_t*)buf, n);
+    g_ses->notify();
 }
 
 #else
