@@ -29,7 +29,7 @@ function applyTheme(name) {
   for (const [k, v] of Object.entries(map)) root.style.setProperty(k, v);
   root.classList.toggle("light", t.light);
   document.querySelector('meta[name="theme-color"]').content = t.page;
-  themeShot.src = `img/theme_${name}.png`;
+  themeShot.src = `img/theme_${name}.png?v=2`;
   themeShotCap.textContent = `${name} · ${t.cap}`;
   for (const b of chipsBox.querySelectorAll("button"))
     b.setAttribute("aria-pressed", String(b.dataset.theme === name));

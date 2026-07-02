@@ -28,3 +28,14 @@ src/version.h
 release/
 cfg.json
 cfg_put.json
+
+# local scratch: serial captures, reference shots, research notes
+# (kept out of git so `git status --porcelain` stays clean — gen_version.py
+# stamps builds -dirty whenever anything untracked is present)
+scripts/_s*.txt
+/diagram.png
+/master-vesc.png
+/slave-vesc.png
+/theme-example.png
+/image.png
+/Esk8OS Evee research report*.md

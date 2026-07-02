@@ -10,7 +10,7 @@
 <meta property="og:title" content="EVEE — open telemetry for personal electric vehicles">
 <meta property="og:description" content="On-vehicle dashboards, honest battery math, ride logging, and OTA updates. ESK8OS is the electric-skateboard edition.">
 <meta property="og:url" content="https://evee.zombie.digital/">
-<meta property="og:image" content="https://evee.zombie.digital/img/preview_hud_speed.png">
+<meta property="og:image" content="https://evee.zombie.digital/img/preview_hud_speed.png?v=2">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1216'/%3E%3Cpath d='M10 7h13v4h-8v3h7v4h-7v3h8v4H10z' fill='%23b950d7'/%3E%3Crect x='6' y='7' width='2.5' height='18' rx='1' fill='%234fd8eb'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -59,15 +59,15 @@
     <div class="hero-device">
       <div class="device">
         <div class="device-stack" id="hud-stack">
-          <img class="device-screen active" src="img/preview_hud_speed.png" width="510" height="960"
+          <img class="device-screen active" src="img/preview_hud_speed.png?v=2" width="510" height="960"
                alt="ESK8OS speed HUD: 27 MPH, battery cells at 78%, watts, volts, range and temperature tiles">
-          <img class="device-screen" src="img/preview_hud_battery_pct.png" width="510" height="960" loading="lazy"
+          <img class="device-screen" src="img/preview_hud_battery_pct.png?v=2" width="510" height="960" loading="lazy"
                alt="Battery HUD: full-screen cell gauge with 78% hero readout">
-          <img class="device-screen" src="img/preview_hud_battery_volts.png" width="510" height="960" loading="lazy"
+          <img class="device-screen" src="img/preview_hud_battery_volts.png?v=2" width="510" height="960" loading="lazy"
                alt="Voltage HUD: full-screen cell gauge with 39.8 V hero readout">
-          <img class="device-screen" src="img/preview_hud_watts.png" width="510" height="960" loading="lazy"
+          <img class="device-screen" src="img/preview_hud_watts.png?v=2" width="510" height="960" loading="lazy"
                alt="Power HUD: full-screen watts gauge with 540 W hero readout">
-          <img class="device-screen" src="img/preview_hud_safety.png" width="510" height="960" loading="lazy"
+          <img class="device-screen" src="img/preview_hud_safety.png?v=2" width="510" height="960" loading="lazy"
                alt="Safety HUD: loaded cell voltage 3.86 V, PACK OK state, min voltage, sag and limp-range tiles">
         </div>
         <button class="device-btn b1" id="hud-btn" type="button"
@@ -75,7 +75,7 @@
         <span class="device-btn b2" aria-hidden="true"></span>
       </div>
       <div class="face-dots" id="face-dots" role="tablist" aria-label="HUD faces"></div>
-      <p class="device-caption mono"><span id="face-label">SPEED</span> · actual firmware output · T-Display-S3</p>
+      <p class="device-caption mono"><span id="face-label">SPEED</span> · firmware-exact render · T-Display-S3</p>
     </div>
   </section>
 
@@ -89,21 +89,21 @@
       firmware's own layout engine at the panel's real 170×320 pixels.
     </p>
     <div class="screens">
-      <figure><img src="img/preview_dash.png" alt="Dash page: hero speed, volts and watts panel, temperatures, range estimate" loading="lazy">
+      <figure><img src="img/preview_dash.png?v=2" alt="Dash page: hero speed, volts and watts panel, temperatures, range estimate" loading="lazy">
         <figcaption><span class="mono">dash</span><span class="cap-sub">speed · temps · range</span></figcaption></figure>
-      <figure><img src="img/preview_power.png" alt="Power page: motor and battery amps, duty cycle, energy used and regenerated" loading="lazy">
+      <figure><img src="img/preview_power.png?v=2" alt="Power page: motor and battery amps, duty cycle, energy used and regenerated" loading="lazy">
         <figcaption><span class="mono">power</span><span class="cap-sub">amps · duty · regen</span></figcaption></figure>
-      <figure><img src="img/preview_trip.png" alt="Trip page: ride time, distance, average and max speed, efficiency, odometer" loading="lazy">
+      <figure><img src="img/preview_trip.png?v=2" alt="Trip page: ride time, distance, average and max speed, efficiency, odometer" loading="lazy">
         <figcaption><span class="mono">trip</span><span class="cap-sub">distance · efficiency</span></figcaption></figure>
-      <figure><img src="img/preview_graphs.png" alt="Graphs page: three-minute line graphs of speed, watts, volts and motor temperature" loading="lazy">
+      <figure><img src="img/preview_graphs.png?v=2" alt="Graphs page: three-minute line graphs of speed, watts, volts and motor temperature" loading="lazy">
         <figcaption><span class="mono">graphs</span><span class="cap-sub">3-minute history</span></figcaption></figure>
-      <figure><img src="img/preview_logs.png" alt="Logs page: saved ride summaries with distance, max speed and energy per ride" loading="lazy">
+      <figure><img src="img/preview_logs.png?v=2" alt="Logs page: saved ride summaries with distance, max speed and energy per ride" loading="lazy">
         <figcaption><span class="mono">logs</span><span class="cap-sub">saved rides</span></figcaption></figure>
-      <figure><img src="img/preview_settings.png" alt="Settings page: wheel profile, display, theme and battery configuration" loading="lazy">
+      <figure><img src="img/preview_settings.png?v=2" alt="Settings page: wheel profile, display, theme and battery configuration" loading="lazy">
         <figcaption><span class="mono">settings</span><span class="cap-sub">no app required</span></figcaption></figure>
-      <figure><img src="img/preview_bridge.png" alt="Bridge mode: VESC Tool passthrough over WiFi TCP and BLE with connection status" loading="lazy">
+      <figure><img src="img/preview_bridge.png?v=2" alt="Bridge mode: VESC Tool passthrough over WiFi TCP and BLE with connection status" loading="lazy">
         <figcaption><span class="mono">bridge</span><span class="cap-sub">VESC Tool passthrough</span></figcaption></figure>
-      <figure><img src="img/preview_splash.png" alt="Boot splash: ESK8OS wordmark, button legend and VESC connection progress" loading="lazy">
+      <figure><img src="img/preview_splash.png?v=2" alt="Boot splash: ESK8OS wordmark, button legend and VESC connection progress" loading="lazy">
         <figcaption><span class="mono">boot</span><span class="cap-sub">2-second cold start</span></figcaption></figure>
     </div>
   </section>
@@ -128,7 +128,7 @@
       </ul>
     </div>
     <figure class="split-shot">
-      <img src="img/preview_hud_safety.png" width="510" height="960" loading="lazy"
+      <img src="img/preview_hud_safety.png?v=2" width="510" height="960" loading="lazy"
            alt="Safety HUD face: 3.86 volts per cell in green, PACK OK, battery cells, MIN V, SAG, LIMP and LOW tiles">
       <figcaption class="mono">safety face · cell voltage under load</figcaption>
     </figure>
@@ -148,7 +148,7 @@
       <p class="fine mono">stored on-device in NVS · survives updates</p>
     </div>
     <figure class="split-shot">
-      <img id="theme-shot" src="img/theme_cam.png" width="510" height="960" loading="lazy"
+      <img id="theme-shot" src="img/theme_cam.png?v=2" width="510" height="960" loading="lazy"
            alt="Speed HUD rendered in the selected firmware theme">
       <figcaption class="mono" id="theme-shot-cap">cam · shipping default</figcaption>
     </figure>
@@ -240,6 +240,6 @@
   <span class="mono">an open project by <a href="https://apps.zombie.digital">zombie.digital</a> · <span id="year"></span></span>
 </footer>
 
-<script src="evee.js?v=4" defer></script>
+<script src="evee.js?v=5" defer></script>
 </body>
 </html>
