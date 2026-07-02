@@ -45,5 +45,19 @@ namespace Transports {
     bool getLatestVescData(RawVescData* outData);
     void setVescPollPaused(bool paused);
 
+    // Transport/wire-level state for the `diag` console command — lets a dead
+    // link be diagnosed as "ESC silent" vs "talking but frames rejected" vs
+    // "reads fine but voltage-gated" without a logic analyzer.
+    struct VescLinkDebug {
+        uint8_t path;           // 0 probing, 1 modern, 2 legacy
+        uint8_t slaveId;        // detected slave CAN id (0 = none yet)
+        bool searchDone;        // slave sweep finished with no hit
+        int scanIdx;            // sweep progress
+        uint32_t publishes;     // datasets handed to telemetry since boot
+        float lastVin;          // last raw input voltage read (pre any gating)
+        uint32_t txFrames, replies, rxBytes, crcErrors, timeouts;
+    };
+    void getVescLinkDebug(VescLinkDebug* out);
+
 }
 }

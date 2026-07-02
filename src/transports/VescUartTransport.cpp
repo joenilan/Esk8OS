@@ -74,10 +74,15 @@ static const uint32_t SLAVE_MASK =
     VESC_VAL_CURRENT_MOTOR | VESC_VAL_CURRENT_IN |
     VESC_VAL_WH | VESC_VAL_WH_CHARGED | VESC_VAL_FAULT;
 
+static uint32_t gPublishes = 0;
+static float gLastVin = 0;
+
 static void publish(const RawVescData& d) {
     if (xSemaphoreTake(gDataMutex, portMAX_DELAY) == pdTRUE) {
         gRawData = d;
         gHasNewData = true;
+        gPublishes++;
+        gLastVin = d.inpVoltage;
         xSemaphoreGive(gDataMutex);
     }
 }
@@ -294,6 +299,23 @@ bool getLatestVescData(RawVescData* outData) {
 
 void setVescPollPaused(bool paused) {
     gPollPaused = paused;
+}
+
+void getVescLinkDebug(VescLinkDebug* out) {
+    *out = {};
+#ifndef WOKWI_SIMULATION
+    out->path = (gPath == PATH_MODERN) ? 1 : (gPath == PATH_LEGACY) ? 2 : 0;
+    out->slaveId = gSlaveId;
+    out->searchDone = gSlaveSearchDone;
+    out->scanIdx = gScanIdx;
+    out->publishes = gPublishes;
+    out->lastVin = gLastVin;
+    out->txFrames = gProto.dbgTxFrames;
+    out->replies = gProto.dbgReplies;
+    out->rxBytes = gProto.dbgRxBytes;
+    out->crcErrors = gProto.dbgCrcErrors;
+    out->timeouts = gProto.dbgTimeouts;
+#endif
 }
 
 }

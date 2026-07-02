@@ -140,6 +140,15 @@ class VescProtocol {
 public:
     void begin(Stream* port) { _port = port; }
 
+    // Wire-level counters for link diagnosis (`diag` console command): they
+    // distinguish "ESC silent" (txFrames grows, rxBytes stays 0) from "ESC
+    // talking but frames rejected" (rxBytes grows, crcErrors/timeouts grow).
+    uint32_t dbgTxFrames = 0;   // requests sent
+    uint32_t dbgReplies  = 0;   // well-formed replies accepted
+    uint32_t dbgRxBytes  = 0;   // raw bytes seen on the wire
+    uint32_t dbgCrcErrors = 0;  // frames dropped on CRC mismatch
+    uint32_t dbgTimeouts = 0;   // requests that got no (complete) reply
+
     // All getters return false on timeout / CRC error / short reply.
     // canId != 0 forwards the request over CAN via the master (COMM_FORWARD_CAN).
     bool getFwVersion(VescFwInfo& out, uint8_t canId = 0);

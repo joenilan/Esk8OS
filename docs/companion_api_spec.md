@@ -161,6 +161,15 @@ When the Android app connects, it reads this characteristic to get the board's c
 | `rider` | string | ✅ | rider name shown in the header (≤15 chars), persisted to NVS |
 | `hud` | string | ✅ | board HUD face: `speed`, `battery`, or `watts` |
 | `bfocus` | string | ✅ | battery HUD hero value: `pct` or `volts` |
+| `calR` | int | ❌ | fw 0.9.5+: learned pack internal resistance, mΩ |
+| `calA` | float | ❌ | fw 0.9.5+: typical riding battery draw, A |
+| `calWhmi` | float | ❌ | fw 0.9.5+: board-learned consumption Wh/mi; `0` until learned |
+| `calWh` | int | ❌ | fw 0.9.5+: measured deliverable pack energy, Wh; `0` until learned |
+
+> **Range authority (fw 0.9.5+):** when `calR` is present the board learns its
+> own range model on-device (consumption, pack IR, deliverable energy). The app
+> must not auto-push a learned `whmi` over it — explicit user-initiated writes
+> remain fine.
 
 ### Write
 The Android app writes a JSON object to this characteristic to change settings. The ESP32 parses it, saves to non-volatile storage (NVS), and immediately repaints the display. *You can send partial updates.*

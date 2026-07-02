@@ -63,14 +63,16 @@ int VescProtocol::transact(const uint8_t* payload, int len, uint8_t expectCmd,
     frame[n++] = 0x03;
     _port->write(frame, n);
     _port->flush();
+    dbgTxFrames++;
 
     const uint32_t start = millis();
     auto readByte = [&](int& out) -> bool {
         while (!_port->available()) {
-            if (millis() - start > timeoutMs) return false;
+            if (millis() - start > timeoutMs) { dbgTimeouts++; return false; }
             delay(1);   // yield so a wait can't starve lower-priority tasks
         }
         out = _port->read();
+        dbgRxBytes++;
         return true;
     };
 
@@ -92,8 +94,9 @@ int VescProtocol::transact(const uint8_t* payload, int len, uint8_t expectCmd,
         int crcHi, crcLo, stop;
         if (!readByte(crcHi) || !readByte(crcLo) || !readByte(stop)) return 0;
         if (stop != 0x03) continue;                                   // mis-sync: hunt again
-        if (((crcHi << 8) | crcLo) != crc16(reply, plen)) return 0;   // corrupt: caller retries
+        if (((crcHi << 8) | crcLo) != crc16(reply, plen)) { dbgCrcErrors++; return 0; }   // corrupt: caller retries
         if (reply[0] != expectCmd) continue;                          // unrelated packet (e.g. COMM_PRINT)
+        dbgReplies++;
         return plen;
     }
 }

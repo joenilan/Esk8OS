@@ -2,6 +2,7 @@
 #include "esk8os.h"
 #include "app/App.h"
 #include "telemetry/telemetry.h"
+#include "transports/VescUartTransport.h"
 #include "version.h"
 #include "logging/sessionlog.h"
 #include "services/webexport.h"
@@ -171,12 +172,25 @@ static void cmdStat() {
     consoleOut().printf("energy %dWh used | %dWh regen\n", (int)currentWattHours, (int)currentWhRegen);
 }
 
+static void printVescWireDebug() {
+    Esk8OS::Transports::VescLinkDebug d;
+    Esk8OS::Transports::getVescLinkDebug(&d);
+    const char* path = d.path == 1 ? "modern" : d.path == 2 ? "legacy" : "probing";
+    consoleOut().printf("wire: %s | tx %lu ok %lu rx %luB crc-err %lu timeout %lu\n",
+        path, (unsigned long)d.txFrames, (unsigned long)d.replies,
+        (unsigned long)d.rxBytes, (unsigned long)d.crcErrors, (unsigned long)d.timeouts);
+    consoleOut().printf("wire: published %lu (last vin %.1fV) | slave id %u%s scan@%d\n",
+        (unsigned long)d.publishes, d.lastVin, d.slaveId,
+        d.searchDone ? " (sweep done)" : "", d.scanIdx);
+}
+
 static void cmdDiag() {
     if (!liveTelemetryAvailable()) {
         consoleOut().printf("VESC telemetry unavailable | demo %s | link %s | last-fault %d\n",
             gDemoMode ? "ON" : "OFF", vescLinkOk ? "OK" : "DOWN", gLastFault);
         consoleOut().printf("remote: %s | throttle %+.3f | pulse %.4f ms\n",
             gPpmConnected ? "CONNECTED" : "no signal", gPpmDecoded, gPpmPulseMs);
+        printVescWireDebug();
         return;
     }
     consoleOut().printf("remote: %s | throttle %+.3f (%s) | pulse %.4f ms\n",
@@ -197,6 +211,7 @@ static void cmdDiag() {
             gVescSpeedKmh * cv, useMph ? "mph" : "kmh", gVescBattPct, gVescWhLeft,
             gVescOdoKm * cv, useMph ? "mi" : "km");
     }
+    printVescWireDebug();
 }
 
 // Burst-sample the decoded PPM for ~2s and report the spread, to compare what

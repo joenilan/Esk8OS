@@ -137,6 +137,14 @@ static void buildSettingsJson(char* out, size_t cap) {
     // rider the per-device password (it's no longer a fixed public string).
     doc["wifiSsid"] = wifiBridgeSsid();
     doc["wifiPass"] = wifiBridgePass();
+    // Read-only: on-board adaptive battery calibration (fw 0.9.5+ learns these
+    // while riding — see telemetry.cpp / the `cal` console command). Presence
+    // of calR tells the app the BOARD is the range authority: it should show
+    // these instead of pushing its own learned "whmi".
+    doc["calR"]    = (int)lroundf(gPackROhm * 1000.0f);   // pack IR, mohm
+    doc["calA"]    = r1(gTypicalRideAmps);                // typical riding draw, A
+    doc["calWhmi"] = gLearnedWhPerKm > 0.5f ? r1(gLearnedWhPerKm * 1.609344f) : 0.0f;
+    doc["calWh"]   = (int)lroundf(gLearnedPackWh);        // deliverable pack Wh, 0 = unlearned
     serializeJson(doc, out, cap);
 }
 
