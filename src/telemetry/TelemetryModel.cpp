@@ -42,6 +42,20 @@ float gMasterMotorAmps = 0, gSlaveMotorAmps = 0;
 float gMasterMotorTemp = 0, gSlaveMotorTemp = 0;
 float gMasterEscTemp = 0, gSlaveEscTemp = 0;
 int   gLastFault = 0;           // most recent non-zero fault (latched until cleared)
+// Modern-protocol extras (COMM_GET_VALUES_SETUP_SELECTIVE; zero on legacy ESCs)
+bool  gVescModernProto = false; // aggregated setup-values path active
+uint8_t gVescNumVescs = 0;      // controllers the master sees on CAN
+uint8_t gSlaveCanId = 0;        // auto-detected slave CAN id (0 = none found)
+float gVescSpeedKmh = 0;        // ESC-computed speed (its own gearing config)
+int   gVescBattPct = 0;         // ESC's own battery estimate, 0-100
+float gVescWhLeft = 0;          // Wh remaining per the ESC battery config
+float gVescOdoKm = 0;           // ESC persistent odometer
+char  gVescHwName[17] = {0};    // ESC hardware name from the FW handshake
+// --- adaptive battery calibration (learned on real rides; NVS-persisted) ---
+float gPackROhm = 0.11f;        // seed = ride r0074 regression (pre-rewire); self-corrects
+float gTypicalRideAmps = 15.0f; // typical battery draw while rolling
+float gLearnedPackWh = 0;       // measured deliverable pack Wh (0 = not learned yet)
+float gLearnedWhPerKm = 0;      // cross-ride Wh/km EMA (0 = not learned yet)
 
 unsigned long rideStartMs = 0;
 float sessionTripStartKm = 0.0;

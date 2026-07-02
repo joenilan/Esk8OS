@@ -28,6 +28,17 @@ namespace Transports {
         float masterMotorAmps, slaveMotorAmps;     // per-motor motor current
         float masterTempMotor, slaveTempMotor;     // per-motor motor temp
         float masterTempMosfet, slaveTempMosfet;   // per-motor ESC temp
+
+        // --- modern-protocol extras (COMM_GET_VALUES_SETUP_SELECTIVE; zeroed
+        // when the ESC firmware predates it and the legacy path is active) ---
+        bool  modernProto;    // aggregated setup-values path in use
+        float vescSpeedKmh;   // ESC-computed speed (its own gearing config)
+        int   vescBatteryPct; // ESC's battery estimate, 0-100
+        float vescWhLeft;     // Wh remaining per the ESC battery config
+        float vescOdometerKm; // ESC's persistent odometer
+        uint8_t numVescs;     // controllers the master sees on the CAN bus
+        uint8_t slaveCanId;   // auto-detected slave id (0 = none found)
+        char  hwName[17];     // ESC hardware name from the FW handshake
     };
 
     void beginVescUart();

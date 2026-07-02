@@ -31,9 +31,6 @@
 #if ESK8OS_DISPLAY_TFT
 #include "LGFX_Config.h"   // LovyanGFX device/sprite types + fonts
 #endif
-#ifndef WOKWI_SIMULATION
-#include <VescUart.h>
-#endif
 
 // ---- layout -----------------------------------------------------------------
 static constexpr int UI_W = 170;   // logical UI width (the panel is 170 px wide)
@@ -220,6 +217,19 @@ extern float gMasterMotorAmps, gSlaveMotorAmps;
 extern float gMasterMotorTemp, gSlaveMotorTemp;
 extern float gMasterEscTemp, gSlaveEscTemp;
 extern int   gLastFault;
+// modern-protocol extras (aggregated setup values; zero on legacy ESC firmware)
+extern bool  gVescModernProto;
+extern uint8_t gVescNumVescs, gSlaveCanId;
+extern float gVescSpeedKmh;   // ESC-computed speed (its own gearing config)
+extern int   gVescBattPct;    // ESC's own battery estimate, 0-100
+extern float gVescWhLeft, gVescOdoKm;
+extern char  gVescHwName[17];
+// adaptive battery calibration — learned on real rides, NVS-persisted (see
+// telemetry.cpp "adaptive calibration" section; `cal` console command)
+extern float gPackROhm;         // pack internal resistance (sag compensation)
+extern float gTypicalRideAmps;  // EMA of battery draw while rolling (sag-floor input)
+extern float gLearnedPackWh;    // measured deliverable pack energy (0 = not learned)
+extern float gLearnedWhPerKm;   // cross-ride consumption EMA (0 = not learned)
 extern unsigned long rideStartMs;
 extern float sessionTripStartKm, tripDistanceKm, totalDistanceKm;
 extern uint32_t tripMovingSec;       // trip moving time (seconds rolling); persisted, board-authoritative
@@ -243,8 +253,5 @@ const int RIDE_LOG_MAX = 10;
 extern TelemetrySample history[];
 extern int histHead, histCount;
 
-// ---- persistence + VESC link (defined in main) ------------------------------
+// ---- persistence (defined in main) -------------------------------------------
 extern Preferences prefs;
-#ifndef WOKWI_SIMULATION
-extern VescUart UART;
-#endif

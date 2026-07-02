@@ -1342,7 +1342,9 @@ static void updateSettings() {
     drawVal(40,  String(w.name), COL_WHITE);
     drawVal(57,  String((int)round(w.wheelDiameterM * 1000)) + "mm", COL_WHITE);
     drawVal(74,  String(w.motorPulley) + ":" + String(w.wheelPulley), COL_WHITE);
-    drawVal(91,  String((int)w.polePairs), COL_WHITE);
+    // Stored as pole PAIRS (the eRPM divisor); shown as physical poles to
+    // match the motor spec sheet and the app (14-pole motor = 7 pairs).
+    drawVal(91,  String((int)(w.polePairs * 2)), COL_WHITE);
 
     drawVal(124, String(useMph ? "MPH" : "KM/H"), COL_WHITE);
     drawVal(137, String(gDemoMode ? "ON" : "OFF"), gDemoMode ? COL_YELLOW : COL_WHITE);

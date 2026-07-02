@@ -74,6 +74,16 @@ void saveOdo() {
     prefs.putFloat("odo", totalDistanceKm);
     prefs.putFloat("trip", tripDistanceKm);
     prefs.putUInt("tripsec", tripMovingSec);   // persist trip moving-time alongside distance
+
+    // Piggyback the adaptive battery calibration on the same save cadence
+    // (stop edges + 60s riding). Change-guarded so NVS isn't rewritten with
+    // identical values every minute. The values themselves only move during
+    // real (non-demo) telemetry — see the learning gates below.
+    static float sR = -1, sA = -1, sP = -1, sW = -1;
+    if (fabsf(gPackROhm - sR) > 0.002f)      { prefs.putFloat("packR", gPackROhm); sR = gPackROhm; }
+    if (fabsf(gTypicalRideAmps - sA) > 0.5f) { prefs.putFloat("typA", gTypicalRideAmps); sA = gTypicalRideAmps; }
+    if (fabsf(gLearnedPackWh - sP) > 5.0f)   { prefs.putFloat("packWhL", gLearnedPackWh); sP = gLearnedPackWh; }
+    if (fabsf(gLearnedWhPerKm - sW) > 0.2f)  { prefs.putFloat("whkmL", gLearnedWhPerKm); sW = gLearnedWhPerKm; }
 }
 
 // ---- demo simulation --------------------------------------------------------
@@ -136,6 +146,14 @@ static void simulateTelemetry() {
     gPpmPulseMs = 1.5f + gPpmDecoded * 0.5f;   // 1.0..2.0 ms, centered at 1.5
     gVescFwMajor = 6; gVescFwMinor = 2;
     gSlaveOnline = true;
+    gVescModernProto = true;
+    gVescNumVescs = 2;
+    gSlaveCanId = 114;
+    gVescSpeedKmh = currentSpeedKmh;
+    gVescBattPct = currentBatteryPercent;
+    gVescWhLeft = 250.0f * currentBatteryPercent / 100.0f;
+    gVescOdoKm = totalDistanceKm;
+    strncpy(gVescHwName, "SIMULATOR", sizeof(gVescHwName) - 1);
     gMasterMotorAmps = currentMotorAmps * 0.5f;
     gSlaveMotorAmps  = currentMotorAmps * 0.5f;
     gMasterMotorTemp = gSlaveMotorTemp = currentMotorTemp;
@@ -156,30 +174,84 @@ static float configuredNominalPackWh() {
 
 static int liionSocFromCellV(float v);
 
+// Smoothed SoC (defined with the OCV section below, needed here for learning)
+// and the SoC captured when the session energy baseline was set — the pair
+// gives Wh-per-SoC%, i.e. the pack's actually-deliverable energy.
+static float gSocFilt = -1.0f;
+static float gSocAtBaseline = -1.0f;
+
 static float configuredUsablePackWh(float floorCellV) {
-    // Scale nominal pack Wh by the configured usable voltage window. This keeps
-    // range conservative and aligned with the voltage where the dashboard says
-    // to stop, instead of estimating all the way to a fully depleted cell.
+    // Spec-derived fallback until the pack's real energy has been learned.
+    // Scales nominal pack Wh by the usable voltage window — crude (voltage is
+    // not linear in energy) but deliberately conservative for a fresh install.
     float usableWindow = max(0.1f, BATTERY_FULL_CELL_V - floorCellV);
     float nominalWindow = max(0.1f, BATTERY_FULL_CELL_V - 3.0f);
     return configuredNominalPackWh() * constrain(usableWindow / nominalWindow, 0.0f, 1.0f);
+}
+
+// Range floors are configured as RESTING per-cell voltages, but the VESC cuts
+// power on LOADED voltage: at typical riding current the pack sags I*R below
+// resting, so limp arrives at a HIGHER resting voltage than configured. Lift
+// the floor by the learned typical sag so "range to limp" means "range until
+// it actually limps", not "until it would limp if you stopped pulling amps".
+static float effectiveFloorCellV(float floorCellV) {
+    float sag = gTypicalRideAmps * gPackROhm / max(1, BATTERY_CELLS_COUNT);
+    return min(floorCellV + constrain(sag, 0.0f, 0.25f), BATTERY_FULL_CELL_V - 0.05f);
+}
+
+// Deliverable energy from full down to a resting floor: the learned measured
+// value once a ride has taught us (captures aging + IR truncation the spec
+// math can't see), the configured fallback before that.
+static float packWhToFloor(float floorCellV) {
+    int floorPct = liionSocFromCellV(floorCellV);
+    if (gLearnedPackWh > 1.0f) return gLearnedPackWh * (100 - floorPct) / 100.0f;
+    return configuredUsablePackWh(floorCellV);
 }
 
 static float remainingWhToFloor(float floorCellV) {
     int floorPct = liionSocFromCellV(floorCellV);
     float usablePctWindow = max(1.0f, 100.0f - floorPct);
     float remainingFrac = constrain((currentBatteryPercent - floorPct) / usablePctWindow, 0.0f, 1.0f);
-    return configuredUsablePackWh(floorCellV) * remainingFrac;
+    return packWhToFloor(floorCellV) * remainingFrac;
 }
 
 static float defaultWhPerKm() {
     return RANGE_DEFAULT_WH_PER_MILE / 1.609344f;
 }
 
+// Recent-consumption window: (trip km, net Wh) checkpoints every 100 m, ~3 km
+// deep. Remaining range uses the WORSE of this and the steady rate, so a
+// headwind/hill leg shortens the promise within a few hundred meters instead
+// of being averaged away by the whole session.
+static const int RECENT_N = 32;
+static float recKm[RECENT_N], recWh[RECENT_N];
+static int recHead = 0, recCount = 0;
+
+static void recentSample(float km, float wh) {
+    if (recCount > 0) {
+        int newest = (recHead + RECENT_N - 1) % RECENT_N;
+        if (km < recKm[newest]) { recCount = 0; recHead = 0; }   // trip was reset
+        else if (km - recKm[newest] < 0.1f) return;              // 100 m cadence
+    }
+    recKm[recHead] = km; recWh[recHead] = wh;
+    recHead = (recHead + 1) % RECENT_N;
+    if (recCount < RECENT_N) recCount++;
+}
+
+static float recentWhPerKm() {   // 0 = not enough usable data yet
+    if (recCount < 8) return 0;  // need >= ~0.8 km in the window
+    int oldest = (recHead + RECENT_N - recCount) % RECENT_N;
+    int newest = (recHead + RECENT_N - 1) % RECENT_N;
+    float dKm = recKm[newest] - recKm[oldest];
+    float dWh = recWh[newest] - recWh[oldest];
+    if (dKm < 0.5f || dWh < 1.0f) return 0;   // too short / regen-dominated
+    return dWh / dKm;
+}
+
 void updateRangeEstimate() {
     float sessionDistanceKm = tripDistanceKm - sessionTripStartKm;
     float netWhUsed = currentWattHours - currentWhRegen;
-    float whPerKm = defaultWhPerKm();
+    recentSample(tripDistanceKm, netWhUsed);
 
     // Simulated telemetry has no real ride to learn from, so shorten the
     // learn-in window in demo/sim — lets ESTIMATED + AVG WH animate on the bench.
@@ -187,23 +259,64 @@ void updateRangeEstimate() {
     float learnDist = DEMO_DATA ? 0.05f : RANGE_LEARN_MIN_DISTANCE_KM;
     float learnWh   = DEMO_DATA ? 1.0f  : RANGE_LEARN_MIN_WH;
 
+    // Steady consumption rate: this session's average once it's ridden far
+    // enough to be trustworthy; before that, the cross-ride learned rate from
+    // NVS; on a truly fresh device, the configured default.
+    float whPerKm = (gLearnedWhPerKm > 0.5f) ? gLearnedWhPerKm : defaultWhPerKm();
     rangeEstimateReady = false;
+    float sessionWhPerKm = 0;
     if (sessionDistanceKm >= learnDist && netWhUsed >= learnWh) {
-        float learnedWhPerKm = netWhUsed / sessionDistanceKm;
-        if (learnedWhPerKm >= defaultWhPerKm() * 0.6f && learnedWhPerKm <= defaultWhPerKm() * 2.0f) {
-            whPerKm = learnedWhPerKm;
+        float l = netWhUsed / sessionDistanceKm;
+        if (l >= defaultWhPerKm() * 0.6f && l <= defaultWhPerKm() * 2.0f) {
+            sessionWhPerKm = l;
+            whPerKm = l;
             rangeEstimateReady = true;
         }
     }
-
     avgWhPerKm = whPerKm;
-    float homeFloorCell = max(BATTERY_HOME_CELL_V, BATTERY_STOP_CELL_V);
-    float homePackWh = configuredUsablePackWh(homeFloorCell);
-    float limpPackWh = configuredUsablePackWh(BATTERY_STOP_CELL_V);
-    estimatedRangeKm = homePackWh / avgWhPerKm;
-    remainingRangeKm = remainingWhToFloor(homeFloorCell) / avgWhPerKm;
-    estimatedLimpRangeKm = limpPackWh / avgWhPerKm;
-    remainingLimpRangeKm = remainingWhToFloor(BATTERY_STOP_CELL_V) / avgWhPerKm;
+
+    bool realRide = !DEMO_DATA && telemetryLive;
+
+    // Fold the session rate into the persisted cross-ride EMA (throttled; the
+    // next boot starts from this instead of the configured default).
+    if (realRide && rangeEstimateReady) {
+        static unsigned long lastFold = 0;
+        if (millis() - lastFold > 60000) {
+            lastFold = millis();
+            gLearnedWhPerKm = (gLearnedWhPerKm > 0.5f)
+                ? gLearnedWhPerKm * 0.8f + sessionWhPerKm * 0.2f
+                : sessionWhPerKm;
+        }
+    }
+
+    // Learn the pack's deliverable energy: net Wh consumed per SoC% actually
+    // dropped, measured over this ride. Converges on what THIS pack really
+    // delivers (aging, IR truncation) instead of trusting the label capacity.
+    if (realRide && rideEnergyBaselineSet && gSocAtBaseline > 0 && gSocFilt >= 0) {
+        float socDrop = gSocAtBaseline - gSocFilt;
+        if (socDrop >= 10.0f && netWhUsed >= 30.0f) {
+            static unsigned long lastPackFold = 0;
+            if (millis() - lastPackFold > 60000) {
+                lastPackFold = millis();
+                float nom = configuredNominalPackWh();
+                float est = constrain(netWhUsed / (socDrop / 100.0f), nom * 0.3f, nom * 1.25f);
+                gLearnedPackWh = (gLearnedPackWh > 1.0f)
+                    ? gLearnedPackWh * 0.8f + est * 0.2f
+                    : est;
+            }
+        }
+    }
+
+    // Remaining range biases pessimistic: the worse of the steady rate and the
+    // recent window. Full-pack ESTIMATED figures stay on the steady rate.
+    float recent = recentWhPerKm();
+    float remWhPerKm = max(whPerKm, recent);
+    float homeFloor = effectiveFloorCellV(max(BATTERY_HOME_CELL_V, BATTERY_STOP_CELL_V));
+    float limpFloor = effectiveFloorCellV(BATTERY_STOP_CELL_V);
+    estimatedRangeKm     = packWhToFloor(homeFloor) / whPerKm;
+    estimatedLimpRangeKm = packWhToFloor(limpFloor) / whPerKm;
+    remainingRangeKm     = remainingWhToFloor(homeFloor) / remWhPerKm;
+    remainingLimpRangeKm = remainingWhToFloor(limpFloor) / remWhPerKm;
 }
 
 // ---- state-of-charge from a real Li-ion curve -------------------------------
@@ -226,17 +339,13 @@ static int liionSocFromCellV(float v) {
     return 0;
 }
 
-// Pack internal resistance (ohms) used to undo voltage sag: V_open = V + I*R.
-// Calibrated from ride r0074: regressing pack volts vs battery current gave
-// ~0.23 ohm using the MASTER VESC current alone; the real pack sees both motors'
-// current (~2x), so true R ~= 0.11 ohm. NOTE this is high for a 10s6p (healthy is
-// ~0.04-0.05) — aged/high-resistance cells or resistive wiring/connectors, which
-// itself shortens usable range. Re-tune if cells/wiring change.
-static const float BATTERY_INTERNAL_R_OHM = 0.11f;
-
-// Smoothed SoC so sag/regen transients don't swing the gauge. EMA across polls
-// (~10 Hz); seeded on the first real reading so it doesn't ramp up from zero.
-static float gSocFilt = -1.0f;
+// Pack internal resistance used to undo voltage sag (V_open = V + I*R) lives in
+// gPackROhm — LEARNED online from current steps (see pollVescData) and persisted,
+// so it tracks wiring changes and pack aging. NVS seed history: 0.11 ohm came
+// from regressing ride r0074 (pre-rewire); healthy 10s6p is ~0.04-0.05.
+// (gSocFilt / gSocAtBaseline are declared above the range section, which needs
+// them for pack-energy learning. gSocFilt: EMA across polls (~10 Hz), seeded on
+// the first real reading so it doesn't ramp up from zero.)
 
 // ---- one poll cycle ---------------------------------------------------------
 void pollVescData() {
@@ -255,10 +364,36 @@ void pollVescData() {
             currentSpeedMph = currentSpeedKmh * 0.621371;
 
             currentVoltage = raw.inpVoltage;
+
+            // Online pack-IR estimation: a sharp battery-current step exposes
+            // R = -dV/dI (V and I come from the same VESC packet, so the pair
+            // is time-aligned). EMA'd + clamped to physical bounds, persisted
+            // via saveOdo — the sag model self-corrects after wiring changes
+            // or as the pack ages, no ride-log regression needed.
+            {
+                static float prevV = 0, prevI = 0;
+                static unsigned long prevMs = 0;
+                unsigned long nowIr = millis();
+                if (prevMs != 0 && nowIr - prevMs < 400) {
+                    float dI = raw.avgInputCurrent - prevI;
+                    if (fabsf(dI) >= 8.0f) {
+                        float rEst = -(raw.inpVoltage - prevV) / dI;
+                        if (rEst >= 0.02f && rEst <= 0.40f)
+                            gPackROhm += (rEst - gPackROhm) * 0.05f;
+                    }
+                }
+                prevV = raw.inpVoltage; prevI = raw.avgInputCurrent; prevMs = nowIr;
+            }
+
+            // Typical riding draw (slow EMA while rolling under power) — sets
+            // how much sag to expect at the range floors.
+            if (currentSpeedKmh > 5.0f && raw.avgInputCurrent > 1.0f)
+                gTypicalRideAmps += (raw.avgInputCurrent - gTypicalRideAmps) * 0.002f;
+
             // Sag-compensate to open-circuit voltage (discharge current is positive,
             // so this adds the sag back; regen is negative, which subtracts it), then
             // read SoC off the Li-ion curve and low-pass filter it.
-            float vOpen = currentVoltage + raw.avgInputCurrent * BATTERY_INTERNAL_R_OHM;
+            float vOpen = currentVoltage + raw.avgInputCurrent * gPackROhm;
             float vCell = vOpen / max(1, BATTERY_CELLS_COUNT);
             int rawSoc = liionSocFromCellV(vCell);
             if (gSocFilt < 0) gSocFilt = rawSoc;            // seed on first sample
@@ -286,6 +421,7 @@ void pollVescData() {
                 rideStartVescWh = raw.wattHours;
                 rideStartVescWhRegen = raw.wattHoursCharged;
                 rideEnergyBaselineSet = true;
+                gSocAtBaseline = gSocFilt;   // anchor for pack-energy learning
             }
             currentWattHours = max(0.0f, raw.wattHours - rideStartVescWh);
             currentWhRegen = max(0.0f, raw.wattHoursCharged - rideStartVescWhRegen);
@@ -299,6 +435,14 @@ void pollVescData() {
             gVescFwMajor = raw.fwMajor;
             gVescFwMinor = raw.fwMinor;
             gSlaveOnline = raw.slaveOnline;
+            gVescModernProto = raw.modernProto;
+            gVescNumVescs = raw.numVescs;
+            gSlaveCanId = raw.slaveCanId;
+            gVescSpeedKmh = raw.vescSpeedKmh;
+            gVescBattPct = raw.vescBatteryPct;
+            gVescWhLeft = raw.vescWhLeft;
+            gVescOdoKm = raw.vescOdometerKm;
+            memcpy(gVescHwName, raw.hwName, sizeof(gVescHwName));
             gMasterMotorAmps = raw.masterMotorAmps;
             gSlaveMotorAmps = raw.slaveMotorAmps;
             gMasterMotorTemp = raw.masterTempMotor;
@@ -436,4 +580,43 @@ void pollVescData() {
     } else {
         rangeAlertState = 0;
     }
+}
+
+// ---- adaptive-calibration console surface (`cal` command) --------------------
+void telemetryPrintCal(Print& out) {
+    float cv = useMph ? 0.621371f : 1.0f;
+    const char* u = useMph ? "mi" : "km";
+    float nom = configuredNominalPackWh();
+    out.printf("pack R %.0f mohm (seed 110) | typical draw %.1f A\n",
+        gPackROhm * 1000.0f, gTypicalRideAmps);
+    if (gLearnedPackWh > 1.0f)
+        out.printf("pack energy LEARNED %.0f Wh (label %.0f Wh -> %.0f%% healthy)\n",
+            gLearnedPackWh, nom, 100.0f * gLearnedPackWh / nom);
+    else
+        out.printf("pack energy not learned yet (needs a >=10%% SoC ride) | label %.0f Wh\n", nom);
+    if (gLearnedWhPerKm > 0.5f)
+        out.printf("consumption LEARNED %.1f Wh/%s (default %.1f)\n",
+            gLearnedWhPerKm / cv, u, RANGE_DEFAULT_WH_PER_MILE * (useMph ? 1.0f : 1.0f / 1.609344f));
+    else
+        out.printf("consumption not learned yet | default %.1f Wh/mi\n", RANGE_DEFAULT_WH_PER_MILE);
+    float recent = recentWhPerKm();
+    if (recent > 0) out.printf("recent window %.1f Wh/%s\n", recent / cv, u);
+    float homeFloor = effectiveFloorCellV(max(BATTERY_HOME_CELL_V, BATTERY_STOP_CELL_V));
+    float limpFloor = effectiveFloorCellV(BATTERY_STOP_CELL_V);
+    out.printf("sag-aware floors: home %.2f V/cell (cfg %.2f, SoC %d%%) | limp %.2f (cfg %.2f, SoC %d%%)\n",
+        homeFloor, max(BATTERY_HOME_CELL_V, BATTERY_STOP_CELL_V), liionSocFromCellV(homeFloor),
+        limpFloor, BATTERY_STOP_CELL_V, liionSocFromCellV(limpFloor));
+    out.printf("range now: %.1f %s to home floor | %.1f %s to limp\n",
+        remainingRangeKm * cv, u, remainingLimpRangeKm * cv, u);
+}
+
+void telemetryResetCal() {
+    gPackROhm = 0.11f;
+    gTypicalRideAmps = 15.0f;
+    gLearnedPackWh = 0;
+    gLearnedWhPerKm = 0;
+    prefs.remove("packR");
+    prefs.remove("typA");
+    prefs.remove("packWhL");
+    prefs.remove("whkmL");
 }

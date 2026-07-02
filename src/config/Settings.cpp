@@ -112,7 +112,14 @@ void begin() {
     BATTERY_STOP_CELL_V = constrain(prefFloat("stopCell", BATTERY_STOP_CELL_V), 3.00f, 3.60f);
     BATTERY_HOME_CELL_V = constrain(prefFloat("homeCell", BATTERY_HOME_CELL_V), BATTERY_STOP_CELL_V, BATTERY_FULL_CELL_V);
     RANGE_DEFAULT_WH_PER_MILE = constrain(prefFloat("whmi", RANGE_DEFAULT_WH_PER_MILE), 14.0f, 40.0f);
-    
+
+    // Adaptive battery calibration learned on rides (telemetry.cpp; `cal` cmd).
+    gPackROhm        = constrain(prefFloat("packR", gPackROhm), 0.01f, 0.50f);
+    gTypicalRideAmps = constrain(prefFloat("typA", gTypicalRideAmps), 2.0f, 60.0f);
+    gLearnedPackWh   = prefFloat("packWhL", 0.0f);
+    gLearnedWhPerKm  = prefFloat("whkmL", 0.0f);
+
+
     recalcBatteryBounds();
     currentVoltage = 0;                       // show 0 (no reading) until the VESC is polled, not a fake 42V
     minVoltageSession = BATTERY_MAX_V;         // min-tracking must start high (see telemetry.cpp:336)

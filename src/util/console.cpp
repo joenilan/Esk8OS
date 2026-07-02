@@ -1,6 +1,7 @@
 #include "console.h"
 #include "esk8os.h"
 #include "app/App.h"
+#include "telemetry/telemetry.h"
 #include "version.h"
 #include "logging/sessionlog.h"
 #include "services/webexport.h"
@@ -181,11 +182,21 @@ static void cmdDiag() {
     consoleOut().printf("remote: %s | throttle %+.3f (%s) | pulse %.4f ms\n",
         gPpmConnected ? "CONNECTED" : "no signal", gPpmDecoded,
         gPpmDecoded > 0.02f ? "accel" : (gPpmDecoded < -0.02f ? "brake" : "center"), gPpmPulseMs);
-    consoleOut().printf("vesc fw %u.%u | slave(CAN) %s | fault %d | last-fault %d\n",
-        gVescFwMajor, gVescFwMinor, gSlaveOnline ? "online" : "offline", vescFault, gLastFault);
+    consoleOut().printf("vesc fw %u.%u%s%s | proto %s | fault %d | last-fault %d\n",
+        gVescFwMajor, gVescFwMinor,
+        gVescHwName[0] ? " " : "", gVescHwName,
+        gVescModernProto ? "setup-values" : "legacy", vescFault, gLastFault);
+    consoleOut().printf("can bus: %u vesc(s) | slave id %u %s\n",
+        gVescNumVescs, gSlaveCanId, gSlaveOnline ? "online" : (gSlaveCanId ? "offline" : "(none found)"));
     consoleOut().printf("motor A: master %.1f | slave %.1f\n", gMasterMotorAmps, gSlaveMotorAmps);
     consoleOut().printf("temps C: motor m %.0f/s %.0f | esc m %.0f/s %.0f\n",
         gMasterMotorTemp, gSlaveMotorTemp, gMasterEscTemp, gSlaveEscTemp);
+    if (gVescModernProto) {
+        float cv = useMph ? 0.621371f : 1.0f;
+        consoleOut().printf("esc-side: spd %.1f %s | batt %d%% | %.0f Wh left | odo %.1f %s\n",
+            gVescSpeedKmh * cv, useMph ? "mph" : "kmh", gVescBattPct, gVescWhLeft,
+            gVescOdoKm * cv, useMph ? "mi" : "km");
+    }
 }
 
 // Burst-sample the decoded PPM for ~2s and report the spread, to compare what
@@ -456,6 +467,7 @@ static void cmdHelp() {
     consoleOut().println(F("  stat            live telemetry (speed/power/temps/energy)"));
     consoleOut().println(F("  diag            remote/PPM throttle + VESC diagnostics"));
     consoleOut().println(F("  trip [reset]    trip distance/time/avg/max/range, or full reset"));
+    consoleOut().println(F("  cal [reset]     learned battery calibration (pack R/energy/Wh-mi)"));
     consoleOut().println(F("  sys             fw, uptime, heap/psram, reset reason, fps"));
     consoleOut().println(F("  cfg             units/demo/brightness/battery/wheel config"));
     consoleOut().println(F("  i2c             scan I2C bus (OLED builds)"));
@@ -522,6 +534,15 @@ static void dispatch(char* line) {
     else if (!strcmp(line, "trip")) {
         if (!strcmp(arg, "reset") && !needConfirm("reset the trip (distance + moving-time)", orig)) return;
         cmdTrip(arg);
+    }
+    else if (!strcmp(line, "cal")) {
+        if (!strcmp(arg, "reset")) {
+            if (!needConfirm("clear the learned battery calibration (pack R / energy / Wh-per-mi)", orig)) return;
+            telemetryResetCal();
+            consoleOut().println("calibration reset to seeds; relearns on the next rides");
+        } else {
+            telemetryPrintCal(consoleOut());
+        }
     }
     else if (!strcmp(line, "sys"))  cmdSys();
     else if (!strcmp(line, "i2c"))  cmdI2c();

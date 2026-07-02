@@ -1,0 +1,169 @@
+#pragma once
+#include <Arduino.h>
+
+// ============================================================================
+// Self-contained VESC UART protocol client. Replaces the abandoned
+// SolidGeek/VescUart library (last commit Nov 2023) with an in-repo
+// implementation verified against vedderb/bldc master (FW 6.x), so we can use
+// the modern telemetry commands the old lib never learned:
+//
+//   COMM_GET_VALUES_SETUP_SELECTIVE  - CAN-aggregated dual-motor telemetry,
+//                                      speed (m/s), battery level, persistent
+//                                      odometer, Wh remaining, #VESCs — one
+//                                      packet instead of a master+slave dance.
+//   COMM_GET_VALUES_SELECTIVE        - per-motor reads with a field bitmask
+//                                      (small packets for the diag view).
+//   COMM_GET_STATS                   - ESC-side ride statistics (FW 6+).
+//   COMM_SET_ODOMETER                - set the ESC's persistent odometer.
+//
+// Wire format (both directions):
+//   [0x02 len | 0x03 lenHi lenLo] payload crc16Hi crc16Lo 0x03
+// crc16 = CRC-16/XMODEM over the payload only. All multi-byte fields are
+// big-endian. Field layouts and mask bit positions were transcribed from
+// bldc/comm/commands.c — do not "fix" an offset without re-checking there.
+// Older firmware (FW 3.x/4.x) lacks the selective commands; callers fall back
+// to the fixed-layout COMM_GET_VALUES which is stable back to FW 3.4.
+// ============================================================================
+
+namespace Esk8OS {
+namespace Transports {
+
+// COMM_PACKET_ID subset (values from bldc/datatypes.h).
+enum VescCommand : uint8_t {
+    VESC_COMM_FW_VERSION                = 0,
+    VESC_COMM_GET_VALUES                = 4,
+    VESC_COMM_ALIVE                     = 30,
+    VESC_COMM_GET_DECODED_PPM           = 31,
+    VESC_COMM_FORWARD_CAN               = 34,
+    VESC_COMM_GET_VALUES_SETUP          = 47,
+    VESC_COMM_GET_VALUES_SELECTIVE      = 50,
+    VESC_COMM_GET_VALUES_SETUP_SELECTIVE= 51,
+    VESC_COMM_PING_CAN                  = 62,
+    VESC_COMM_SET_ODOMETER              = 110,
+    VESC_COMM_GET_STATS                 = 128,
+};
+
+// COMM_GET_VALUES_SELECTIVE mask bits (commands.c, COMM_GET_VALUES case).
+enum : uint32_t {
+    VESC_VAL_TEMP_FET       = 1u << 0,
+    VESC_VAL_TEMP_MOTOR     = 1u << 1,
+    VESC_VAL_CURRENT_MOTOR  = 1u << 2,
+    VESC_VAL_CURRENT_IN     = 1u << 3,
+    VESC_VAL_DUTY           = 1u << 6,
+    VESC_VAL_RPM            = 1u << 7,
+    VESC_VAL_V_IN           = 1u << 8,
+    VESC_VAL_AH             = 1u << 9,
+    VESC_VAL_AH_CHARGED     = 1u << 10,
+    VESC_VAL_WH             = 1u << 11,
+    VESC_VAL_WH_CHARGED     = 1u << 12,
+    VESC_VAL_TACHO          = 1u << 13,
+    VESC_VAL_TACHO_ABS      = 1u << 14,
+    VESC_VAL_FAULT          = 1u << 15,
+    VESC_VAL_PID_POS        = 1u << 16,
+    VESC_VAL_CONTROLLER_ID  = 1u << 17,
+};
+
+// COMM_GET_VALUES_SETUP_SELECTIVE mask bits (commands.c, GET_VALUES_SETUP case).
+enum : uint32_t {
+    VESC_SETUP_TEMP_FET       = 1u << 0,   // master-local FET temp
+    VESC_SETUP_TEMP_MOTOR     = 1u << 1,   // master-local motor temp
+    VESC_SETUP_CURRENT_TOT    = 1u << 2,   // motor current, summed over CAN
+    VESC_SETUP_CURRENT_IN_TOT = 1u << 3,   // battery current, summed over CAN
+    VESC_SETUP_DUTY           = 1u << 4,
+    VESC_SETUP_RPM            = 1u << 5,
+    VESC_SETUP_SPEED          = 1u << 6,   // m/s, from the ESC's gearing setup
+    VESC_SETUP_V_IN           = 1u << 7,
+    VESC_SETUP_BATT_LEVEL     = 1u << 8,   // 0..1
+    VESC_SETUP_AH_TOT         = 1u << 9,
+    VESC_SETUP_AH_CHG_TOT     = 1u << 10,
+    VESC_SETUP_WH_TOT         = 1u << 11,
+    VESC_SETUP_WH_CHG_TOT     = 1u << 12,
+    VESC_SETUP_DIST           = 1u << 13,  // meters
+    VESC_SETUP_DIST_ABS       = 1u << 14,  // meters
+    VESC_SETUP_FAULT          = 1u << 16,
+    VESC_SETUP_CONTROLLER_ID  = 1u << 17,
+    VESC_SETUP_NUM_VESCS      = 1u << 18,  // controllers seen on the CAN bus
+    VESC_SETUP_WH_LEFT        = 1u << 19,  // Wh left per the ESC battery config
+    VESC_SETUP_ODOMETER       = 1u << 20,  // persistent, meters
+    VESC_SETUP_UPTIME         = 1u << 21,  // ms since ESC boot
+};
+
+// Per-motor values (COMM_GET_VALUES / COMM_GET_VALUES_SELECTIVE). Fields not
+// requested (or absent on old firmware) stay zeroed.
+struct VescMotorValues {
+    float tempFet = 0, tempMotor = 0;
+    float currentMotor = 0, currentIn = 0;
+    float duty = 0, rpm = 0, vIn = 0;
+    float ampHours = 0, ampHoursCharged = 0;
+    float wattHours = 0, wattHoursCharged = 0;
+    int32_t tachometer = 0, tachometerAbs = 0;
+    uint8_t fault = 0, controllerId = 0;
+};
+
+// CAN-aggregated values (COMM_GET_VALUES_SETUP_SELECTIVE).
+struct VescSetupValues {
+    float tempFet = 0, tempMotor = 0;         // master-local
+    float currentTot = 0, currentInTot = 0;   // summed across CAN
+    float duty = 0, rpm = 0;
+    float speedMs = 0;
+    float vIn = 0;
+    float battLevel = 0;                      // 0..1
+    float ahTot = 0, ahChgTot = 0;
+    float whTot = 0, whChgTot = 0;
+    float distM = 0, distAbsM = 0;
+    uint8_t fault = 0, controllerId = 0, numVescs = 0;
+    float whLeft = 0;
+    uint32_t odometerM = 0, uptimeMs = 0;
+};
+
+struct VescFwInfo {
+    uint8_t major = 0, minor = 0;
+    char hwName[17] = {0};
+};
+
+struct VescPpm {
+    float decoded = 0;   // -1..1 throttle
+    float pulseMs = 0;   // last servo pulse length
+};
+
+// ESC-side ride statistics (COMM_GET_STATS, FW 6+). Speeds m/s, temps C.
+struct VescStats {
+    float speedAvg = 0, speedMax = 0;
+    float powerAvg = 0, powerMax = 0;
+    float currentAvg = 0, currentMax = 0;
+    float tempMosAvg = 0, tempMosMax = 0;
+    float tempMotorAvg = 0, tempMotorMax = 0;
+    float countTime = 0;   // seconds accumulated
+};
+
+class VescProtocol {
+public:
+    void begin(Stream* port) { _port = port; }
+
+    // All getters return false on timeout / CRC error / short reply.
+    // canId != 0 forwards the request over CAN via the master (COMM_FORWARD_CAN).
+    bool getFwVersion(VescFwInfo& out, uint8_t canId = 0);
+    bool getValues(VescMotorValues& out, uint8_t canId = 0);                   // fixed-layout legacy
+    bool getValuesSelective(uint32_t mask, VescMotorValues& out, uint8_t canId = 0);
+    bool getSetupValuesSelective(uint32_t mask, VescSetupValues& out);
+    bool getDecodedPpm(VescPpm& out);
+    bool getStats(VescStats& out);
+    void setOdometerMeters(uint32_t meters);                                   // no ack from ESC
+
+    // Probe one CAN ID with a tiny forwarded request; true if it answered.
+    // (COMM_PING_CAN exists but blocks the ESC for seconds scanning all 255
+    // IDs, which would starve the poll loop — incremental probing instead.)
+    bool probeCanId(uint8_t canId, uint32_t timeoutMs = 50);
+
+private:
+    Stream* _port = nullptr;
+
+    // Send one framed payload and read one framed reply whose first payload
+    // byte equals expectCmd. Returns payload length (>=1) or 0 on failure.
+    int transact(const uint8_t* payload, int len, uint8_t expectCmd,
+                 uint8_t* reply, int maxReply, uint32_t timeoutMs = 100);
+    bool parseValues(const uint8_t* p, int len, uint32_t mask, bool maskEchoed, VescMotorValues& out);
+};
+
+}
+}
