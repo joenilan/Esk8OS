@@ -301,6 +301,17 @@ void setVescPollPaused(bool paused) {
     gPollPaused = paused;
 }
 
+bool peekVescData(RawVescData* outData) {
+    if (gDataMutex == NULL) return false;
+    bool any = false;
+    if (xSemaphoreTake(gDataMutex, 0) == pdTRUE) {
+        any = gPublishes > 0;
+        *outData = gRawData;
+        xSemaphoreGive(gDataMutex);
+    }
+    return any;
+}
+
 void getVescLinkDebug(VescLinkDebug* out) {
     *out = {};
 #ifndef WOKWI_SIMULATION

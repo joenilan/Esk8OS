@@ -45,6 +45,13 @@ namespace Transports {
     bool getLatestVescData(RawVescData* outData);
     void setVescPollPaused(bool paused);
 
+    // Last dataset the poll task published, without consuming it and without
+    // the plausibility gating telemetry applies — so `diag` can show what the
+    // ESC actually reports even when it's in logic-standby (vin ~3.6V) and
+    // the rider-facing telemetry is deliberately masked. False until the
+    // first publish since boot.
+    bool peekVescData(RawVescData* outData);
+
     // Transport/wire-level state for the `diag` console command — lets a dead
     // link be diagnosed as "ESC silent" vs "talking but frames rejected" vs
     // "reads fine but voltage-gated" without a logic analyzer.

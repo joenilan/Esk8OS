@@ -17,6 +17,7 @@
 #include "telemetry/telemetry.h"
 #include "logging/sessionlog.h"
 #include "board/BoardLilyGoTDisplayS3.h"
+#include "version.h"
 
 // Custom companion service + characteristics (docs/companion_api_spec.md §2).
 static const char* DEVICE_NAME   = "ESK8-BLE";   // same name VESC Tool scans for
@@ -103,6 +104,7 @@ static const char* uiKindName() {
 
 static void buildSettingsJson(char* out, size_t cap) {
     JsonDocument doc;
+    doc["fwv"]     = FW_VERSION_FULL;   // ESK8OS firmware version (About page)
     doc["hw"]      = hardwareModelName();
     doc["display"] = displayKindName();
     doc["ui"]      = uiKindName();

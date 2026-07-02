@@ -143,6 +143,7 @@ When the Android app connects, it reads this characteristic to get the board's c
 
 | Key | Type | Writable | Range / notes |
 | :--- | :--- | :--- | :--- |
+| `fwv` | string | ❌ | fw 0.9.5+: ESK8OS firmware version, e.g. `v0.9.5 9fc0918` (for the app's About page) |
 | `hw` | string | ❌ | hardware target: `tdisplay-s3`, `esp32s3-oled`, `esp32s3-headless`, or generic `esp32s3` |
 | `display` | string | ❌ | onboard display class: `tft`, `oled`, or `none` |
 | `ui` | string | ❌ | onboard UI class: `full`, `mini`, or `headless` |

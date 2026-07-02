@@ -182,6 +182,22 @@ static void printVescWireDebug() {
     consoleOut().printf("wire: published %lu (last vin %.1fV) | slave id %u%s scan@%d\n",
         (unsigned long)d.publishes, d.lastVin, d.slaveId,
         d.searchDone ? " (sweep done)" : "", d.scanIdx);
+
+    // Raw last-published dataset, shown even while the rider-facing telemetry
+    // is voltage-gated (ESC in logic standby) — everything the ESC reports,
+    // for debugging. vin < 6V here = power stage off, values are standby junk.
+    Esk8OS::Transports::RawVescData r;
+    if (Esk8OS::Transports::peekVescData(&r)) {
+        consoleOut().printf("raw: vin %.1fV rpm %.0f duty %.0f%% | batA %.1f motA %.1f | wh %.1f/-%.1f | motC %.0f escC %.0f | fault %d\n",
+            r.inpVoltage, r.rpm, r.dutyCycleNow * 100.0f,
+            r.avgInputCurrent, r.avgMotorCurrent,
+            r.wattHours, r.wattHoursCharged, r.tempMotor, r.tempMosfet, r.error);
+        consoleOut().printf("raw: esc fw %u.%u %s | vescs %u | esc-batt %d%% | esc-whLeft %.0f | esc-odo %.2f km | esc-spd %.1f kmh\n",
+            r.fwMajor, r.fwMinor, r.hwName[0] ? r.hwName : "?",
+            r.numVescs, r.vescBatteryPct, r.vescWhLeft, r.vescOdometerKm, r.vescSpeedKmh);
+    } else {
+        consoleOut().println("raw: nothing published since boot");
+    }
 }
 
 static void cmdDiag() {
