@@ -16,26 +16,28 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="evee.css?v=5">
+<link rel="preload" as="image" href="img/preview_hud_speed.png?v=2">
+<link rel="stylesheet" href="evee.css?v=6">
 </head>
 <body>
 
 <header class="topbar">
   <div class="wrap topbar-in">
     <a class="brand" href="#top" aria-label="EVEE — back to top">EVEE<span class="brand-tick"></span></a>
-    <nav class="topnav">
+    <nav class="topnav" aria-label="Sections">
       <a href="#screens">Screens</a>
       <a href="#safety">Safety</a>
       <a href="#themes">Themes</a>
       <a href="#firmware">Firmware</a>
       <a href="#app">App</a>
     </nav>
-    <span class="top-clock mono" id="top-clock" aria-hidden="true">--:--</span>
+    <a class="btn small nav-cta" href="#firmware">Download</a>
   </div>
 </header>
 
 <main id="top">
-  <!-- ── Hero: thesis + the instrument, alive ─────────────────────────── -->
+
+  <!-- ── Hero ─────────────────────────────────────────────────────────── -->
   <section class="hero wrap">
     <div class="hero-copy">
       <p class="eyebrow">Open PEV telemetry</p>
@@ -44,18 +46,15 @@
         EVEE is an open telemetry platform for personal electric vehicles —
         boards, bikes, scooters, anything with an ESC and a battery.
         ESK8OS, its skateboard edition, reads your VESC a dozen times a
-        second and turns it into a dashboard you can trust: honest battery
-        math, sag alerts, ride logs, updates over the air.
+        second and turns it into a dashboard you can trust.
       </p>
       <div class="hero-cta">
         <a class="btn primary" href="#firmware">Get the firmware</a>
         <a class="btn" href="#screens">Browse the screens</a>
       </div>
-      <p class="hero-note mono" id="release-line">firmware — · app — · self-hosted</p>
+      <p class="status-line" id="release-line"><span class="status-dot" aria-hidden="true"></span>firmware — · self-hosted · open source</p>
     </div>
 
-    <!-- Signature: the real HUD in a working device frame. The side button
-         cycles the five faces, exactly like the physical button does. -->
     <div class="hero-device">
       <div class="device">
         <div class="device-stack" id="hud-stack">
@@ -75,40 +74,48 @@
         <span class="device-btn b2" aria-hidden="true"></span>
       </div>
       <div class="face-dots" id="face-dots" role="tablist" aria-label="HUD faces"></div>
-      <p class="device-caption mono"><span id="face-label">SPEED</span> · firmware-exact render · T-Display-S3</p>
+      <p class="device-caption"><span class="mono" id="face-label">SPEED</span><span class="cap-dim"> — firmware-exact render, LilyGo T-Display-S3</span></p>
     </div>
   </section>
 
-  <!-- ── Every on-board page ──────────────────────────────────────────── -->
+  <!-- ── Trust row ────────────────────────────────────────────────────── -->
+  <section class="wrap trust" aria-label="At a glance">
+    <div class="trust-item"><h3>Open source</h3><p>Firmware, app, and this site — built in the open.</p></div>
+    <div class="trust-item"><h3>VESC native</h3><p>Dual ESCs over UART and CAN, VESC Tool passthrough.</p></div>
+    <div class="trust-item"><h3>Self-hosted updates</h3><p>Checksummed builds served from our own release feed.</p></div>
+    <div class="trust-item"><h3>Yours to theme</h3><p>Eight palettes on the board — and on this page.</p></div>
+  </section>
+
+  <!-- ── Screens ──────────────────────────────────────────────────────── -->
   <section id="screens" class="wrap section">
     <p class="eyebrow">On-board pages</p>
     <h2>Eight pages. Two buttons.</h2>
     <p class="lede narrow">
       Tap left or right to move through the pages — the dots at the bottom
-      of the screen are the map. Everything below is rendered by the
+      of the screen are the map. Every screen below is rendered by the
       firmware's own layout engine at the panel's real 170×320 pixels.
     </p>
     <div class="screens">
-      <figure><img src="img/preview_dash.png?v=2" alt="Dash page: hero speed, volts and watts panel, temperatures, range estimate" loading="lazy">
-        <figcaption><span class="mono">dash</span><span class="cap-sub">speed · temps · range</span></figcaption></figure>
-      <figure><img src="img/preview_power.png?v=2" alt="Power page: motor and battery amps, duty cycle, energy used and regenerated" loading="lazy">
-        <figcaption><span class="mono">power</span><span class="cap-sub">amps · duty · regen</span></figcaption></figure>
-      <figure><img src="img/preview_trip.png?v=2" alt="Trip page: ride time, distance, average and max speed, efficiency, odometer" loading="lazy">
-        <figcaption><span class="mono">trip</span><span class="cap-sub">distance · efficiency</span></figcaption></figure>
-      <figure><img src="img/preview_graphs.png?v=2" alt="Graphs page: three-minute line graphs of speed, watts, volts and motor temperature" loading="lazy">
-        <figcaption><span class="mono">graphs</span><span class="cap-sub">3-minute history</span></figcaption></figure>
-      <figure><img src="img/preview_logs.png?v=2" alt="Logs page: saved ride summaries with distance, max speed and energy per ride" loading="lazy">
-        <figcaption><span class="mono">logs</span><span class="cap-sub">saved rides</span></figcaption></figure>
-      <figure><img src="img/preview_settings.png?v=2" alt="Settings page: wheel profile, display, theme and battery configuration" loading="lazy">
-        <figcaption><span class="mono">settings</span><span class="cap-sub">no app required</span></figcaption></figure>
-      <figure><img src="img/preview_bridge.png?v=2" alt="Bridge mode: VESC Tool passthrough over WiFi TCP and BLE with connection status" loading="lazy">
-        <figcaption><span class="mono">bridge</span><span class="cap-sub">VESC Tool passthrough</span></figcaption></figure>
-      <figure><img src="img/preview_splash.png?v=2" alt="Boot splash: ESK8OS wordmark, button legend and VESC connection progress" loading="lazy">
-        <figcaption><span class="mono">boot</span><span class="cap-sub">2-second cold start</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/preview_dash.png?v=2" alt="Dash page: hero speed, volts and watts panel, temperatures, range estimate" loading="lazy"></span>
+        <figcaption><span class="cap-name">Dash</span><span class="cap-sub">speed · temps · range</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/preview_power.png?v=2" alt="Power page: motor and battery amps, duty cycle, energy used and regenerated" loading="lazy"></span>
+        <figcaption><span class="cap-name">Power</span><span class="cap-sub">amps · duty · regen</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/preview_trip.png?v=2" alt="Trip page: ride time, distance, average and max speed, efficiency, odometer" loading="lazy"></span>
+        <figcaption><span class="cap-name">Trip</span><span class="cap-sub">distance · efficiency</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/preview_graphs.png?v=2" alt="Graphs page: three-minute line graphs of speed, watts, volts and motor temperature" loading="lazy"></span>
+        <figcaption><span class="cap-name">Graphs</span><span class="cap-sub">3-minute history</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/preview_logs.png?v=2" alt="Logs page: saved ride summaries with distance, max speed and energy per ride" loading="lazy"></span>
+        <figcaption><span class="cap-name">Logs</span><span class="cap-sub">saved rides</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/preview_settings.png?v=2" alt="Settings page: wheel profile, display, theme and battery configuration" loading="lazy"></span>
+        <figcaption><span class="cap-name">Settings</span><span class="cap-sub">no app required</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/preview_bridge.png?v=2" alt="Bridge mode: VESC Tool passthrough over WiFi TCP and BLE with connection status" loading="lazy"></span>
+        <figcaption><span class="cap-name">Bridge</span><span class="cap-sub">VESC Tool passthrough</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/preview_splash.png?v=2" alt="Boot splash: ESK8OS wordmark, button legend and VESC connection progress" loading="lazy"></span>
+        <figcaption><span class="cap-name">Boot</span><span class="cap-sub">2-second cold start</span></figcaption></figure>
     </div>
   </section>
 
-  <!-- ── Safety face (new in v0.9.4) ──────────────────────────────────── -->
+  <!-- ── Safety face ──────────────────────────────────────────────────── -->
   <section id="safety" class="wrap section split">
     <div class="split-copy">
       <p class="eyebrow">New in v0.9.4</p>
@@ -128,82 +135,86 @@
       </ul>
     </div>
     <figure class="split-shot">
-      <img src="img/preview_hud_safety.png?v=2" width="510" height="960" loading="lazy"
-           alt="Safety HUD face: 3.86 volts per cell in green, PACK OK, battery cells, MIN V, SAG, LIMP and LOW tiles">
-      <figcaption class="mono">safety face · cell voltage under load</figcaption>
+      <span class="shot"><img src="img/preview_hud_safety.png?v=2" width="510" height="960" loading="lazy"
+           alt="Safety HUD face: 3.86 volts per cell in green, PACK OK, battery cells, MIN V, SAG, LIMP and LOW tiles"></span>
+      <figcaption>Safety face — cell voltage under load</figcaption>
     </figure>
   </section>
 
-  <!-- ── Themes: the firmware's palette table runs this page ──────────── -->
+  <!-- ── Themes ───────────────────────────────────────────────────────── -->
   <section id="themes" class="wrap section split rev">
     <div class="split-copy">
       <p class="eyebrow">Themes</p>
-      <h2>Eight palettes ship on the board.<br>This page runs the same table.</h2>
+      <h2>Eight palettes ship on the board.</h2>
       <p class="lede">
-        Every color on this site is pulled from the firmware's own theme
-        table — the one you scroll through in Settings. Pick one. The page
-        and the board will agree.
+        This page runs the firmware's own theme table — the same one you
+        scroll through in Settings. Pick one. The page and the board will
+        agree.
       </p>
       <div class="theme-chips" id="theme-chips" role="group" aria-label="Choose a firmware theme"></div>
-      <p class="fine mono">stored on-device in NVS · survives updates</p>
+      <p class="fine">Stored on-device in flash — your theme survives updates.</p>
     </div>
     <figure class="split-shot">
-      <img id="theme-shot" src="img/theme_cam.png?v=2" width="510" height="960" loading="lazy"
-           alt="Speed HUD rendered in the selected firmware theme">
-      <figcaption class="mono" id="theme-shot-cap">cam · shipping default</figcaption>
+      <span class="shot"><img id="theme-shot" src="img/theme_cam.png?v=2" width="510" height="960" loading="lazy"
+           alt="Speed HUD rendered in the selected firmware theme"></span>
+      <figcaption id="theme-shot-cap">cam — shipping default</figcaption>
     </figure>
   </section>
 
-  <!-- ── Editions ─────────────────────────────────────────────────────── -->
+  <!-- ── Platform ─────────────────────────────────────────────────────── -->
   <section id="esk8os" class="wrap section">
     <p class="eyebrow">The platform</p>
     <h2>One platform. Editions per vehicle.</h2>
     <div class="cards">
       <article class="card live">
-        <header class="card-head mono"><h3>ESK8OS</h3><span class="tag">available</span></header>
-        <div class="card-body">
-          <p>The electric-skateboard edition. Reads dual VESCs over UART/CAN,
-          drives four HUD faces and eight telemetry pages, learns your real
-          Wh/mi, and warns you before the battery lies to you.</p>
-          <ul class="spec mono">
-            <li>LilyGo T-Display-S3 · ESP32-S3 OLED · headless</li>
-            <li>Li-ion SoC curve + sag compensation</li>
-            <li>Session CSV logs · WiFi export · OTA</li>
-          </ul>
-        </div>
+        <header class="card-head">
+          <h3>ESK8OS</h3>
+          <span class="pill ok">Available</span>
+        </header>
+        <p>The electric-skateboard edition. Reads dual VESCs over UART and
+        CAN, drives four HUD faces and eight telemetry pages, learns your
+        real Wh/mi, and warns you before the battery lies to you.</p>
+        <ul class="spec mono">
+          <li>LilyGo T-Display-S3 · ESP32-S3 OLED · headless</li>
+          <li>Li-ion SoC curve + sag compensation</li>
+          <li>Session CSV logs · WiFi export · OTA</li>
+        </ul>
       </article>
       <article class="card">
-        <header class="card-head mono"><h3>E-bike / scooter</h3><span class="tag">planned</span></header>
-        <div class="card-body">
-          <p>The same telemetry core, tuned for bar-mounted displays and
-          bigger packs. The companion protocol already carries a vehicle
-          type — the scan list shows the right icon today.</p>
-        </div>
+        <header class="card-head">
+          <h3>E-bike / scooter</h3>
+          <span class="pill">Planned</span>
+        </header>
+        <p>The same telemetry core, tuned for bar-mounted displays and
+        bigger packs. The companion protocol already carries a vehicle
+        type — the scan list shows the right icon today.</p>
       </article>
       <article class="card">
-        <header class="card-head mono"><h3>Companion app</h3><span class="tag">available</span></header>
-        <div class="card-body">
-          <p>Android app with live telemetry, GPS ride recording, trip
-          history with map playback, graphs, GPX export, and full board
-          settings — over BLE, in your pocket, screen off.</p>
-        </div>
+        <header class="card-head">
+          <h3>Companion app</h3>
+          <span class="pill ok">Available</span>
+        </header>
+        <p>Android app with live telemetry, GPS ride recording, trip
+        history with map playback, graphs, GPX export, and full board
+        settings — over BLE, in your pocket, screen off.</p>
       </article>
     </div>
   </section>
 
-  <!-- ── Firmware downloads (live from the release contract) ──────────── -->
+  <!-- ── Firmware ─────────────────────────────────────────────────────── -->
   <section id="firmware" class="wrap section">
     <p class="eyebrow">Firmware</p>
     <h2>Latest release</h2>
     <div class="release-card">
-      <div class="release-meta">
+      <div class="release-head">
         <span class="release-ver" id="fw-version">—</span>
-        <span class="release-date mono" id="fw-date"></span>
+        <span class="release-meta mono"><span id="fw-date"></span><span class="release-channel" id="fw-channel"></span></span>
       </div>
       <p id="fw-notes" class="release-notes">Loading release feed…</p>
       <div class="dl-list" id="fw-files"></div>
-      <p class="fine mono">sha256 sums published beside every artifact ·
-        <a href="https://apps.zombie.digital/downloads/esk8os-firmware/latest.json">release feed</a></p>
+      <p class="fine">SHA-256 checksums are published beside every artifact —
+        <a href="https://apps.zombie.digital/downloads/esk8os-firmware/latest.json">release feed</a> ·
+        <a href="https://apps.zombie.digital/downloads/esk8os-firmware/notes.md">release notes</a></p>
     </div>
   </section>
 
@@ -212,34 +223,50 @@
     <p class="eyebrow">Companion app</p>
     <h2>The ride, recorded.</h2>
     <p class="lede narrow">
-      Start a trip and the app keeps recording — screen off, phone pocketed —
-      under a proper foreground service. GPS route, board speed against GPS
-      speed, battery and power at every point, elevation, and a map playback
-      of the whole ride. Android first; the APK will be published here.
+      Start a trip and the app keeps recording — screen off, phone
+      pocketed — under a proper foreground service. Android first; the APK
+      will be published here.
     </p>
+    <ul class="feature-list">
+      <li>Live telemetry over BLE with the board's own theme</li>
+      <li>GPS route recording alongside board speed and power</li>
+      <li>Trip history with map playback and graphs</li>
+      <li>GPX export for any mapping tool</li>
+      <li>Full board settings without touching a cable</li>
+      <li>Elevation, battery, and efficiency at every point</li>
+    </ul>
     <div class="hero-cta">
       <a class="btn" id="apk-btn" href="#" aria-disabled="true">Android APK — coming soon</a>
     </div>
   </section>
 
-  <!-- ── OTA story ────────────────────────────────────────────────────── -->
+  <!-- ── Updates ──────────────────────────────────────────────────────── -->
   <section id="ota" class="wrap section">
     <p class="eyebrow">Updates</p>
     <h2>Over-the-air, no cables in the rain.</h2>
-    <div class="boot-bar" id="boot-bar" aria-hidden="true"><span class="boot-fill"></span></div>
-    <ol class="ota-steps">
-      <li><b>Check.</b> The app reads this site's release feed and compares it to your board's version.</li>
-      <li><b>Fetch.</b> It downloads the signed build for your hardware, checksum verified.</li>
-      <li><b>Flash.</b> The board raises its own WiFi, takes the image over HTTP, verifies, and reboots. Your odometer and settings stay put.</li>
-    </ol>
+    <div class="steps">
+      <div class="step"><span class="step-n mono">01</span><h3>Check</h3>
+        <p>The app reads this site's release feed and compares it to your board's version.</p></div>
+      <div class="step"><span class="step-n mono">02</span><h3>Fetch</h3>
+        <p>It downloads the build for your hardware, verified against its published checksum.</p></div>
+      <div class="step"><span class="step-n mono">03</span><h3>Flash</h3>
+        <p>The board raises its own WiFi, takes the image, verifies, and reboots. Odometer and settings stay put.</p></div>
+    </div>
   </section>
 </main>
 
-<footer class="wrap footer">
-  <a class="brand small" href="#top">EVEE</a>
-  <span class="mono">an open project by <a href="https://apps.zombie.digital">zombie.digital</a> · <span id="year"></span></span>
+<footer class="footer-outer">
+  <div class="wrap footer">
+    <a class="brand small" href="#top">EVEE</a>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="https://github.com/joenilan/Esk8OS">GitHub</a>
+      <a href="https://apps.zombie.digital/downloads/esk8os-firmware/latest.json">Release feed</a>
+      <a href="https://apps.zombie.digital">zombie.digital</a>
+    </nav>
+    <span class="footer-note">An open project · <span id="year"></span></span>
+  </div>
 </footer>
 
-<script src="evee.js?v=5" defer></script>
+<script src="evee.js?v=6" defer></script>
 </body>
 </html>

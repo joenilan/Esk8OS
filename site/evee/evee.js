@@ -30,7 +30,7 @@ function applyTheme(name) {
   root.classList.toggle("light", t.light);
   document.querySelector('meta[name="theme-color"]').content = t.page;
   themeShot.src = `img/theme_${name}.png?v=2`;
-  themeShotCap.textContent = `${name} · ${t.cap}`;
+  themeShotCap.textContent = `${name} — ${t.cap}`;
   for (const b of chipsBox.querySelectorAll("button"))
     b.setAttribute("aria-pressed", String(b.dataset.theme === name));
   try { localStorage.setItem("evee-theme", name); } catch (_) {}
@@ -86,26 +86,13 @@ new IntersectionObserver((en) => {
   if (en[0].isIntersecting) restartHud(); else clearInterval(hudTimer);
 }, { threshold: 0.2 }).observe(document.querySelector(".device"));
 
-// ── Topbar clock — same slot as the device status bar ──
-const clockEl = document.getElementById("top-clock");
-function tick() {
-  const d = new Date();
-  clockEl.textContent = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
-}
-tick(); setInterval(tick, 30000);
-
 // ── Scroll-reveal sections (skipped for reduced motion via CSS) ──
 const sections = document.querySelectorAll("main section");
 sections.forEach((s) => s.classList.add("reveal"));
 const io = new IntersectionObserver((entries) => {
   for (const en of entries) if (en.isIntersecting) { en.target.classList.add("in"); io.unobserve(en.target); }
-}, { threshold: 0.12 });
+}, { threshold: 0.1 });
 sections.forEach((s) => io.observe(s));
-
-// OTA boot-bar fills once the updates section arrives
-new IntersectionObserver((en, obs) => {
-  if (en[0].isIntersecting) { document.getElementById("boot-bar").classList.add("go"); obs.disconnect(); }
-}, { threshold: 0.4 }).observe(document.getElementById("ota"));
 
 // Active nav state follows the section in view.
 const navLinks = [...document.querySelectorAll(".topnav a")];
@@ -117,7 +104,8 @@ const navIo = new IntersectionObserver((entries) => {
 }, { rootMargin: "-30% 0px -60% 0px" });
 document.querySelectorAll("main section[id]").forEach((s) => navIo.observe(s));
 
-// ── Live release feed ──
+// ── Live release feed — latest.json for the card, manifest.json for
+//    per-artifact sizes and checksums ──
 const FEED = "https://apps.zombie.digital/downloads/esk8os-firmware";
 const LABELS = {
   "tdisplay-s3": ["LilyGo T-Display-S3", "color dashboard build"],
@@ -125,25 +113,36 @@ const LABELS = {
   "esp32s3-headless": ["ESP32-S3 headless", "BLE/app-only build"],
 };
 
-fetch(`${FEED}/latest.json`)
-  .then((r) => r.json())
-  .then((rel) => {
+const jf = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
+
+Promise.all([jf(`${FEED}/latest.json`), jf(`${FEED}/manifest.json`).catch(() => null)])
+  .then(([rel, man]) => {
     document.getElementById("fw-version").textContent = "v" + rel.version;
     document.getElementById("fw-date").textContent =
       new Date(rel.publishedAt).toISOString().slice(0, 10);
+    document.getElementById("fw-channel").textContent = rel.channel || "";
     document.getElementById("fw-notes").textContent = rel.notes || "";
-    document.getElementById("release-line").textContent =
-      `firmware v${rel.version} · app soon · self-hosted`;
+    document.getElementById("release-line").innerHTML =
+      `<span class="status-dot" aria-hidden="true"></span>firmware v${rel.version} · self-hosted · open source`;
+
+    const assets = (man && man.assets) ||
+      Object.entries(rel.files || {}).map(([kind, file]) => ({ kind, file }));
     const list = document.getElementById("fw-files");
     list.innerHTML = "";
-    for (const [kind, file] of Object.entries(rel.files || {})) {
-      const [name, sub] = LABELS[kind] || [kind, ""];
-      const a = document.createElement("a");
-      a.className = "dl-item";
-      a.href = `${FEED}/${file}`;
-      a.innerHTML = `<span><span class="k">${name}</span><br><span class="f mono">${file}</span></span>` +
-                    `<span class="f mono">${sub}</span>`;
-      list.appendChild(a);
+    for (const a of assets) {
+      const [name, sub] = LABELS[a.kind] || [a.kind, ""];
+      const el = document.createElement("a");
+      el.className = "dl-item";
+      el.href = `${FEED}/${a.file}`;
+      const size = a.bytes ? (a.bytes / 1048576).toFixed(1) + " MB" : "";
+      const sha = a.sha256 ? "sha256 " + a.sha256.slice(0, 8) : "";
+      el.innerHTML =
+        `<span><span class="k">${name}</span><span class="f mono">${a.file}</span></span>` +
+        `<span class="sz mono">${size}</span>` +
+        `<span class="sha mono">${sha}</span>` +
+        `<span class="arrow" aria-hidden="true">↓</span>`;
+      el.setAttribute("aria-label", `Download ${name} — ${sub}`);
+      list.appendChild(el);
     }
   })
   .catch(() => {
