@@ -3,6 +3,7 @@
 
 #ifndef WOKWI_SIMULATION
 #include "transports/VescProtocol.h"
+#include <LittleFS.h>
 #endif
 
 namespace Esk8OS {
@@ -76,6 +77,49 @@ static const uint32_t SLAVE_MASK =
 
 static uint32_t gPublishes = 0;
 static float gLastVin = 0;
+
+// ---- raw COMM_GET_MCCONF capture ---------------------------------------------
+// One-shot per boot, attempted only after a successful telemetry cycle so it
+// runs on a link that is provably up. Lives in this task (not the console)
+// because the console is USB-side and the pack/USB combination isn't available
+// for live probing on this board — the bytes are persisted to /mcconf.hex and
+// read back later instead. File write from this task is safe: esp_littlefs
+// serializes VFS access internally, and it's a different file from the session
+// log. NO parsing here by design — the mcconf layout is firmware-version-
+// specific (see docs/VESC_CONFIG_READ_HANDOFF.md).
+static uint8_t gMcconfRaw[1024];
+static volatile int     gMcconfLen = 0;
+static volatile uint8_t gMcconfStatus = 0;    // 0 waiting, 1 captured, 2 gave up
+static uint8_t gMcconfAttempts = 0;
+static const uint8_t MCCONF_MAX_ATTEMPTS = 10;
+
+static void saveMcconfFile() {
+    File f = LittleFS.open("/mcconf.hex", "w");
+    if (!f) return;
+    f.printf("COMM_GET_MCCONF raw capture (no parsing)\n");
+    f.printf("esc fw %u.%u %s\n", gFw.major, gFw.minor, gFw.hwName[0] ? gFw.hwName : "?");
+    if (gMcconfLen > 0) {
+        f.printf("len %d\n", (int)gMcconfLen);
+        for (int i = 0; i < gMcconfLen; i++)
+            f.printf((i % 16 == 15 || i == gMcconfLen - 1) ? "%02X\n" : "%02X ", gMcconfRaw[i]);
+    } else {
+        f.printf("FAILED: no valid reply in %u attempts\n", (unsigned)gMcconfAttempts);
+    }
+    f.close();
+}
+
+static void tryMcconfCapture() {
+    gMcconfAttempts++;
+    int n = gProto.rawCommand(VESC_COMM_GET_MCCONF, gMcconfRaw, sizeof(gMcconfRaw));
+    if (n > 0) {
+        gMcconfLen = n;
+        gMcconfStatus = 1;
+        saveMcconfFile();
+    } else if (gMcconfAttempts >= MCCONF_MAX_ATTEMPTS) {
+        gMcconfStatus = 2;
+        saveMcconfFile();   // record the failure so a later USB read explains itself
+    }
+}
 
 static void publish(const RawVescData& d) {
     if (xSemaphoreTake(gDataMutex, portMAX_DELAY) == pdTRUE) {
@@ -251,6 +295,7 @@ static void vescPollTask(void* pvParameters) {
                 if (ok) {
                     consecutiveMisses = 0;
                     if (gFw.major == 0) gProto.getFwVersion(gFw);
+                    if (gMcconfStatus == 0) tryMcconfCapture();
                 } else if (++consecutiveMisses >= 20) {
                     // ~2s of silence: treat as a link loss and re-probe from
                     // scratch when the ESC comes back. The slave ID is kept —
@@ -314,6 +359,15 @@ bool peekVescData(RawVescData* outData) {
 #else
     (void)outData;
     return false;   // no real transport in the Wokwi build
+#endif
+}
+
+void getMcconfCaptureState(McconfCapture* out) {
+    *out = {};
+#ifndef WOKWI_SIMULATION
+    out->status = gMcconfStatus;
+    out->len = gMcconfLen;
+    out->attempts = gMcconfAttempts;
 #endif
 }
 

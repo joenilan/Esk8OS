@@ -265,6 +265,20 @@ static void cmdTrip(const char* arg) {
         rangeEstimateReady ? "[learned]" : "[default]");
 }
 
+// Raw VESC config capture (COMM_GET_MCCONF). The poll task grabs it once per
+// boot when the VESC link is up and saves it to /mcconf.hex, so the bytes are
+// read back here later — the capture itself never needs a PC attached.
+static void cmdMcconf() {
+    Esk8OS::Transports::McconfCapture c;
+    Esk8OS::Transports::getMcconfCaptureState(&c);
+    const char* st = c.status == 1 ? "captured this boot"
+                   : c.status == 2 ? "FAILED this boot (link up, no valid reply)"
+                   : "not captured this boot (VESC link never up)";
+    consoleOut().printf("mcconf: %s | attempts %u | len %d\n", st, (unsigned)c.attempts, c.len);
+    if (LittleFS.exists("/mcconf.hex")) cmdCat("/mcconf.hex");
+    else consoleOut().println("no /mcconf.hex saved yet - boot the board once with the pack on, then re-read");
+}
+
 static void cmdSys() {
     unsigned long up = millis() / 1000;
     consoleOut().printf("fw %s\n", FW_VERSION_FULL);
@@ -518,6 +532,7 @@ static void cmdHelp() {
     consoleOut().println(F("  trip [reset]    trip distance/time/avg/max/range, or full reset"));
     consoleOut().println(F("  cal [reset]     learned battery calibration (pack R/energy/Wh-mi)"));
     consoleOut().println(F("  wheel [mm|reset] wheel-size calibration (120-350mm; reset=use preset)"));
+    consoleOut().println(F("  mcconf          raw VESC config capture status + saved dump"));
     consoleOut().println(F("  sys             fw, uptime, heap/psram, reset reason, fps"));
     consoleOut().println(F("  cfg             units/demo/brightness/battery/wheel config"));
     consoleOut().println(F("  i2c             scan I2C bus (OLED builds)"));
@@ -594,6 +609,7 @@ static void dispatch(char* line) {
             telemetryPrintCal(consoleOut());
         }
     }
+    else if (!strcmp(line, "mcconf")) cmdMcconf();
     else if (!strcmp(line, "sys"))  cmdSys();
     else if (!strcmp(line, "i2c"))  cmdI2c();
     else if (!strcmp(line, "cfg") || !strcmp(line, "config")) cmdCfg();

@@ -66,5 +66,14 @@ namespace Transports {
     };
     void getVescLinkDebug(VescLinkDebug* out);
 
+    // Raw COMM_GET_MCCONF capture (handoff step 1: bytes only, no parsing).
+    // The poll task reads it once per boot as soon as the VESC link is up and
+    // saves the hex dump to /mcconf.hex, so the bytes can be pulled off the
+    // board later over USB with the pack off — no live probing required.
+    // status: 0 = waiting for link, 1 = captured, 2 = gave up (link up, no
+    // valid reply). Power-cycle the board to capture again.
+    struct McconfCapture { uint8_t status; int len; uint8_t attempts; };
+    void getMcconfCaptureState(McconfCapture* out);
+
 }
 }

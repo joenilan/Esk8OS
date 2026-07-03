@@ -32,6 +32,7 @@ namespace Transports {
 enum VescCommand : uint8_t {
     VESC_COMM_FW_VERSION                = 0,
     VESC_COMM_GET_VALUES                = 4,
+    VESC_COMM_GET_MCCONF                = 14,
     VESC_COMM_ALIVE                     = 30,
     VESC_COMM_GET_DECODED_PPM           = 31,
     VESC_COMM_FORWARD_CAN               = 34,
@@ -157,6 +158,12 @@ public:
     bool getSetupValuesSelective(uint32_t mask, VescSetupValues& out);
     bool getDecodedPpm(VescPpm& out);
     bool getStats(VescStats& out);
+
+    // Send a bare one-byte command and hand back the raw reply payload
+    // (reply[0] echoes cmd). No decoding — for evidence-first work on replies
+    // whose layout is firmware-version-specific (COMM_GET_MCCONF is several
+    // hundred bytes on the 16-bit-length framing, hence the longer timeout).
+    int rawCommand(uint8_t cmd, uint8_t* reply, int maxReply, uint32_t timeoutMs = 500);
     void setOdometerMeters(uint32_t meters);                                   // no ack from ESC
 
     // Probe one CAN ID with a tiny forwarded request; true if it answered.

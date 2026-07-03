@@ -258,6 +258,11 @@ bool VescProtocol::getStats(VescStats& out) {
     return true;
 }
 
+int VescProtocol::rawCommand(uint8_t cmd, uint8_t* reply, int maxReply, uint32_t timeoutMs) {
+    uint8_t payload[1] = { cmd };
+    return transact(payload, 1, cmd, reply, maxReply, timeoutMs);
+}
+
 void VescProtocol::setOdometerMeters(uint32_t meters) {
     if (_port == nullptr) return;
     uint8_t payload[5] = { VESC_COMM_SET_ODOMETER,

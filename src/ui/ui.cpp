@@ -1256,9 +1256,16 @@ void updateBottomBar() {
                       "  O:" + String(odo, 0) + du;
         // AUDIT tripwire: lifetime odo must always be >= trip (it includes it).
         // If it ever isn't, the odometer got corrupted/scaled — log the smoking gun.
-        if (totalDistanceKm < tripDistanceKm - 0.02f)
+        // Serial0 only exists as a symbol when the USB CDC owns Serial.
+        if (totalDistanceKm < tripDistanceKm - 0.02f) {
+#if ARDUINO_USB_CDC_ON_BOOT
             Serial0.printf("[AUDIT ODO-CORRUPT] totalKm=%.4f < tripKm=%.4f (str='%s')\n",
                            totalDistanceKm, tripDistanceKm, rest.c_str());
+#else
+            Serial.printf("[AUDIT ODO-CORRUPT] totalKm=%.4f < tripKm=%.4f (str='%s')\n",
+                          totalDistanceKm, tripDistanceKm, rest.c_str());
+#endif
+        }
         int wp = GFX->textWidth(pctStr);
         int wr = GFX->textWidth(rest);
         int sx = X0 + (UI_W - (wp + wr)) / 2;
