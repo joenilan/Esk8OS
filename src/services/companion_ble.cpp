@@ -578,6 +578,7 @@ void companionBleTick() {
     ses["minv"]  = live ? r1(minVoltageSession) : 0.0f;        // session min volt
     ses["minvl"] = live ? r1(minVoltageUnderLoadSession) : 0.0f; // lowest loaded/discharge V
     ses["mba"]   = r1(maxBatteryAmpsSession);    // max session battery A
+    ses["mpa"]   = r1(maxMotorAmpsSession);      // max session motor A (peak pull)
     ses["sagc"]  = sagEventsSession;
     ses["thome"] = homeVoltageSecondsSession;    // seconds below ride-home floor under load
     ses["tlimp"] = limpVoltageSecondsSession;    // seconds near limp floor under load

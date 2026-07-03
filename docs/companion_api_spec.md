@@ -30,7 +30,7 @@ ATT_MTU−3; the old merged payload measured ~503 bytes mid-ride):
   `bata`, `mota`, `duty`, `pkw`, `cellv`, `rwarn`, `fault`, `ppm`, `ppmok`,
   `slave`, `m1a`, `m2a`.
 - **`0004` session, 1 Hz:** trip/session statistics — `max_s`, `wh`, `whr`,
-  `mpw`, `minv`, `minvl`, `mba`, `sagc`, `thome`, `tlimp`, `avs`, `trip`,
+  `mpw`, `minv`, `minvl`, `mba`, `mpa`, `sagc`, `thome`, `tlimp`, `avs`, `trip`,
   `odo`, `est`, `lrng`, `lest`, `eff`, `rtime`, `tmov`, `lfault`, `fw`.
 
 The app subscribes to both, caches the latest session frame, and folds it under
@@ -72,6 +72,7 @@ it is not an ESP32 supply-voltage reading.
   "minv": 41.0,      // Session minimum voltage
   "minvl": 36.5,     // Lowest loaded/discharge voltage this session
   "mba": 37.9,       // Max battery current this session (A)
+  "mpa": 61.4,       // Max motor current this session (A) — peak pull, fw 0.9.5+
   "cellv": 3.65,     // Loaded pack voltage per cell
   "rwarn": 2,        // Range warning: 0 ok, 1 turn-home, 2 voltage sag, 3 limp
   "sagc": 3,         // Count of loaded voltage dips below homeCell floor
