@@ -391,6 +391,7 @@ static void dispatchCommand(const char* cmd) {
     else if (!strcmp(cmd, "BRIDGE_TOGGLE"))     { if (systemMode == MODE_VESC_BRIDGE) exitBridgeMode(); else requestBridgeMode(); }
     else if (!strcmp(cmd, "WIFI_EXPORT_START")) requestWifiExport();        // standalone AP + http (logs/OTA); telemetry stays live
     else if (!strcmp(cmd, "WIFI_EXPORT_STOP"))  { if (webServiceActive())  { webServiceStop();  showToast("WIFI OFF"); } }
+    else if (!strcmp(cmd, "CAL_RESET"))       { telemetryResetCal(); showToast("CAL RESET"); }   // new battery -> re-learn range from scratch
     else if (!strcmp(cmd, "REBOOT"))          { saveOdo(); sessionLogEnd(); delay(100); ESP.restart(); }
 }
 
