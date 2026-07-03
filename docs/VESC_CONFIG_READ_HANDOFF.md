@@ -92,6 +92,11 @@ shifts between VESC firmware versions. Signature-matching is mandatory. Referenc
   also a leftover debug probe in `src/ui/ui.cpp` `updateBottomBar()` — review/remove.
 
 ## Repo rules (hard constraints)
+- **ALWAYS run `python scripts/archive_sessions.py` BEFORE every flash.** Every
+  boot creates a session file and rotation evicts old ones; bench boots destroyed
+  the only board-side log of the Jul-3 ride while it was needed as evidence.
+  Eviction is stub-first as of `d0a9c3e` (rides survive bench boots), but archive
+  anyway — flash storage is not an archive.
 - Firmware repo `E:\AI\Longboard-Display` — branch **next-dev**. App repo
   `E:\AI\esk8os_mobile` — branch **main**. Latest audit commits: firmware `76432be`,
   app `a2cecc2` (`git log` for full context).
