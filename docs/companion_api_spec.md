@@ -133,6 +133,8 @@ When the Android app connects, it reads this characteristic to get the board's c
   "packAh": 16.5,
   "homeCell": 3.40,
   "stopCell": 3.30,
+  "homeEff": 3.57,   // read-only, fw 0.9.5+: sag-lifted LOADED home floor the estimate actually stops at
+  "stopEff": 3.47,   // read-only, fw 0.9.5+: sag-lifted LOADED limp floor (homeCell/stopCell are RESTING)
   "whmi": 25.9,
   "bright": 100,
   "demo": false,

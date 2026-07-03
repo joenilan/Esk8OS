@@ -130,6 +130,10 @@ static void buildSettingsJson(char* out, size_t cap) {
     doc["packAh"]   = r1(BATTERY_EFFECTIVE_CAPACITY_AH);
     doc["homeCell"] = roundf(BATTERY_HOME_CELL_V * 100.0f) / 100.0f;
     doc["stopCell"] = roundf(BATTERY_STOP_CELL_V * 100.0f) / 100.0f;
+    // Sag-lifted LOADED floors the estimate actually stops at — so the app can
+    // show "you'll stop ~X V under load", not just the resting number set above.
+    doc["homeEff"]  = r2(effectiveHomeFloorCellV());
+    doc["stopEff"]  = r2(effectiveLimpFloorCellV());
     doc["whmi"]     = r1(RANGE_DEFAULT_WH_PER_MILE);
     doc["bright"]   = gBrightnessPct;
 #if ESK8OS_STATUS_RGB

@@ -199,6 +199,11 @@ static float effectiveFloorCellV(float floorCellV) {
     return min(floorCellV + constrain(sag, 0.0f, 0.25f), BATTERY_FULL_CELL_V - 0.05f);
 }
 
+// Public: the loaded per-cell voltage the estimate actually stops at, so the
+// app can show the real floor instead of just the resting number the user set.
+float effectiveHomeFloorCellV() { return effectiveFloorCellV(max(BATTERY_HOME_CELL_V, BATTERY_STOP_CELL_V)); }
+float effectiveLimpFloorCellV() { return effectiveFloorCellV(BATTERY_STOP_CELL_V); }
+
 // Deliverable energy from full down to a resting floor: the learned measured
 // value once a ride has taught us (captures aging + IR truncation the spec
 // math can't see), the configured fallback before that.

@@ -89,21 +89,19 @@ static float prefFloat(const char* key, float def) {
 void begin() {
     prefs.begin("esk8os", false);
     
+    // The lifetime odometer, trip, and moving-time are plain scalars — never
+    // format-versioned — so ALWAYS preserve them, even across a schema bump.
+    // (A firmware update used to wipe them to 0 here, silently losing real
+    // mileage. Load them unconditionally; on fresh flash the keys are absent
+    // and prefFloat returns the 0.0 default, which is the correct new-board start.)
+    totalDistanceKm = prefFloat("odo", 0.0);
+    tripDistanceKm  = prefFloat("trip", 0.0);
+    tripMovingSec   = prefs.getUInt("tripsec", 0);
+
     int storedSchema = prefs.getInt("schema", 0);
     if (storedSchema != STORAGE_SCHEMA_VERSION) {
-        totalDistanceKm = 0.0;
-        tripDistanceKm = 0.0;
-        tripMovingSec = 0;
-        prefs.putFloat("odo", totalDistanceKm);
-        prefs.putFloat("trip", tripDistanceKm);
-        prefs.putUInt("tripsec", tripMovingSec);
+        // Future format-versioned keys migrate here; odo/trip are kept as-is.
         prefs.putInt("schema", STORAGE_SCHEMA_VERSION);
-    } else {
-        totalDistanceKm = prefFloat("odo", 0.0);
-        tripDistanceKm  = prefFloat("trip", 0.0);
-        // Reload trip moving-time so a quick power-cycle mid-ride continues the
-        // same trip (board is authoritative; cold boot favours continue-from-NVS).
-        tripMovingSec   = prefs.getUInt("tripsec", 0);
     }
 
     activeWheelProfile = prefs.getInt("wheelprof", 0);

@@ -12,3 +12,9 @@ TelemetrySample getHistorySample(int ageIndex);  // 0 = oldest, histCount-1 = ne
 void saveRideSummaryLog();    // append a compact ride summary to NVS (on trip reset)
 void telemetryPrintCal(Print& out);   // dump adaptive battery calibration (`cal`)
 void telemetryResetCal();             // clear learned calibration back to seeds
+// The configured range floors lifted by the learned typical sag — i.e. the
+// LOADED per-cell voltage the board will actually reach limp/home at, which is
+// what the estimate targets. Exposed so the app can show the real floor, not
+// just the resting number the user set.
+float effectiveHomeFloorCellV();
+float effectiveLimpFloorCellV();

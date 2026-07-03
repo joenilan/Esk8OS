@@ -1254,6 +1254,11 @@ void updateBottomBar() {
         String pctStr = String(currentBatteryPercent) + "%";
         String rest = String("  T:") + String(trip, 1) + du +
                       "  O:" + String(odo, 0) + du;
+        // AUDIT tripwire: lifetime odo must always be >= trip (it includes it).
+        // If it ever isn't, the odometer got corrupted/scaled — log the smoking gun.
+        if (totalDistanceKm < tripDistanceKm - 0.02f)
+            Serial0.printf("[AUDIT ODO-CORRUPT] totalKm=%.4f < tripKm=%.4f (str='%s')\n",
+                           totalDistanceKm, tripDistanceKm, rest.c_str());
         int wp = GFX->textWidth(pctStr);
         int wr = GFX->textWidth(rest);
         int sx = X0 + (UI_W - (wp + wr)) / 2;
