@@ -30,19 +30,35 @@ void sessionLogBegin() {
 
 bool sessionLogReady() { return g_mounted; }
 
-static String oldestSessionFile() {
+// A session file below this size holds no real ride (header + bench-idle rows
+// only; even a ~1-minute ride writes several KB). Eviction removes these
+// FIRST so a string of bench boots can never rotate actual ride data off the
+// flash — that exact failure destroyed the only board-side copy of a ride that
+// was needed for a pack-cutoff investigation (2026-07-03).
+static const size_t STUB_MAX_BYTES = 4096;
+
+// Pick the file eviction should remove next: the oldest stub if any exist,
+// otherwise the oldest file. Never the active session file.
+static String victimSessionFile() {
     File dir = LittleFS.open(SESSIONS_DIR);
     if (!dir || !dir.isDirectory()) return "";
-    String oldest = "";
+    String active = "";
+    if (g_path[0]) {
+        active = g_path;
+        int slash = active.lastIndexOf('/');
+        if (slash >= 0) active = active.substring(slash + 1);
+    }
+    String oldest = "", oldestStub = "";
     for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
         String name = f.name();
-        if (name.endsWith(".csv")) {
-            if (oldest == "" || name < oldest) oldest = name;
-        }
+        size_t size = f.size();
         f.close();
+        if (!name.endsWith(".csv") || name == active) continue;
+        if (oldest == "" || name < oldest) oldest = name;
+        if (size < STUB_MAX_BYTES && (oldestStub == "" || name < oldestStub)) oldestStub = name;
     }
     dir.close();
-    return oldest;
+    return oldestStub != "" ? oldestStub : oldest;
 }
 
 static int sessionFileCount() {
@@ -61,9 +77,9 @@ static void pruneIfNeeded() {
     if (!g_mounted) return;
     int guard = 0;
     while (LittleFS.totalBytes() - LittleFS.usedBytes() < MIN_FREE_BYTES && guard++ < 64) {
-        String oldest = oldestSessionFile();
-        if (oldest == "") break;
-        String path = String(SESSIONS_DIR) + "/" + oldest;
+        String victim = victimSessionFile();
+        if (victim == "") break;
+        String path = String(SESSIONS_DIR) + "/" + victim;
         if (!LittleFS.remove(path)) break;
         Serial.println("[sessionlog] pruned " + path);
     }
@@ -73,10 +89,10 @@ static void enforceSessionCap() {
     if (!g_mounted) return;
     int guard = 0;
     while (sessionFileCount() > MAX_SESSION_FILES && guard++ < 64) {
-        String oldest = oldestSessionFile();
-        if (oldest == "") break;
-        if (!LittleFS.remove(String(SESSIONS_DIR) + "/" + oldest)) break;
-        Serial.println("[sessionlog] capped " + oldest);
+        String victim = victimSessionFile();
+        if (victim == "") break;
+        if (!LittleFS.remove(String(SESSIONS_DIR) + "/" + victim)) break;
+        Serial.println("[sessionlog] capped " + victim);
     }
 }
 
