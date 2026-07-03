@@ -121,7 +121,8 @@ static void buildSettingsJson(char* out, size_t cap) {
     doc["mph"]     = useMph;
     doc["theme"]   = THEMES[gThemeIdx].name;
     doc["poles"]   = (int)lroundf(profilePolePairs() * 2.0f);                                   // pole pairs -> poles
-    doc["wheel"]   = (int)lroundf(wheelProfiles[activeWheelProfile].wheelDiameterM * 1000.0f);  // mm
+    doc["wheel"]   = effectiveWheelDiameterMm();   // mm actually used for speed/distance (preset or rider override)
+    doc["wheelmm"] = gWheelDiameterMm;             // rider calibration override, 0 = using the preset's nominal size
     doc["gear"]    = r1(profileGearRatio());      // motor:wheel pulley ratio the firmware uses
     doc["bat_s"]   = BATTERY_CELLS_COUNT;
     doc["profile"] = activeWheelProfile;          // index; poles/wheel/gear are derived from this preset
@@ -188,11 +189,20 @@ static void applySettings(const char* json) {
     if (doc["profile"].is<int>()) {
         activeWheelProfile = constrain((int)doc["profile"], 0, 1);
         prefs.putInt("wheelprof", activeWheelProfile);
+        gWheelDiameterMm = 0;                    // new preset -> drop the size override
+        prefs.putInt("wheelmm", 0);
         updateRangeEstimate();
         repaint = true;
     }
-    // poles / wheel / gear are read-only here: they come from the selected wheel
-    // preset, not independently settable fields. Use "profile" to switch presets.
+    // Rider wheel-size calibration (mm) — like an e-bike computer. Overrides the
+    // preset's nominal diameter for the speed/distance math. 0 restores the preset.
+    if (doc["wheelmm"].is<int>()) {
+        gWheelDiameterMm = constrain((int)doc["wheelmm"], 0, 400);
+        prefs.putInt("wheelmm", gWheelDiameterMm);
+        updateRangeEstimate();
+        repaint = true;
+    }
+    // poles / gear are read-only here: they come from the selected wheel preset.
     if (doc["packAh"].is<float>()) {
         BATTERY_EFFECTIVE_CAPACITY_AH = constrain((float)doc["packAh"], 4.0f, 40.0f);
         prefs.putFloat("packAh", BATTERY_EFFECTIVE_CAPACITY_AH);

@@ -198,6 +198,11 @@ struct WheelProfile {
 };
 extern WheelProfile wheelProfiles[];
 extern int          activeWheelProfile;   // loaded from NVS in setup()
+// Rider wheel-size calibration (mm). 0 = use the active preset's diameter;
+// >0 overrides it, so a worn/soft pneumatic can be dialled in like an e-bike
+// computer. NVS "wheelmm"; cleared when the wheel preset is switched.
+extern int          gWheelDiameterMm;
+int  effectiveWheelDiameterMm();          // the diameter actually used for speed/distance
 
 // ---- wheel profile accessors (defined in main) ------------------------------
 float profileGearRatio();

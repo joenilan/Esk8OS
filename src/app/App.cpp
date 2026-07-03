@@ -98,6 +98,8 @@ static void changeSetting(int dir) {
         case SET_PROFILE:
             activeWheelProfile = (activeWheelProfile + 1) % 2;
             prefs.putInt("wheelprof", activeWheelProfile);
+            gWheelDiameterMm = 0;                 // new preset -> drop the size override
+            prefs.putInt("wheelmm", 0);
             break;
         case SET_UNITS:
             useMph = !useMph;

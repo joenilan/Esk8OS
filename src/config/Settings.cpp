@@ -51,8 +51,17 @@ WheelProfile wheelProfiles[] = {
 };
 int activeWheelProfile = 0;
 
+int gWheelDiameterMm = 0;   // 0 = use the active preset; >0 = rider override
+
+// The diameter (mm) actually used for the display speed/distance math: the
+// rider's calibration when set, otherwise the active preset's nominal size.
+int effectiveWheelDiameterMm() {
+    if (gWheelDiameterMm > 0) return gWheelDiameterMm;
+    return (int)lroundf(wheelProfiles[activeWheelProfile].wheelDiameterM * 1000.0f);
+}
+
 float profileGearRatio()    { return (float)wheelProfiles[activeWheelProfile].motorPulley / (float)wheelProfiles[activeWheelProfile].wheelPulley; }
-float profileCircumfM()     { return wheelProfiles[activeWheelProfile].wheelDiameterM * PI; }
+float profileCircumfM()     { return (effectiveWheelDiameterMm() / 1000.0f) * PI; }
 float profilePolePairs()    { return wheelProfiles[activeWheelProfile].polePairs; }
 
 bool useMph = USE_MPH_DEFAULT;
@@ -99,6 +108,7 @@ void begin() {
 
     activeWheelProfile = prefs.getInt("wheelprof", 0);
     if (activeWheelProfile < 0 || activeWheelProfile >= 2) activeWheelProfile = 0;
+    gWheelDiameterMm = constrain(prefs.getInt("wheelmm", 0), 0, 400);   // 0 = use preset
 
     gDemoMode      = prefs.getBool("demo", DEMO_MODE_DEFAULT);
     useMph         = prefs.getBool("mph", USE_MPH_DEFAULT);

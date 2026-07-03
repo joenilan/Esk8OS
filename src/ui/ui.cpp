@@ -1340,7 +1340,7 @@ static void updateSettings() {
     // Y's mirror drawStaticSettings() above.
     WheelProfile &w = wheelProfiles[activeWheelProfile];
     drawVal(40,  String(w.name), COL_WHITE);
-    drawVal(57,  String((int)round(w.wheelDiameterM * 1000)) + "mm", COL_WHITE);
+    drawVal(57,  String(effectiveWheelDiameterMm()) + "mm", COL_WHITE);
     drawVal(74,  String(w.motorPulley) + ":" + String(w.wheelPulley), COL_WHITE);
     // Stored as pole PAIRS (the eRPM divisor); shown as physical poles to
     // match the motor spec sheet and the app (14-pole motor = 7 pairs).

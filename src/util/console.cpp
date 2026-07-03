@@ -301,8 +301,9 @@ static void cmdCfg() {
     consoleOut().printf("battery %d cells | pack %.1f Ah | home %.2f V/cell | limp %.2f V/cell | %.1f Wh/mi\n",
         BATTERY_CELLS_COUNT, BATTERY_EFFECTIVE_CAPACITY_AH, BATTERY_HOME_CELL_V, BATTERY_STOP_CELL_V, RANGE_DEFAULT_WH_PER_MILE);
     WheelProfile& w = wheelProfiles[activeWheelProfile];
-    consoleOut().printf("wheel prof %d: %s (%.0f mm, %d/%d, %.1f pp)\n",
-        activeWheelProfile, w.name, w.wheelDiameterM * 1000.0f, w.motorPulley, w.wheelPulley, w.polePairs);
+    consoleOut().printf("wheel prof %d: %s (%d mm%s, %d/%d, %.1f pp)\n",
+        activeWheelProfile, w.name, effectiveWheelDiameterMm(),
+        gWheelDiameterMm > 0 ? " tuned" : "", w.motorPulley, w.wheelPulley, w.polePairs);
     const char* hud = "speed";
     if (gHudFace == HUD_FACE_BATTERY) hud = (gBatteryFocus == BATTERY_FOCUS_VOLTS) ? "volts" : "battery";
     else if (gHudFace == HUD_FACE_WATTS) hud = "watts";
@@ -485,6 +486,23 @@ static void cmdVtype(const char* arg) {
                         gVehicleType, vehicleTypeName(gVehicleType));
 }
 
+static void cmdWheel(const char* arg) {
+    String a = arg; a.trim();
+    if (a.length()) {
+        if (a == "reset" || a == "0") {
+            gWheelDiameterMm = 0;
+            prefs.putInt("wheelmm", 0);
+        } else {
+            gWheelDiameterMm = constrain((int)a.toInt(), 120, 350);
+            prefs.putInt("wheelmm", gWheelDiameterMm);
+        }
+    }
+    WheelProfile& w = wheelProfiles[activeWheelProfile];
+    consoleOut().printf("wheel %d mm%s (preset %s = %.0f mm)  [wheel <120-350|reset>]\n",
+        effectiveWheelDiameterMm(), gWheelDiameterMm > 0 ? " tuned" : "",
+        w.name, w.wheelDiameterM * 1000.0f);
+}
+
 static void cmdHelp() {
     consoleOut().println(F("commands:"));
     consoleOut().println(F("  help            this list"));
@@ -499,6 +517,7 @@ static void cmdHelp() {
     consoleOut().println(F("  diag            remote/PPM throttle + VESC diagnostics"));
     consoleOut().println(F("  trip [reset]    trip distance/time/avg/max/range, or full reset"));
     consoleOut().println(F("  cal [reset]     learned battery calibration (pack R/energy/Wh-mi)"));
+    consoleOut().println(F("  wheel [mm|reset] wheel-size calibration (120-350mm; reset=use preset)"));
     consoleOut().println(F("  sys             fw, uptime, heap/psram, reset reason, fps"));
     consoleOut().println(F("  cfg             units/demo/brightness/battery/wheel config"));
     consoleOut().println(F("  i2c             scan I2C bus (OLED builds)"));
@@ -587,6 +606,7 @@ static void dispatch(char* line) {
     else if (!strcmp(line, "rider")) cmdRider(arg);
     else if (!strcmp(line, "name")) cmdName(arg);
     else if (!strcmp(line, "vtype")) cmdVtype(arg);
+    else if (!strcmp(line, "wheel")) cmdWheel(arg);
     else if (!strcmp(line, "reboot")) {
         if (!needConfirm("reboot the board", orig)) return;
         consoleOut().println("rebooting...");

@@ -152,7 +152,9 @@ When the Android app connects, it reads this characteristic to get the board's c
 | `theme` | string | ✅ | case-insensitive theme name |
 | `bat_s` | int | ✅ | battery series cell count, 6–14 |
 | `profile` | int | ✅ | wheel-preset index; **drives** read-only `poles`/`wheel`/`gear` |
-| `poles` / `wheel` / `gear` | — | ❌ | read-only, derived from `profile` |
+| `poles` / `gear` | — | ❌ | read-only, derived from `profile` |
+| `wheel` | int | ❌ | effective wheel diameter (mm) used for speed/distance — the preset's nominal, or `wheelmm` when set |
+| `wheelmm` | int | ✅ | fw 0.9.5+: rider wheel-size calibration (mm), 120–350; `0` = use the preset. Overrides `wheel`; cleared when `profile` changes |
 | `packAh` | float | ✅ | effective pack capacity (Ah), 4.0–40.0 |
 | `homeCell` | float | ✅ | per-cell ride-home/range-planning floor, clamped to `stopCell`–4.20 |
 | `stopCell` | float | ✅ | per-cell limp/dead cutoff floor, 3.00–3.60 |
