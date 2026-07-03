@@ -184,6 +184,34 @@ e.g. firmware-side parse of the captured fields (signature-gated, per step 4) to
 reconcile/warn when app-entered floors drift from the VESC's real cutoffs.
 Currently they happen to agree (app home 3.40 / limp 3.10 = VESC 3.40/3.10).
 
+### "Died at 33 V" RESOLVED from recorded ride data (same day)
+
+Method: pulled the app's trip-backup JSON off the phone (Trip History → backup →
+X-plore Copy to → Downloads → adb; file also kept in the rider's phone
+Downloads). Jul 3 12:42 ride, 13.52 mi GPS / 14.90 board-mi, 65 min, 3937
+telemetry rows at ~1 Hz, zero BLE gaps. **The VESC did not kill the board — the
+pack DISCONNECTED at 33.0 V loaded:**
+
+- t+48→64 min: repeated dips into 33–34.4 V under ~700–1100 W. Power near the
+  end capped ~700 W vs ~1100 W earlier — matches the VESC ramp math
+  ((33−31)/(34−31) = 0.67 of full current). That's the "slows down" feeling.
+- t+64.80: voltage collapses **33.0 → 15.3 → 11.5 V in two samples** (not sag —
+  a disconnect), rebounds to 36.3 V open-circuit, re-engages ~5 s at 33.x V /
+  ~500–650 W, then collapses again 33.1 → 11 → 9 → **6.0 V and stays there**
+  (ESC standby backfeed level). Cut → recover → cut = classic BMS
+  undervoltage-protection cycling.
+- The VESC's 31.0 V hard cut was NEVER reached; a VESC soft-cut also cannot
+  make bus voltage collapse — only an opened pack path can.
+
+Interpretation (labeled): most likely the Daly BMS cut discharge because the
+WEAKEST parallel group hit its cell-UV threshold — 33.0 V average = 3.30 V/cell,
+but this pack is aged/high-IR (learned 91 mΩ) so the weak group sags far below
+average under ~20 A. A failing anti-spark could mimic this, but the repeatable
+33.0 V trigger point + recover/re-cut pattern fits BMS UV. Practical floor on
+THIS pack is therefore ~3.3 V/cell LOADED, above the app's 3.10 limp floor —
+range math should respect the BMS, not just the VESC. (Rider's planned binned
+10s6p 58E rebuild addresses the root cause.)
+
 Also fixed while here: the `[AUDIT ODO-CORRUPT]` tripwire used `Serial0`
 unconditionally, which failed to compile on any env without
 `ARDUINO_USB_CDC_ON_BOOT=1` (wokwi verified broken; now guarded in `ui.cpp`).
