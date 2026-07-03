@@ -140,6 +140,50 @@ Steps 2–4 of the task (signature match against confgenerator.c, field extracti
 validation) are unchanged and operate on the captured hex — do NOT parse until a
 real capture is in hand.
 
+### CAPTURE SUCCEEDED + PARSED (same day, method noted per rule)
+
+Board flashed `5159409` (v0.9.6) over COM5 with the pack OFF; the VESC's logic
+side was backfed over the COMM harness (documented 3.6 V standby) and answered
+`COMM_GET_MCCONF` from standby on attempt 1. Capture: **478 B, cmd echo 0x0E,
+signature `0x3F829CF7` = 1065524471 = `MCCONF_SIGNATURE` of bldc `release_6_05`
+(fetched from the repo, exact match).** Raw bytes archived at
+`docs/captures/mcconf_fw6.5_20260703.hex`.
+
+Parsed OFFLINE with field order auto-extracted from `release_6_05`
+`confgenerator.c` (no hand-typed offsets; 477/477 payload bytes consumed
+exactly, 197 fields — parser in the session scratchpad, trivially re-creatable).
+**READ FROM THE DEVICE (master VESC):**
+
+| field | value |
+|---|---|
+| `l_battery_cut_start` | **34.0 V** (3.40 V/cell) |
+| `l_battery_cut_end` | **31.0 V** (3.10 V/cell) |
+| `l_current_max` / `min` | 56.98 / −56.98 A (motor) |
+| `l_in_current_max` / `min` | **15.0 / −5.0 A** (battery, per ESC → 30 A total) |
+| `si_motor_poles` | 14 |
+| `si_gear_ratio` | 4.5 (= 72/16) |
+| `si_wheel_diameter` | 0.203 m (203 mm nominal — NOT the measured ~185 mm loaded rolling) |
+| `si_battery_cells` | 10 |
+| `si_battery_ah` | 16.5 |
+
+Step-4 cross-checks: cells 10 ≈ 42.0 V full ÷ 4.2 ✓; Ah matches configured pack ✓;
+poles 14 = firmware's 7 pole-pairs ✓; 15 A/side matches the rider's stated cap ✓.
+Rider's recalled 3.4/3.1 cutoffs are **CONFIRMED**. The 33 V full-throttle death is
+consistent with cut behavior: the VESC starts ramping current down at 34.0 V
+*loaded* and fully cuts at 31.0 V, so a saggy pack under full throttle drops
+through cut-start early — that's the "slows down" then "dies" pattern.
+
+Caveats: read from the MASTER only (slave over CAN not captured — would need
+COMM_FORWARD_CAN, and whether CAN works in standby is untested); values read in
+standby, but mcconf is ESC-side stored config, and all cross-checks pass. Note
+the VESC's own speed/odometer use the 203 mm nominal wheel — same ~10% over-read
+the display had before wheel calibration.
+
+**Remaining work (next session):** decide how the display/app consume these —
+e.g. firmware-side parse of the captured fields (signature-gated, per step 4) to
+reconcile/warn when app-entered floors drift from the VESC's real cutoffs.
+Currently they happen to agree (app home 3.40 / limp 3.10 = VESC 3.40/3.10).
+
 Also fixed while here: the `[AUDIT ODO-CORRUPT]` tripwire used `Serial0`
 unconditionally, which failed to compile on any env without
 `ARDUINO_USB_CDC_ON_BOOT=1` (wokwi verified broken; now guarded in `ui.cpp`).
