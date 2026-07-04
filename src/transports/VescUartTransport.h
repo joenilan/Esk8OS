@@ -75,5 +75,20 @@ namespace Transports {
     struct McconfCapture { uint8_t status; int len; uint8_t attempts; };
     void getMcconfCaptureState(McconfCapture* out);
 
+    // ESC-side ride statistics (COMM_GET_STATS, FW 6+): the VESC's OWN
+    // accumulated averages/maxima since ESC power-on — independent of this
+    // firmware's math, so they cross-check it. Polled every ~2 s on the modern
+    // path; false until the first successful read (old FW / link never up).
+    struct VescRideStats {
+        bool  valid;
+        float speedAvgKmh, speedMaxKmh;
+        float powerAvgW,  powerMaxW;
+        float currentAvgA, currentMaxA;
+        float tempMosAvgC, tempMosMaxC;
+        float tempMotorAvgC, tempMotorMaxC;
+        float rideTimeS;
+    };
+    bool getVescRideStats(VescRideStats* out);
+
 }
 }

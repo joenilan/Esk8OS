@@ -265,6 +265,27 @@ static void cmdTrip(const char* arg) {
         rangeEstimateReady ? "[learned]" : "[default]");
 }
 
+// ESC-side ride statistics (COMM_GET_STATS): the VESC's OWN accumulated
+// averages/maxima since ESC power-on — a cross-check of Evee's math straight
+// from the ESC. FW 6+ only; polled in the background once the link is up.
+static void cmdVstat() {
+    Esk8OS::Transports::VescRideStats s;
+    if (!Esk8OS::Transports::getVescRideStats(&s)) {
+        consoleOut().println("no ESC ride stats yet (needs a live FW6+ VESC; polled ~2s in background)");
+        return;
+    }
+    float cv = useMph ? 0.621371f : 1.0f;
+    const char* su = useMph ? "mph" : "kmh";
+    unsigned t = (unsigned)s.rideTimeS;
+    consoleOut().printf("esc-stats (since ESC power-on): time %02u:%02u:%02u\n",
+        t / 3600, (t / 60) % 60, t % 60);
+    consoleOut().printf("  speed avg %.1f / max %.1f %s\n", s.speedAvgKmh * cv, s.speedMaxKmh * cv, su);
+    consoleOut().printf("  power avg %.0f / max %.0f W | batt A avg %.1f / max %.1f\n",
+        s.powerAvgW, s.powerMaxW, s.currentAvgA, s.currentMaxA);
+    consoleOut().printf("  mosfet avg %.0f / max %.0f C | motor avg %.0f / max %.0f C\n",
+        s.tempMosAvgC, s.tempMosMaxC, s.tempMotorAvgC, s.tempMotorMaxC);
+}
+
 // Raw VESC config capture (COMM_GET_MCCONF). The poll task grabs it once per
 // boot when the VESC link is up and saves it to /mcconf.hex, so the bytes are
 // read back here later — the capture itself never needs a PC attached.
@@ -532,6 +553,7 @@ static void cmdHelp() {
     consoleOut().println(F("  trip [reset]    trip distance/time/avg/max/range, or full reset"));
     consoleOut().println(F("  cal [reset]     learned battery calibration (pack R/energy/Wh-mi)"));
     consoleOut().println(F("  wheel [mm|reset] wheel-size calibration (120-350mm; reset=use preset)"));
+    consoleOut().println(F("  vstat           ESC's own ride stats (avg/max spd, power, temps)"));
     consoleOut().println(F("  mcconf          raw VESC config capture status + saved dump"));
     consoleOut().println(F("  sys             fw, uptime, heap/psram, reset reason, fps"));
     consoleOut().println(F("  cfg             units/demo/brightness/battery/wheel config"));
@@ -609,6 +631,7 @@ static void dispatch(char* line) {
             telemetryPrintCal(consoleOut());
         }
     }
+    else if (!strcmp(line, "vstat")) cmdVstat();
     else if (!strcmp(line, "mcconf")) cmdMcconf();
     else if (!strcmp(line, "sys"))  cmdSys();
     else if (!strcmp(line, "i2c"))  cmdI2c();

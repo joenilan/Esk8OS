@@ -108,6 +108,27 @@ static void saveMcconfFile() {
     f.close();
 }
 
+// ESC-side ride stats (COMM_GET_STATS). Slow-changing, so read every ~20th
+// poll cycle (~2 s); a few consecutive failures means the firmware predates
+// the command — stop asking (retries again after a link re-probe).
+static VescStats gStats;
+static bool    gStatsHave = false;
+static uint8_t gStatsFails = 0;
+
+static void pollStats() {
+    static uint32_t cycle = 0;
+    if (gStatsFails >= 3 || ++cycle < 20) return;
+    cycle = 0;
+    VescStats s;
+    if (gProto.getStats(s)) {
+        gStats = s;
+        gStatsHave = true;
+        gStatsFails = 0;
+    } else {
+        gStatsFails++;
+    }
+}
+
 static void tryMcconfCapture() {
     gMcconfAttempts++;
     int n = gProto.rawCommand(VESC_COMM_GET_MCCONF, gMcconfRaw, sizeof(gMcconfRaw));
@@ -274,6 +295,7 @@ static void probePath() {
     VescSetupValues sv;
     if (gProto.getSetupValuesSelective(SETUP_MASK, sv)) {
         gPath = PATH_MODERN;
+        gStatsFails = 0;   // fresh link: retry GET_STATS (ESC may have been swapped)
     } else {
         VescMotorValues m;
         if (gProto.getValues(m)) gPath = PATH_LEGACY;
@@ -296,6 +318,7 @@ static void vescPollTask(void* pvParameters) {
                     consecutiveMisses = 0;
                     if (gFw.major == 0) gProto.getFwVersion(gFw);
                     if (gMcconfStatus == 0) tryMcconfCapture();
+                    pollStats();
                 } else if (++consecutiveMisses >= 20) {
                     // ~2s of silence: treat as a link loss and re-probe from
                     // scratch when the ESC comes back. The slave ID is kept —
@@ -359,6 +382,28 @@ bool peekVescData(RawVescData* outData) {
 #else
     (void)outData;
     return false;   // no real transport in the Wokwi build
+#endif
+}
+
+bool getVescRideStats(VescRideStats* out) {
+    *out = {};
+#ifndef WOKWI_SIMULATION
+    if (!gStatsHave) return false;
+    out->valid = true;
+    out->speedAvgKmh   = gStats.speedAvg * 3.6f;
+    out->speedMaxKmh   = gStats.speedMax * 3.6f;
+    out->powerAvgW     = gStats.powerAvg;
+    out->powerMaxW     = gStats.powerMax;
+    out->currentAvgA   = gStats.currentAvg;
+    out->currentMaxA   = gStats.currentMax;
+    out->tempMosAvgC   = gStats.tempMosAvg;
+    out->tempMosMaxC   = gStats.tempMosMax;
+    out->tempMotorAvgC = gStats.tempMotorAvg;
+    out->tempMotorMaxC = gStats.tempMotorMax;
+    out->rideTimeS     = gStats.countTime;
+    return true;
+#else
+    return false;
 #endif
 }
 
