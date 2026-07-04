@@ -85,23 +85,33 @@ static void drawOledBootSplash(uint8_t progressPct, const char* status) {
     oled.display();
 }
 
-static void drawOledBadge(const char* label) {
-    if (!label || !label[0]) return;
-    int16_t w = strlen(label) * 6 + 6;
-    int16_t x = 128 - w;
-    oled.fillRect(x, 0, w, 10, SSD1306_WHITE);
+// Active alert = a full-width inverted strip over the bottom row, with the
+// number that matters. The old corner badge overlapped every face's right-side
+// content; the strip instead deliberately REPLACES the decorative bottom
+// elements (bars/range text) — a battery warning supersedes battery cosmetics.
+static void drawOledAlertStrip(int alertState) {
+    char buf[24] = "";
+    float cv = useMph ? 0.621371f : 1.0f;
+    const char* u = useMph ? "mi" : "km";
+    if (alertState == 7 || rangeAlertState == 3) {
+        snprintf(buf, sizeof(buf), "LIMP HOME %.1f%s", remainingLimpRangeKm * cv, u);
+    } else if (alertState == 8 || rangeAlertState == 2) {
+        snprintf(buf, sizeof(buf), "VOLT SAG %.2fV/c", loadedCellVoltage);
+    } else if (alertState == 9 || rangeAlertState == 1) {
+        snprintf(buf, sizeof(buf), "TURN HOME %.1f%s", remainingRangeKm * cv, u);
+    } else if (alertState == 3) {
+        snprintf(buf, sizeof(buf), "HOT %dC", (int)max(currentMotorTemp, currentEscTemp));
+    } else if (alertState == 4) {
+        snprintf(buf, sizeof(buf), "BATTERY LOW %d%%", currentBatteryPercent);
+    }
+    if (!buf[0]) return;
+    oled.fillRect(0, 22, 128, 10, SSD1306_WHITE);
     oled.setTextColor(SSD1306_BLACK);
     oled.setTextSize(1);
-    oled.setCursor(x + 3, 1);
-    oled.print(label);
+    int w = (int)strlen(buf) * 6;
+    oled.setCursor(max(0, (128 - w) / 2), 24);
+    oled.print(buf);
     oled.setTextColor(SSD1306_WHITE);
-}
-
-static const char* oledRangeBadge(int alertState) {
-    if (alertState == 7 || rangeAlertState == 3) return "LIMP";
-    if (alertState == 8 || rangeAlertState == 2) return "SAG";
-    if (alertState == 9 || rangeAlertState == 1) return "TURN";
-    return "";
 }
 
 static void drawOledSegmentBar(int y, int h, float fill, uint8_t segments) {
@@ -413,8 +423,6 @@ static void drawOledSecondary() {
 }
 
 static void drawOledLiveHud(int alertState) {
-    const char* badge = oledRangeBadge(alertState);
-
     oled.setTextColor(SSD1306_WHITE);
     oled.setTextSize(2);
     oled.setCursor(0, 0);
@@ -429,7 +437,7 @@ static void drawOledLiveHud(int alertState) {
         drawOledSpeedFace();
     }
 
-    drawOledBadge(badge);
+    drawOledAlertStrip(alertState);
 }
 #endif
 
