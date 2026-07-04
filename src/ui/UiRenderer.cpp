@@ -5,6 +5,8 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include "services/wifi_bridge.h"
+#include "services/webexport.h"
 #ifndef OLED_SDA
 #define OLED_SDA 8
 #endif
@@ -260,9 +262,10 @@ static void drawOledSpeedFace() {
     oled.setCursor(62, 15);
     oled.print(currentVoltage, 1);
     oled.print("V");
+    // Range, not watts: the glance triad is speed / battery / range (watts has
+    // its own face). Distance-left is the number that changes ride decisions.
     oled.setCursor(62, 25);
-    oled.print(currentWatts >= 1000 ? (int)(currentWatts / 1000.0f) : (int)currentWatts);
-    oled.print(currentWatts >= 1000 ? "kW" : "W");
+    drawOledRangeSuffix();
     drawOledRightMiniBattery();
 }
 
@@ -300,6 +303,48 @@ static void drawOledWattsFace() {
     drawOledPowerBar(25, 7);
 }
 
+// Full-screen service cards. At 128x32 there is no room for a HUD *and*
+// network credentials, and these are bench states anyway — four 8px rows of
+// exactly the info the rider needs to act. On richer displays the same states
+// get full screens; this is the "same firmware, more primitive glass" tier.
+static void drawOledFourRows(const char* r0, const char* r1, const char* r2, const char* r3) {
+    oled.setTextSize(1);
+    oled.setCursor(0, 0);  oled.print(r0);
+    oled.setCursor(0, 8);  oled.print(r1);
+    oled.setCursor(0, 16); oled.print(r2);
+    oled.setCursor(0, 24); oled.print(r3);
+}
+
+static void drawOledBridgeCard() {
+    char l1[22], l2[22];
+    snprintf(l1, sizeof(l1), "wifi %s", wifiBridgeSsid());
+    snprintf(l2, sizeof(l2), "pass %s", wifiBridgePass());
+    drawOledFourRows("VESC BRIDGE ACTIVE", l1, l2, "or BLE: ESK8-BLE");
+}
+
+static void drawOledWifiCard() {
+    char l1[22], l2[22];
+    snprintf(l1, sizeof(l1), "net  %s", wifiBridgeSsid());
+    snprintf(l2, sizeof(l2), "pass %s", wifiBridgePass());
+    drawOledFourRows("WIFI EXPORT ON", l1, l2, "http://192.168.4.1");
+}
+
+static void drawOledOtaCard() {
+    oled.setTextSize(2);
+    oled.setCursor(0, 0);
+    oled.print("UPDATING");
+    oled.setTextSize(1);
+    char pct[6];
+    snprintf(pct, sizeof(pct), "%d%%", gOtaProgressPct);
+    oled.setCursor(128 - (int)strlen(pct) * 6, 4);
+    oled.print(pct);
+    oled.setCursor(0, 16);
+    oled.print("keep power on");
+    oled.drawRect(0, 25, 128, 7, SSD1306_WHITE);
+    int fillW = map(constrain(gOtaProgressPct, 0, 100), 0, 100, 0, 126);
+    if (fillW > 0) oled.fillRect(1, 26, fillW, 5, SSD1306_WHITE);
+}
+
 static void drawOledScreensaver() {
     unsigned long t = millis();
     const int logoW = 58;
@@ -325,6 +370,13 @@ static void drawOledScreensaver() {
     oled.setCursor(92, 24);
     oled.print(useMph ? remainingRangeKm * 0.621371f : remainingRangeKm, 0);
     oled.print(useMph ? "mi" : "km");
+    // Pair code while idle — matches the TFT saver, so the rider can match the
+    // board to the app's scan list on any display tier.
+    if (gPairCode[0]) {
+        oled.setCursor(128 - 6 * (2 + (int)strlen(gPairCode)), 0);
+        oled.print("P:");
+        oled.print(gPairCode);
+    }
 }
 
 static void drawOledVoltageMeter(bool packVoltageHero) {
@@ -616,6 +668,27 @@ void renderMiniFrame(int alertState) {
     oled.setTextSize(1);
     oled.setCursor(0, 0);
 
+    // Service states own the whole panel: credentials/progress beat the HUD,
+    // and all of them are stopped-on-the-bench states. Undim so they're legible.
+    if (systemMode == MODE_VESC_BRIDGE) {
+        setOledDimmed(false);
+        drawOledBridgeCard();
+        oled.display();
+        return;
+    }
+    if (gOtaInProgress) {
+        setOledDimmed(false);
+        drawOledOtaCard();
+        oled.display();
+        return;
+    }
+    if (webServiceActive()) {
+        setOledDimmed(false);
+        drawOledWifiCard();
+        oled.display();
+        return;
+    }
+
     static unsigned long idleSinceMs = 0;
     const bool noRideActivity = currentSpeedKmh < 0.5f && fabs(currentAmps) < 1.0f;
     bool idle = oledTelemetryLive() && !gDemoMode && noRideActivity &&
@@ -630,11 +703,20 @@ void renderMiniFrame(int alertState) {
     setOledDimmed(oledShouldDim(screensaverActive));
 
     if (!oledTelemetryLive() && !gDemoMode) {
+        // The pairing moment: no ESC linked = bench = the rider is most likely
+        // setting up the app. Put the scan-list pair code front and center.
         oled.setTextSize(2);
         oled.println("NO VESC");
         oled.setTextSize(1);
-        oled.setCursor(0, 18);
-        oled.print("demo off  BLE ready");
+        oled.setCursor(0, 17);
+        oled.print("BLE ready");
+        oled.setCursor(0, 25);
+        if (gPairCode[0]) {
+            oled.print("PAIR ");
+            oled.print(gPairCode);
+        } else {
+            oled.print("demo off");
+        }
     } else if (alertState == 1) {
         oled.println("VESC FAULT");
         oled.print("code ");

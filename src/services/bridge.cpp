@@ -5,6 +5,7 @@
 #include "webexport.h"
 #include "logging/sessionlog.h"
 #include "transports/VescUartTransport.h"
+#include "ui/UiRenderer.h"
 #if ESK8OS_FULL_UI
 #include "ui/BebasNeue18.h"
 #include "ui/BebasNeue24.h"
@@ -130,6 +131,13 @@ static void bridgeStop() {
 
 // Pump both transports + fan ESC replies out to whichever are connected.
 void bridgeLoop() {
+#if ESK8OS_DISPLAY_OLED
+    // The TFT gets a static bridge screen on entry; the OLED is repainted every
+    // loop by its mini renderer, which shows the bridge credentials card while
+    // systemMode == MODE_VESC_BRIDGE (otherwise the panel freezes on the last
+    // dashboard frame for the whole bridge session).
+    Esk8OS::UiRenderer::renderMiniFrame(0);
+#endif
     bool traffic = wifiBridgePoll();    // accept clients + app->ESC (WiFi)
 
     // ESC -> app: read the UART once and fan out to every connected transport, so
