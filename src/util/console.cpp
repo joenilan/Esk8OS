@@ -287,6 +287,30 @@ static void cmdTrip(const char* arg) {
 static void cmdVescTerm(const char* arg) {
     String a = arg; a.trim();
     if (!a.length()) { consoleOut().println("usage: vesc <terminal cmd>   e.g. vesc faults"); return; }
+
+    // SAFETY: whitelist read-only commands only. The VESC terminal includes
+    // motor-actuating commands (param_detect, measure_res, measure_ind,
+    // measure_linkage, foc_encoder_detect) that spin/energize the motor —
+    // exposing those here would break the "read-only by design" guarantee.
+    // Deny by default; motor detection belongs in VESC Tool via bridge mode.
+    static const char* SAFE[] = {
+        "help", "faults", "fault", "mem", "threads", "volt", "kv", "tim",
+        "rpm_dep", "last_adc_duration", "uptime", "hw_status", "foc_state",
+    };
+    String tok = a;
+    int sp = tok.indexOf(' ');
+    if (sp > 0) tok = tok.substring(0, sp);
+    tok.toLowerCase();
+    bool allowed = false;
+    for (const char* s : SAFE) if (tok == s) { allowed = true; break; }
+    if (!allowed) {
+        consoleOut().printf("blocked: '%s' is not a read-only command.\n", tok.c_str());
+        consoleOut().println("motor-actuating commands (detect/measure/...) are disabled here by");
+        consoleOut().println("design; use VESC Tool via bridge mode for those.");
+        consoleOut().println("allowed: help faults fault mem threads volt kv tim rpm_dep hw_status");
+        return;
+    }
+
     if (!Esk8OS::Transports::requestVescTerminal(a.c_str())) {
         consoleOut().println("terminal busy - try again");
         return;
