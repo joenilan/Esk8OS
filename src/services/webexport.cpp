@@ -5,6 +5,7 @@
 #include <Update.h>
 #include "esk8os.h"
 #include "logging/sessionlog.h"
+#include "util/console.h"
 
 // Instantiate OTA state globals
 bool gOtaInProgress = false;
@@ -122,6 +123,38 @@ static void handleUpdateUpload() {
     }
 }
 
+// ---- wireless console (/cmd + /console) ------------------------------------
+// The board can't be on USB while the vehicle powers it (one 5V source at a
+// time), so the serial console is unreachable exactly when the ESC is awake.
+// This is the SAME console over the export/bridge AP: per-device WPA2
+// password, explicitly started, idle auto-stop. GET/POST /cmd?c=<line> →
+// plain-text reply; /console is a minimal phone-browser terminal.
+static void handleCmd() {
+    String c = server.hasArg("c") ? server.arg("c") : server.arg("plain");
+    c.trim();
+    if (!c.length()) { server.send(400, "text/plain", "usage: /cmd?c=<console command>  (try: /cmd?c=help)\n"); return; }
+    if (c.length() > 90) { server.send(400, "text/plain", "command too long\n"); return; }
+    String out;
+    out.reserve(1024);
+    consoleRunCapture(c.c_str(), out);
+    server.send(200, "text/plain; charset=utf-8", out.length() ? out : "(no output)\n");
+}
+
+static void handleConsolePage() {
+    server.send(200, "text/html",
+        "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>EVEE console</title>"
+        "<body style='background:#0e0e10;color:#e8e8e8;font:14px/1.45 monospace;margin:12px'>"
+        "<pre id=o style='white-space:pre-wrap;word-break:break-word;min-height:60vh'>EVEE wireless console — type `help`\n</pre>"
+        "<form id=f style='display:flex;gap:6px;position:sticky;bottom:8px'>"
+        "<input id=i style='flex:1;background:#1a1a1a;color:#e8e8e8;border:1px solid #3a3a3c;padding:9px' autofocus autocomplete=off autocapitalize=off>"
+        "<button style='background:#b950d7;color:#0e0e10;border:0;padding:9px 15px;font-weight:bold'>run</button></form>"
+        "<script>f.onsubmit=async e=>{e.preventDefault();const c=i.value.trim();if(!c)return;i.value='';"
+        "o.textContent+='\\n> '+c+'\\n';try{const r=await fetch('/cmd?c='+encodeURIComponent(c));"
+        "o.textContent+=await r.text()}catch(_){o.textContent+='(request failed)\\n'}"
+        "scrollTo(0,document.body.scrollHeight)};</script>");
+}
+
 void webExportStart() {
     if (g_running) return;
     // Needed for the OTA progress percent: WebServer only exposes headers that
@@ -131,6 +164,8 @@ void webExportStart() {
     server.on("/", HTTP_GET, handleIndex);
     server.on("/dl", HTTP_GET, handleDownload);
     server.on("/update", HTTP_POST, handleUpdateComplete, handleUpdateUpload);
+    server.on("/cmd", handleCmd);                       // any method
+    server.on("/console", HTTP_GET, handleConsolePage);
     server.onNotFound([]() { server.send(404, "text/plain", "not found"); });
     server.begin();
     g_running = true;

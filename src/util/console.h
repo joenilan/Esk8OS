@@ -12,3 +12,8 @@
 // ============================================================================
 
 void consolePoll();   // read + dispatch a line if one is ready; call each loop
+
+// Run one command line for a wireless transport (the HTTP console at /cmd),
+// capturing everything it prints into `out`. Same dispatch + confirm flow as
+// typed serial input; output capped so a huge `cat` can't eat the heap.
+void consoleRunCapture(const char* line, String& out);

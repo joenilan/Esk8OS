@@ -34,30 +34,44 @@ static char   g_line0[96];
 static size_t g_len0 = 0;
 #endif
 
-#if ESK8OS_DUAL_CONSOLE
+// Console output fans out to USB serial, the second UART on dual-console
+// builds, and — while a wireless request is being serviced — a capture buffer,
+// so the HTTP console (/cmd on the export AP) returns exactly what the serial
+// console would have printed. Capture is capped: big `cat`s go via /dl.
+static String* g_capture = nullptr;
+static const size_t CAPTURE_MAX = 8192;
+
 class ConsoleOutput : public Print {
 public:
     size_t write(uint8_t c) override {
         size_t n = Serial.write(c);
+#if ESK8OS_DUAL_CONSOLE
         Serial0.write(c);
+#endif
+        if (g_capture && g_capture->length() < CAPTURE_MAX) *g_capture += (char)c;
         return n;
     }
     size_t write(const uint8_t* buffer, size_t size) override {
         size_t n = Serial.write(buffer, size);
+#if ESK8OS_DUAL_CONSOLE
         Serial0.write(buffer, size);
+#endif
+        if (g_capture && g_capture->length() < CAPTURE_MAX) {
+            size_t room = CAPTURE_MAX - g_capture->length();
+            g_capture->concat((const char*)buffer, size < room ? size : room);
+        }
         return n;
     }
     void flush() override {
         Serial.flush();
+#if ESK8OS_DUAL_CONSOLE
         Serial0.flush();
+#endif
     }
 };
 
 static ConsoleOutput g_consoleOut;
 static Print& consoleOut() { return g_consoleOut; }
-#else
-static Print& consoleOut() { return Serial; }
-#endif
 
 // ---- confirmation guard for destructive commands ----------------------------
 // A dangerous command stashes its original line in g_pending and prints a "[y/N]"
@@ -773,6 +787,27 @@ static void dispatch(char* line) {
         ESP.restart();
     }
     else if (line[0]) consoleOut().println("? unknown - try 'help'");
+}
+
+// Run one console line on behalf of a wireless transport, capturing everything
+// it prints. Same dispatch, same [y/N] confirm flow: a destructive command
+// returns the prompt text; send "y" as the next command to proceed.
+void consoleRunCapture(const char* line, String& out) {
+    char buf[96];
+    strlcpy(buf, line, sizeof(buf));
+    g_capture = &out;
+    if (g_pending[0]) {
+        bool yes = (buf[0] == 'y' || buf[0] == 'Y');
+        char cmd[96];
+        strlcpy(cmd, g_pending, sizeof(cmd));
+        g_pending[0] = '\0';
+        if (yes) { g_confirmed = true; dispatch(cmd); g_confirmed = false; }
+        else consoleOut().println("cancelled");
+    } else {
+        dispatch(buf);
+    }
+    if (out.length() >= CAPTURE_MAX) out += "\n[output truncated - download files via /dl]\n";
+    g_capture = nullptr;
 }
 
 static void pollConsoleInput(Stream& in, char* line, size_t& len, int& esc) {
