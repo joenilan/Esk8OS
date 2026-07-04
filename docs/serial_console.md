@@ -138,3 +138,28 @@ avg 0.0 mph | max 0.0 mph | home 15.7 mi (rem 14.2) | limp 21.6 mi (rem 19.6) [d
 - **No VESC connected:** live telemetry is marked unavailable and masked instead
   of showing stale pack voltage or current. Use `demo on` to exercise the
   telemetry pipeline on the bench.
+
+## v0.10.2 additions — scripting, AI tooling, ESC passthrough
+
+- `ping` — liveness + firmware version + uptime, for scripted handshakes.
+- `json` — the full state (live telemetry + settings + VESC base config with
+  per-value provenance) as one machine-readable JSON line. Parse this instead
+  of scraping the human-readable commands.
+- `set <key> <value>` — write any app-writable setting (companion spec §4
+  keys: `mph`, `theme`, `bat_s`, `packAh`, `homeCell`, `stopCell`, `whmi`,
+  `wheelmm`, `hud`, `rider`, `name`, …). Rides the SAME code path as the BLE
+  settings write, so validation and persistence are identical.
+- `unset <key>` — delete a rider override (`cells|packAh|stopCell|homeCell|
+  whmi|wheelmm`); the value falls back to the VESC-read base, or the generic
+  default if no ESC has ever been read.
+- `vesc <cmd>` — passthrough to the ESC's own terminal (`vesc faults`,
+  `vesc ping`, `vesc hw_status`, …). Needs a live/awake VESC; never collides
+  with telemetry (serviced by the poll task) and is unavailable while bridge
+  mode owns the UART.
+- `faults` — shortcut for `vesc faults`.
+
+The firmware also snapshots `vesc faults` **automatically** into the session
+CSV (as `#`-prefixed comment lines, flushed immediately) whenever a fresh
+fault code appears or the pack-disconnect tripwire fires — the ESC's fault log
+is RAM-only and vanishes at its next power-up, so it must be captured in the
+moment.
