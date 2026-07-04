@@ -1,5 +1,6 @@
 #include "telemetry.h"
 #include "transports/VescUartTransport.h"
+#include "logging/sessionlog.h"
 
 // Speed above which the board is considered "rolling" — trip moving-time and the
 // last-moved timestamp only advance past this, so parked/walking time isn't counted.
@@ -491,6 +492,24 @@ void pollVescData() {
     // sag-compensated open-circuit voltage, because VESC cutoffs/BMS trips happen
     // under load. Evee reports it and warns; the VESC still owns current limiting.
     loadedCellVoltage = currentVoltage / max(1, BATTERY_CELLS_COUNT);
+
+    // Pack-disconnect tripwire: bus voltage stepping down >8 V between live
+    // samples is a disconnect (BMS cut / anti-spark / main lead), never sag —
+    // the Jul-3 death showed 33->11 V in one second. Mark+flush immediately so
+    // the collapse row survives even if power dies before the periodic flush.
+    static float lastBusV = 0;
+    static uint32_t lastBusMs = 0, lastCollapseMs = 0;
+    if (telemetryLive && !DEMO_DATA) {
+        uint32_t nowBusMs = millis();
+        if (lastBusV > 15.0f && currentVoltage < lastBusV - 8.0f &&
+            nowBusMs - lastBusMs < 2000 && nowBusMs - lastCollapseMs > 2000) {
+            lastCollapseMs = nowBusMs;
+            sessionLogMark("vcollapse");
+        }
+        lastBusV = currentVoltage;
+        lastBusMs = nowBusMs;
+    }
+
     bool discharging = currentAmps > 2.0f && currentWatts > 50.0f;
     bool belowHomeLoaded = discharging && loadedCellVoltage <= BATTERY_HOME_CELL_V;
     bool belowLimpLoaded = discharging && loadedCellVoltage <= (BATTERY_STOP_CELL_V + 0.03f);
@@ -563,6 +582,17 @@ void pollVescData() {
         gPpmDecoded = 0.0f;
         gPpmPulseMs = 0.0f;
     }
+
+    // Log the link edges as flushed event rows. A mid-ride link_lost row IS the
+    // death certificate (last voltage stays in the row; vesc_ok goes 0) — the
+    // periodic 1 Hz rows stop with telemetryLive, so without this the log just
+    // trails off with no record of when or at what voltage the ESC went dark.
+    static bool wasLinkLive = false;
+    if (!DEMO_DATA && telemetryLive != wasLinkLive) {
+        sessionLogMark(telemetryLive ? "link_up" : "link_lost");
+    }
+    wasLinkLive = telemetryLive;
+
     if (currentSpeedKmh > maxSpeedKmh) maxSpeedKmh = currentSpeedKmh;
     // AVG is a true moving-average: session distance / session MOVING-time, so it
     // doesn't sag while parked (the trip clock and distance both pause together).
