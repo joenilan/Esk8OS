@@ -149,6 +149,7 @@ extern bool settingsEditing;
 extern int  motorHealthPct, batteryHealthPct, escHealthPct;
 extern unsigned long gToastUntil;
 extern char gToastMsg[];
+extern unsigned long gLastInteractionMs;  // last rider interaction (buttons OR app command) — keeps the screensaver awake
 
 // ---- canvas / diagnostics (defined in main.cpp) -----------------------------
 extern int           gCanvasH;       // canvas height (dirty-band clamp)

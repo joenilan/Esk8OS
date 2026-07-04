@@ -740,7 +740,8 @@ void renderMiniFrame(int alertState) {
     // mirrors the TFT saver. Requiring live telemetry meant the bench NO VESC
     // card could never yield to the saver and sat static on the OLED for hours.
     bool idle = !gDemoMode && noRideActivity && rangeAlertState == 0 &&
-                (alertState == 0 || alertState == 2);
+                (alertState == 0 || alertState == 2) &&
+                (millis() - gLastInteractionMs > 2000);   // app command/press = awake, like TFT buttons
     if (idle) {
         if (idleSinceMs == 0) idleSinceMs = millis();
     } else {

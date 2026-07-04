@@ -170,6 +170,7 @@ static void buildSettingsJson(char* out, size_t cap) {
 static void companionRefreshAdvertising();
 
 static void applySettings(const char* json) {
+    gLastInteractionMs = millis();   // settings writes are interaction too (hud face, wheel, ...)
     JsonDocument doc;
     if (deserializeJson(doc, json)) return;       // parse error -> ignore
     bool repaint = false, themeChanged = false, advDirty = false;
@@ -386,6 +387,9 @@ static void requestWifiExport() {
 }
 
 static void dispatchCommand(const char* cmd) {
+    // Any app command is rider interaction — wakes the screensaver exactly like
+    // a physical button press (on buttonless glass the phone IS the buttons).
+    gLastInteractionMs = millis();
     if      (!strcmp(cmd, "TRIP_RESET"))        Esk8OS::App::resetTrip();
     else if (!strcmp(cmd, "PAGE_NEXT"))         Esk8OS::App::pageRel(+1);   // same order as the buttons
     else if (!strcmp(cmd, "PAGE_PREV"))         Esk8OS::App::pageRel(-1);
