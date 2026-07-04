@@ -89,7 +89,7 @@ static void drawOledBootSplash(uint8_t progressPct, const char* status) {
 // number that matters. The old corner badge overlapped every face's right-side
 // content; the strip instead deliberately REPLACES the decorative bottom
 // elements (bars/range text) — a battery warning supersedes battery cosmetics.
-static void drawOledAlertStrip(int alertState) {
+static bool drawOledAlertStrip(int alertState) {
     char buf[24] = "";
     float cv = useMph ? 0.621371f : 1.0f;
     const char* u = useMph ? "mi" : "km";
@@ -104,7 +104,7 @@ static void drawOledAlertStrip(int alertState) {
     } else if (alertState == 4) {
         snprintf(buf, sizeof(buf), "BATTERY LOW %d%%", currentBatteryPercent);
     }
-    if (!buf[0]) return;
+    if (!buf[0]) return false;
     oled.fillRect(0, 22, 128, 10, SSD1306_WHITE);
     oled.setTextColor(SSD1306_BLACK);
     oled.setTextSize(1);
@@ -112,6 +112,7 @@ static void drawOledAlertStrip(int alertState) {
     oled.setCursor(max(0, (128 - w) / 2), 24);
     oled.print(buf);
     oled.setTextColor(SSD1306_WHITE);
+    return true;
 }
 
 static void drawOledSegmentBar(int y, int h, float fill, uint8_t segments) {
@@ -188,8 +189,10 @@ static void drawOledAmazonBatteryIcon(float fill) {
 
 static void drawOledLcdValue(float value, const char* unit, bool oneDecimal, bool tight) {
     char buf[10];
+    // Whole numbers TRUNCATE (project rule: 84.6% reads 84 everywhere — board,
+    // OLED, phone must agree; rounding up misleads near empty).
     if (oneDecimal) snprintf(buf, sizeof(buf), "%.1f", value);
-    else snprintf(buf, sizeof(buf), "%d", (int)lroundf(value));
+    else snprintf(buf, sizeof(buf), "%d", (int)value);
 
     oled.setTextSize(2);
     int16_t x1, y1;
@@ -272,10 +275,26 @@ static void drawOledSpeedFace() {
     oled.setCursor(62, 15);
     oled.print(currentVoltage, 1);
     oled.print("V");
-    // Range, not watts: the glance triad is speed / battery / range (watts has
-    // its own face). Distance-left is the number that changes ride decisions.
+    // Third line rotates range -> trip -> watts every 4 s. This board has no
+    // buttons, so the speed face is all a rider gets at speed — the carousel
+    // surfaces every glance stat with zero input. Volts stays fixed above.
     oled.setCursor(62, 25);
-    drawOledRangeSuffix();
+    switch ((millis() / 4000) % 3) {
+        case 0:
+            drawOledRangeSuffix();
+            break;
+        case 1: {
+            float trip = useMph ? tripDistanceKm * 0.621371f : tripDistanceKm;
+            oled.print("T");
+            oled.print(trip, 1);
+            oled.print(useMph ? "mi" : "km");
+            break;
+        }
+        default:
+            oled.print((int)max(0.0f, currentWatts));
+            oled.print("W");
+            break;
+    }
     drawOledRightMiniBattery();
 }
 
@@ -378,7 +397,7 @@ static void drawOledScreensaver() {
     oled.print(currentBatteryPercent);
     oled.print("%");
     oled.setCursor(92, 24);
-    oled.print(useMph ? remainingRangeKm * 0.621371f : remainingRangeKm, 0);
+    oled.print((int)(useMph ? remainingRangeKm * 0.621371f : remainingRangeKm));
     oled.print(useMph ? "mi" : "km");
     // Pair code while idle — matches the TFT saver, so the rider can match the
     // board to the app's scan list on any display tier.
@@ -437,7 +456,18 @@ static void drawOledLiveHud(int alertState) {
         drawOledSpeedFace();
     }
 
-    drawOledAlertStrip(alertState);
+    bool alertShown = drawOledAlertStrip(alertState);
+
+    // Simulated numbers must never look real: mirror the TFT's persistent DEMO
+    // badge. Small inverted tag bottom-center; a real alert strip outranks it.
+    if (gDemoMode && !alertShown) {
+        oled.fillRect(47, 22, 34, 10, SSD1306_WHITE);
+        oled.setTextColor(SSD1306_BLACK);
+        oled.setTextSize(1);
+        oled.setCursor(53, 24);
+        oled.print("DEMO");
+        oled.setTextColor(SSD1306_WHITE);
+    }
 }
 #endif
 
