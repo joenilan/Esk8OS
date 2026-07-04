@@ -3,6 +3,7 @@
 #include "app/App.h"
 #include "telemetry/telemetry.h"
 #include "transports/VescUartTransport.h"
+#include "config/Settings.h"
 #include "version.h"
 #include "logging/sessionlog.h"
 #include "services/webexport.h"
@@ -333,12 +334,30 @@ static void cmdCfg() {
         useMph ? "mph" : "kmh", gDemoMode ? "ON" : "OFF", gBrightnessPct,
         gStatusRgbEnabled ? "ON" : "OFF", gOledInvert ? "INVERT" : "NORMAL", gThemeIdx, RIDER_NAME);
     consoleOut().printf("name %s | vtype %d (%s)\n", gDeviceName, gVehicleType, vehicleTypeName(gVehicleType));
-    consoleOut().printf("battery %d cells | pack %.1f Ah | home %.2f V/cell | limp %.2f V/cell | %.1f Wh/mi\n",
-        BATTERY_CELLS_COUNT, BATTERY_EFFECTIVE_CAPACITY_AH, BATTERY_HOME_CELL_V, BATTERY_STOP_CELL_V, RANGE_DEFAULT_WH_PER_MILE);
+    // [source] per value: rider = explicit NVS override, vesc = read from the
+    // ESC's own config, default = neutral generic (no board-specific hardcodes).
+    using Esk8OS::Settings::sourceTag;
+    consoleOut().printf("battery %d cells [%s] | pack %.1f Ah [%s] | %.1f Wh/mi [%s]\n",
+        BATTERY_CELLS_COUNT, sourceTag("cells"),
+        BATTERY_EFFECTIVE_CAPACITY_AH, sourceTag("packAh"),
+        RANGE_DEFAULT_WH_PER_MILE, sourceTag("whmi", false));
+    consoleOut().printf("floors: home %.2f V/cell [%s] | limp %.2f V/cell [%s]\n",
+        BATTERY_HOME_CELL_V, sourceTag("homeCell"),
+        BATTERY_STOP_CELL_V, sourceTag("stopCell"));
+    Esk8OS::Transports::VescBaseConfig vb;
+    bool haveBase = Esk8OS::Settings::vescBase(&vb);
+    if (haveBase) {
+        consoleOut().printf("vesc-base: %uS %.1fAh | cut %.1f/%.1fV | %up gear %.2f wheel %.0fmm | mot %.0fA bat %.0fA\n",
+            vb.cells, vb.packAh, vb.cutStartV, vb.cutEndV, vb.motorPoles,
+            vb.gearRatio, vb.wheelDiameterM * 1000.0f, vb.motorAmpMax, vb.battAmpMax);
+    } else {
+        consoleOut().println("vesc-base: none yet (parses from a linked FW6.x ESC)");
+    }
     WheelProfile& w = wheelProfiles[activeWheelProfile];
-    consoleOut().printf("wheel prof %d: %s (%d mm%s, %d/%d, %.1f pp)\n",
-        activeWheelProfile, w.name, effectiveWheelDiameterMm(),
-        gWheelDiameterMm > 0 ? " tuned" : "", w.motorPulley, w.wheelPulley, w.polePairs);
+    consoleOut().printf("wheel %d mm [%s] | gear %.3f | %.1f pp | preset %d: %s\n",
+        effectiveWheelDiameterMm(),
+        gWheelDiameterMm > 0 ? "rider" : (haveBase ? "vesc" : "preset"),
+        profileGearRatio(), profilePolePairs(), activeWheelProfile, w.name);
     const char* hud = "speed";
     if (gHudFace == HUD_FACE_BATTERY) hud = (gBatteryFocus == BATTERY_FOCUS_VOLTS) ? "volts" : "battery";
     else if (gHudFace == HUD_FACE_WATTS) hud = "watts";

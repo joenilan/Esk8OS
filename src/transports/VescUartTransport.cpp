@@ -15,11 +15,10 @@ static SemaphoreHandle_t gDataMutex = NULL;
 static bool gPollPaused = false;
 static TaskHandle_t gVescTaskHandle = NULL;
 
-// First CAN ID tried when hunting for the second motor's VESC. The slave is
-// auto-detected by probing IDs over CAN (one per poll cycle), so this is only
-// an ordering hint that makes a known board lock on instantly instead of after
-// a sweep. 114 = Joe's slave Controller ID (from VESC Tool's CAN Devices list).
-static const uint8_t VESC_SLAVE_CAN_ID_HINT = 114;
+// First CAN ID tried when hunting for the second motor's VESC: the id learned
+// on a previous session (passed in from NVS at begin; 0 = never found one).
+// Only an ordering hint — the sweep still auto-detects any id.
+static uint8_t gSlaveHint = 0;
 
 #ifndef WOKWI_SIMULATION
 
@@ -43,11 +42,15 @@ static bool    gSlaveSearchDone = false;
 static int     gScanIdx = 0;
 
 static uint8_t scanCandidate(int idx) {
-    if (idx == 0) return VESC_SLAVE_CAN_ID_HINT;
+    if (gSlaveHint == 0) {                       // nothing learned yet: plain 1..253 sweep
+        int id = idx + 1;
+        return (id <= 253) ? (uint8_t)id : 0;
+    }
+    if (idx == 0) return gSlaveHint;
     // Then 1..253 ascending, skipping the hint (already tried). The master's
     // own ID is skipped by the caller.
     int id = idx;   // idx >= 1
-    if (id >= VESC_SLAVE_CAN_ID_HINT) id++;
+    if (id >= gSlaveHint) id++;
     return (id <= 253) ? (uint8_t)id : 0;
 }
 
@@ -93,6 +96,66 @@ static volatile uint8_t gMcconfStatus = 0;    // 0 waiting, 1 captured, 2 gave u
 static uint8_t gMcconfAttempts = 0;
 static const uint8_t MCCONF_MAX_ATTEMPTS = 10;
 
+// ---- mcconf base-config extraction -----------------------------------------
+// Field offsets are valid ONLY for MCCONF_SIGNATURE 1065524471 (0x3F829CF7,
+// bldc release_6_05 / "FW 6.5"). They were derived by walking confgenerator.c's
+// serializer against a real 477-byte capture (docs/captures/, consumed exactly)
+// — see docs/VESC_CONFIG_READ_HANDOFF.md. Any other signature: valid=false.
+static const uint32_t MCCONF_SIG_6_05 = 1065524471UL;
+
+static VescBaseConfig gVescBase;   // zeroed => valid=false
+
+static uint32_t beU32(const uint8_t* p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
+
+// bldc buffer_get_float32_auto (sign/exp/mantissa, NOT IEEE memcpy).
+static float beF32Auto(const uint8_t* p) {
+    uint32_t res = beU32(p);
+    int e = (res >> 23) & 0xFF;
+    uint32_t sigI = res & 0x7FFFFF;
+    float sig = 0.0f;
+    if (e != 0 || sigI != 0) {
+        sig = (float)sigI / (8388608.0f * 2.0f) + 0.5f;
+        e -= 126;
+    }
+    if (res & (1u << 31)) sig = -sig;
+    return ldexpf(sig, e);
+}
+
+static float beF16(const uint8_t* p, float scale) {
+    int16_t v = (int16_t)(((uint16_t)p[0] << 8) | p[1]);
+    return (float)v / scale;
+}
+
+// payload = mcconf reply WITHOUT the leading command-id byte.
+static void parseMcconfBase(const uint8_t* payload, int len) {
+    gVescBase = {};
+    if (len < 456) return;
+    if (beU32(payload) != MCCONF_SIG_6_05) return;   // unknown layout: refuse, don't guess
+    gVescBase.cutStartV      = beF16(payload + 54, 10.0f);
+    gVescBase.cutEndV        = beF16(payload + 56, 10.0f);
+    gVescBase.motorAmpMax    = beF32Auto(payload + 8);
+    gVescBase.battAmpMax     = beF32Auto(payload + 16);
+    gVescBase.battAmpRegen   = beF32Auto(payload + 20);
+    gVescBase.motorPoles     = payload[441];
+    gVescBase.gearRatio      = beF32Auto(payload + 442);
+    gVescBase.wheelDiameterM = beF32Auto(payload + 446);
+    gVescBase.cells          = payload[451];
+    gVescBase.packAh         = beF32Auto(payload + 452);
+
+    // Sanity gate (handoff step 4): reject implausible values wholesale — a
+    // partially-plausible parse is worse than no parse.
+    bool sane = gVescBase.cells >= 3 && gVescBase.cells <= 24 &&
+                gVescBase.motorPoles >= 2 && gVescBase.motorPoles <= 60 &&
+                gVescBase.wheelDiameterM > 0.05f && gVescBase.wheelDiameterM < 1.5f &&
+                gVescBase.gearRatio > 0.5f && gVescBase.gearRatio < 30.0f &&
+                gVescBase.packAh > 1.0f && gVescBase.packAh < 200.0f &&
+                gVescBase.cutEndV > 2.0f * gVescBase.cells &&
+                gVescBase.cutStartV >= gVescBase.cutEndV;
+    gVescBase.valid = sane;
+}
+
 static void saveMcconfFile() {
     File f = LittleFS.open("/mcconf.hex", "w");
     if (!f) return;
@@ -136,6 +199,7 @@ static void tryMcconfCapture() {
         gMcconfLen = n;
         gMcconfStatus = 1;
         saveMcconfFile();
+        parseMcconfBase(gMcconfRaw + 1, n - 1);   // strip the command-id echo
     } else if (gMcconfAttempts >= MCCONF_MAX_ATTEMPTS) {
         gMcconfStatus = 2;
         saveMcconfFile();   // record the failure so a later USB read explains itself
@@ -333,9 +397,10 @@ static void vescPollTask(void* pvParameters) {
 }
 #endif
 
-void beginVescUart() {
+void beginVescUart(uint8_t slaveIdHint) {
     gDataMutex = xSemaphoreCreateMutex();
 #ifndef WOKWI_SIMULATION
+    gSlaveHint = slaveIdHint;
     Serial1.begin(115200, SERIAL_8N1, 18, 17); // GPIO 18 RX, 17 TX
     gProto.begin(&Serial1);
 
@@ -382,6 +447,17 @@ bool peekVescData(RawVescData* outData) {
 #else
     (void)outData;
     return false;   // no real transport in the Wokwi build
+#endif
+}
+
+bool getVescBaseConfig(VescBaseConfig* out) {
+    *out = {};
+#ifndef WOKWI_SIMULATION
+    if (!gVescBase.valid) return false;
+    *out = gVescBase;
+    return true;
+#else
+    return false;
 #endif
 }
 

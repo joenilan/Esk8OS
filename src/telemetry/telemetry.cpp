@@ -1,6 +1,7 @@
 #include "telemetry.h"
 #include "transports/VescUartTransport.h"
 #include "logging/sessionlog.h"
+#include "config/Settings.h"
 
 // Speed above which the board is considered "rolling" — trip moving-time and the
 // last-moved timestamp only advance past this, so parked/walking time isn't counted.
@@ -458,6 +459,25 @@ void pollVescData() {
             lastVescOkMs = millis();
             telemetryLive = true;
         }
+    }
+
+    // Feed the ESC's parsed base config into the settings tiers (once per
+    // boot; the capture is once per boot too), and remember a found slave CAN
+    // id so the next boot's scan locks on instantly instead of sweeping —
+    // learned, not hardcoded: nothing board-specific lives in the firmware.
+    static bool baseApplied = false;
+    if (!baseApplied) {
+        Esk8OS::Transports::VescBaseConfig b;
+        if (Esk8OS::Transports::getVescBaseConfig(&b)) {
+            Esk8OS::Settings::applyVescBase(b);
+            baseApplied = true;
+        }
+    }
+    static int savedSlaveId = -1;
+    if (savedSlaveId < 0) savedSlaveId = prefs.getUChar("slaveId", 0);
+    if (gSlaveCanId != 0 && gSlaveCanId != savedSlaveId) {
+        prefs.putUChar("slaveId", gSlaveCanId);
+        savedSlaveId = gSlaveCanId;
     }
     #endif
     // On entering demo, seed a clean full-charge, fault-free state so a stale

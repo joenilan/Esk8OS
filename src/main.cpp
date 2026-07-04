@@ -39,7 +39,7 @@ void setup() {
     
     Esk8OS::Board::begin();
     Esk8OS::UiRenderer::showBootSplash(44, "BOARD");
-    Esk8OS::Transports::beginVescUart();
+    Esk8OS::Transports::beginVescUart(prefs.getUChar("slaveId", 0));
     Esk8OS::UiRenderer::showBootSplash(60, "UART");
 
     // Bring up the companion BLE service now so it advertises 100% of the time.

@@ -41,7 +41,9 @@ namespace Transports {
         char  hwName[17];     // ESC hardware name from the FW handshake
     };
 
-    void beginVescUart();
+    // slaveIdHint: NVS-learned slave CAN id from a previous session (0 = none
+    // known) — an ordering hint for the auto-detect sweep, never a requirement.
+    void beginVescUart(uint8_t slaveIdHint = 0);
     bool getLatestVescData(RawVescData* outData);
     void setVescPollPaused(bool paused);
 
@@ -74,6 +76,23 @@ namespace Transports {
     // valid reply). Power-cycle the board to capture again.
     struct McconfCapture { uint8_t status; int len; uint8_t attempts; };
     void getMcconfCaptureState(McconfCapture* out);
+
+    // Base config parsed from the captured COMM_GET_MCCONF — the ESC's OWN
+    // settings, the base-truth tier under any rider override. Extraction is
+    // gated on an exact MCCONF_SIGNATURE match (layouts shift between VESC
+    // firmware versions); valid stays false for unknown signatures — callers
+    // fall back to generic defaults, never a guessed offset.
+    struct VescBaseConfig {
+        bool    valid;
+        float   cutStartV, cutEndV;        // pack volts (VESC ramps between them)
+        float   motorAmpMax, battAmpMax, battAmpRegen;
+        uint8_t motorPoles;                // full poles (not pairs)
+        float   gearRatio;                 // wheel revs : motor revs (e.g. 72/16 = 4.5)
+        float   wheelDiameterM;
+        uint8_t cells;
+        float   packAh;
+    };
+    bool getVescBaseConfig(VescBaseConfig* out);
 
     // ESC-side ride statistics (COMM_GET_STATS, FW 6+): the VESC's OWN
     // accumulated averages/maxima since ESC power-on — independent of this

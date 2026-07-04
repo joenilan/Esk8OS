@@ -29,40 +29,59 @@ const bool  DEMO_MODE_DEFAULT = true;
 
 bool gDemoMode = DEMO_MODE_DEFAULT;
 
-const int BATTERY_PARALLEL_COUNT = 6;
-const int BATTERY_CELL_CAPACITY_MAH = 2800;
-float BATTERY_EFFECTIVE_CAPACITY_AH = 16.5;
+// Neutral generic defaults — the LAST config tier, used only before a VESC has
+// ever been read AND the rider hasn't set a value. Nothing here may describe
+// any specific board or pack (rule: base truth comes from the connected ESC
+// via applyVescBase; rider changes become explicit NVS overrides on top).
+float BATTERY_EFFECTIVE_CAPACITY_AH = 10.0;
 float BATTERY_HOME_CELL_V = 3.40;
-float BATTERY_STOP_CELL_V = 3.30;
-float RANGE_DEFAULT_WH_PER_MILE = 22.0;
+float BATTERY_STOP_CELL_V = 3.10;
+float RANGE_DEFAULT_WH_PER_MILE = 20.0;
 
 int BATTERY_CELLS_COUNT = 10;
 float BATTERY_MAX_V = 42.0;
-float BATTERY_MIN_V = 33.0;
+float BATTERY_MIN_V = 31.0;
 
 void recalcBatteryBounds() {
     BATTERY_MAX_V = BATTERY_CELLS_COUNT * BATTERY_FULL_CELL_V;
     BATTERY_MIN_V = BATTERY_CELLS_COUNT * BATTERY_STOP_CELL_V;
 }
 
+// Generic starting presets — deliberately typical-of-the-category numbers, NOT
+// any specific board's gearing. Presets only matter until the first VESC read:
+// the ESC's own wheel/gearing/poles (applyVescBase) beat them from then on.
 WheelProfile wheelProfiles[] = {
-    { "8IN PNEU", 0.203f, 16, 72, 7.0f },
-    { "100MM",    0.100f, 16, 48, 7.0f },
+    { "STREET 90", 0.090f, 15, 40, 7.0f },
+    { "PNEU 200",  0.200f, 15, 60, 7.0f },
 };
 int activeWheelProfile = 0;
 
-int gWheelDiameterMm = 0;   // 0 = use the active preset; >0 = rider override
+int gWheelDiameterMm = 0;   // 0 = use VESC/preset; >0 = rider override (measured rolling dia)
 
-// The diameter (mm) actually used for the display speed/distance math: the
-// rider's calibration when set, otherwise the active preset's nominal size.
+// The VESC-read base tier. Filled from the NVS cache at boot and refreshed by
+// applyVescBase() on every live capture. valid=false until either happens.
+static Esk8OS::Transports::VescBaseConfig gBase;
+
+// The diameter (mm) actually used for the display speed/distance math:
+// rider override > VESC config > active preset.
 int effectiveWheelDiameterMm() {
     if (gWheelDiameterMm > 0) return gWheelDiameterMm;
+    if (gBase.valid) return (int)lroundf(gBase.wheelDiameterM * 1000.0f);
     return (int)lroundf(wheelProfiles[activeWheelProfile].wheelDiameterM * 1000.0f);
 }
 
-float profileGearRatio()    { return (float)wheelProfiles[activeWheelProfile].motorPulley / (float)wheelProfiles[activeWheelProfile].wheelPulley; }
+// Gearing/poles: the ESC's configured drivetrain is physical truth — riders
+// override wheel DIAMETER (loaded rolling size differs from nominal) but not
+// pulley teeth or magnet counts, so the VESC tier wins whenever it exists.
+float profileGearRatio() {
+    if (gBase.valid && gBase.gearRatio > 0.01f) return 1.0f / gBase.gearRatio;  // motor:wheel
+    return (float)wheelProfiles[activeWheelProfile].motorPulley / (float)wheelProfiles[activeWheelProfile].wheelPulley;
+}
 float profileCircumfM()     { return (effectiveWheelDiameterMm() / 1000.0f) * PI; }
-float profilePolePairs()    { return wheelProfiles[activeWheelProfile].polePairs; }
+float profilePolePairs() {
+    if (gBase.valid && gBase.motorPoles >= 2) return gBase.motorPoles / 2.0f;
+    return wheelProfiles[activeWheelProfile].polePairs;
+}
 
 bool useMph = USE_MPH_DEFAULT;
 int gBrightnessPct = 100;
@@ -85,6 +104,8 @@ namespace Settings {
 static float prefFloat(const char* key, float def) {
     return prefs.isKey(key) ? prefs.getFloat(key, def) : def;
 }
+
+static void applyBaseTier();   // defined below begin(); begin() uses it for the boot-time cache
 
 void begin() {
     prefs.begin("esk8os", false);
@@ -141,11 +162,89 @@ void begin() {
     if (gLearnedWhPerKm < 5.0f || gLearnedWhPerKm > 35.0f) gLearnedWhPerKm = 0.0f;   // Wh/km
 
 
+    // VESC base tier: restore the last parsed ESC config from its NVS cache so
+    // bench/demo sessions (pack off) keep the real drivetrain/pack numbers, then
+    // let it fill everything the rider hasn't explicitly overridden.
+    if (prefs.getBool("vbValid", false)) {
+        gBase.cutStartV      = prefFloat("vbCutS", 0);
+        gBase.cutEndV        = prefFloat("vbCutE", 0);
+        gBase.motorAmpMax    = prefFloat("vbMotA", 0);
+        gBase.battAmpMax     = prefFloat("vbBatA", 0);
+        gBase.battAmpRegen   = prefFloat("vbRegA", 0);
+        gBase.motorPoles     = (uint8_t)prefs.getInt("vbPoles", 0);
+        gBase.gearRatio      = prefFloat("vbGear", 0);
+        gBase.wheelDiameterM = prefFloat("vbWheel", 0);
+        gBase.cells          = (uint8_t)prefs.getInt("vbCells", 0);
+        gBase.packAh         = prefFloat("vbAh", 0);
+        gBase.valid = true;
+        applyBaseTier();
+    }
+
     recalcBatteryBounds();
     currentVoltage = 0;                       // show 0 (no reading) until the VESC is polled, not a fake 42V
     minVoltageSession = BATTERY_MAX_V;         // min-tracking must start high (see telemetry.cpp:336)
     minVoltageUnderLoadSession = BATTERY_MAX_V;
     loadedCellVoltage = BATTERY_FULL_CELL_V;
+}
+
+// Re-derive every battery value the rider hasn't explicitly set (NVS key
+// absent = no override) from the VESC base. Wheel/gearing/poles are handled
+// live in the profile functions above; these are the stored-global ones.
+static void applyBaseTier() {
+    if (!gBase.valid) return;
+    if (!prefs.isKey("cells") && gBase.cells >= 6 && gBase.cells <= 14)
+        BATTERY_CELLS_COUNT = gBase.cells;
+    if (!prefs.isKey("packAh"))
+        BATTERY_EFFECTIVE_CAPACITY_AH = constrain(gBase.packAh, 4.0f, 40.0f);
+    if (!prefs.isKey("stopCell") && gBase.cells > 0)
+        BATTERY_STOP_CELL_V = constrain(gBase.cutEndV / gBase.cells, 3.00f, 3.60f);
+    if (!prefs.isKey("homeCell") && gBase.cells > 0)
+        BATTERY_HOME_CELL_V = constrain(gBase.cutStartV / gBase.cells,
+                                        BATTERY_STOP_CELL_V, BATTERY_FULL_CELL_V);
+    recalcBatteryBounds();
+}
+
+void applyVescBase(const Esk8OS::Transports::VescBaseConfig& b) {
+    if (!b.valid) return;
+    // Persist the cache change-guarded: a capture parses on every boot, and the
+    // config rarely changes — don't rewrite NVS for identical values.
+    bool changed = !gBase.valid ||
+        fabsf(gBase.cutStartV - b.cutStartV) > 0.05f ||
+        fabsf(gBase.cutEndV - b.cutEndV) > 0.05f ||
+        fabsf(gBase.packAh - b.packAh) > 0.05f ||
+        fabsf(gBase.gearRatio - b.gearRatio) > 0.005f ||
+        fabsf(gBase.wheelDiameterM - b.wheelDiameterM) > 0.0005f ||
+        fabsf(gBase.motorAmpMax - b.motorAmpMax) > 0.5f ||
+        fabsf(gBase.battAmpMax - b.battAmpMax) > 0.5f ||
+        fabsf(gBase.battAmpRegen - b.battAmpRegen) > 0.5f ||
+        gBase.motorPoles != b.motorPoles || gBase.cells != b.cells;
+    gBase = b;
+    if (changed) {
+        prefs.putFloat("vbCutS", b.cutStartV);
+        prefs.putFloat("vbCutE", b.cutEndV);
+        prefs.putFloat("vbMotA", b.motorAmpMax);
+        prefs.putFloat("vbBatA", b.battAmpMax);
+        prefs.putFloat("vbRegA", b.battAmpRegen);
+        prefs.putInt("vbPoles", b.motorPoles);
+        prefs.putFloat("vbGear", b.gearRatio);
+        prefs.putFloat("vbWheel", b.wheelDiameterM);
+        prefs.putInt("vbCells", b.cells);
+        prefs.putFloat("vbAh", b.packAh);
+        prefs.putBool("vbValid", true);
+        applyBaseTier();
+        gRedrawAll = true;
+    }
+}
+
+bool vescBase(Esk8OS::Transports::VescBaseConfig* out) {
+    *out = gBase;
+    return gBase.valid;
+}
+
+const char* sourceTag(const char* nvsKey, bool vescProvides) {
+    if (prefs.isKey(nvsKey)) return "rider";
+    if (gBase.valid && vescProvides) return "vesc";
+    return "default";
 }
 
 } // namespace Settings
