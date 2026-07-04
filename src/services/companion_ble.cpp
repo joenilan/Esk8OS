@@ -16,6 +16,7 @@
 #include "app/App.h"
 #include "telemetry/telemetry.h"
 #include "logging/sessionlog.h"
+#include "config/Settings.h"
 #include "board/BoardLilyGoTDisplayS3.h"
 #include "version.h"
 
@@ -30,6 +31,7 @@ static const char* CH_TELEMETRY  = "5043697A-0001-4682-93CB-33BB0A149F7E"; // NO
 static const char* CH_SETTINGS   = "5043697A-0002-4682-93CB-33BB0A149F7E"; // READ | WRITE
 static const char* CH_COMMAND    = "5043697A-0003-4682-93CB-33BB0A149F7E"; // WRITE
 static const char* CH_SESSION    = "5043697A-0004-4682-93CB-33BB0A149F7E"; // NOTIFY (1 Hz stats)
+static const char* CH_BASECONF   = "5043697A-0005-4682-93CB-33BB0A149F7E"; // READ (VESC base + provenance)
 
 static const float KM2MI = 0.621371f;
 
@@ -164,6 +166,48 @@ static void buildSettingsJson(char* out, size_t cap) {
     doc["calWh"]   = (int)lroundf(gLearnedPackWh);        // deliverable pack Wh, 0 = unlearned
     serializeJson(doc, out, cap);
 }
+
+// ---- Base-config characteristic (0005, read-only) ---------------------------
+// The three-tier config surface: what the ESC's own mcconf says (base) and
+// where each effective value currently comes from. Lives on its own
+// characteristic because the settings JSON is near the 512 B attribute cap.
+// {"valid":true,"cells":10,...,"src":{"cells":"r",...}}  src: r=rider override,
+// v=vesc base, d=generic default. valid:false = no FW-matched mcconf ever parsed.
+static void buildBaseConfJson(char* out, size_t cap) {
+    JsonDocument doc;
+    Esk8OS::Transports::VescBaseConfig b;
+    bool have = Esk8OS::Settings::vescBase(&b);
+    doc["valid"] = have;
+    if (have) {
+        doc["cells"] = b.cells;
+        doc["ah"]    = r1(b.packAh);
+        doc["cutS"]  = r1(b.cutStartV);
+        doc["cutE"]  = r1(b.cutEndV);
+        doc["poles"] = b.motorPoles;
+        doc["gear"]  = roundf(b.gearRatio * 100.0f) / 100.0f;
+        doc["wheel"] = (int)lroundf(b.wheelDiameterM * 1000.0f);
+        doc["motA"]  = r1(b.motorAmpMax);
+        doc["batA"]  = r1(b.battAmpMax);
+        doc["regA"]  = r1(b.battAmpRegen);
+    }
+    JsonObject src = doc["src"].to<JsonObject>();
+    using Esk8OS::Settings::sourceTag;
+    src["cells"] = String(sourceTag("cells")[0]);
+    src["ah"]    = String(sourceTag("packAh")[0]);
+    src["home"]  = String(sourceTag("homeCell")[0]);
+    src["stop"]  = String(sourceTag("stopCell")[0]);
+    src["whmi"]  = String(sourceTag("whmi", false)[0]);
+    src["wheel"] = gWheelDiameterMm > 0 ? "r" : (have ? "v" : "d");
+    serializeJson(doc, out, cap);
+}
+
+class BaseConfCallbacks : public NimBLECharacteristicCallbacks {
+    void onRead(NimBLECharacteristic* c) override {
+        char buf[320];
+        buildBaseConfJson(buf, sizeof(buf));
+        c->setValue((uint8_t*)buf, strlen(buf));
+    }
+};
 
 // Rebuild the advert (name + vtype/pair-code) and restart it so a live change
 // from the app shows up in the scan list without a reboot. Defined below.
@@ -474,6 +518,10 @@ void companionBleBegin() {
     NimBLECharacteristic* cmd = svc->createCharacteristic(
         CH_COMMAND, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
     cmd->setCallbacks(new CommandCallbacks());
+
+    NimBLECharacteristic* base = svc->createCharacteristic(
+        CH_BASECONF, NIMBLE_PROPERTY::READ);
+    base->setCallbacks(new BaseConfCallbacks());
     svc->start();
 
     // Build the VESC-Tool NUS service onto the SAME server now, so the whole GATT

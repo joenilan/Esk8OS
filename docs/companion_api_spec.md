@@ -17,8 +17,34 @@ The Android app acts as a read/write client to this custom service.
 | **Settings** | `5043697A-0002-4682-93CB-33BB0A149F7E` | `READ`, `WRITE` | Board configuration (Theme, Wheel size, MPH/KMH) |
 | **Command** | `5043697A-0003-4682-93CB-33BB0A149F7E` | `WRITE` | Triggers for actions (Trip Reset, Change Page) |
 | **Session** | `5043697A-0004-4682-93CB-33BB0A149F7E` | `NOTIFY` | 1 Hz trip/session statistics (fw 0.9.4+) |
+| **BaseConfig** | `5043697A-0005-4682-93CB-33BB0A149F7E` | `READ` | VESC-read base config + per-value provenance (fw 0.10.1+) |
 
 ---
+
+## 2b. Base config (Characteristic `0005`, fw 0.10.1+)
+
+The firmware's config is three-tiered: **rider override** (explicit NVS key) →
+**VESC base** (parsed from the ESC's own `COMM_GET_MCCONF`, signature-gated) →
+**neutral generic default**. This read-only characteristic exposes the base tier
+and where each effective settings value currently comes from, so the app can
+label overrides, show the ESC's ground truth next to them, and offer
+"reset to base" semantics (deleting the NVS key = writing the settings field is
+NOT that; a delete mechanism is future work — today the app just displays).
+
+```json
+{"valid":true,"cells":10,"ah":16.5,"cutS":34.0,"cutE":31.0,"poles":14,
+ "gear":4.5,"wheel":203,"motA":57.0,"batA":15.0,"regA":-5.0,
+ "src":{"cells":"r","ah":"v","home":"v","stop":"r","whmi":"r","wheel":"v"}}
+```
+
+- `valid:false` → no firmware-matched mcconf has ever parsed on this board;
+  only `src` is present (everything will be `r` or `d`).
+- `cutS`/`cutE`: the VESC's battery-cut start/end, **pack volts** (it ramps
+  current between them). `gear` is wheel:motor (e.g. 72/16 = 4.5). `wheel` mm.
+- `src` values: `r` = rider override, `v` = VESC base, `d` = generic default.
+  Keys map to the settings fields `bat_s`/`packAh`/`homeCell`/`stopCell`/
+  `whmi`/`wheel`. Older firmware lacks the characteristic entirely — treat as
+  `valid:false`.
 
 ## 3. Telemetry (Characteristics `0001` + `0004`)
 Since fw 0.9.4 telemetry is split across two notify characteristics so neither
