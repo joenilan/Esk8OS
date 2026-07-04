@@ -201,7 +201,35 @@ namespace App {
 
 // BLE PAGE_NEXT/PREV step through the same PAGE_ORDER the buttons use, so the
 // app's remote paging visits pages in the order the rider knows.
+#if ESK8OS_FULL_UI
 void pageRel(int dir) { gotoPageRel(dir); }
+#else
+// Mini/headless glass has no pages — its "pages" are the HUD faces. Remote
+// paging steps the face cycle (same order as the console's `hud next`), which
+// is the ONLY navigation a buttonless OLED board has.
+void pageRel(int dir) {
+    struct Face { int face; int focus; };
+    static const Face ORDER[] = {
+        { HUD_FACE_SPEED,   BATTERY_FOCUS_PERCENT },
+        { HUD_FACE_BATTERY, BATTERY_FOCUS_PERCENT },
+        { HUD_FACE_BATTERY, BATTERY_FOCUS_VOLTS   },
+        { HUD_FACE_WATTS,   BATTERY_FOCUS_PERCENT },
+        { HUD_FACE_SAFETY,  BATTERY_FOCUS_PERCENT },
+    };
+    const int N = sizeof(ORDER) / sizeof(ORDER[0]);
+    int cur = 0;
+    for (int i = 0; i < N; i++) {
+        if (ORDER[i].face == gHudFace &&
+            (gHudFace != HUD_FACE_BATTERY || ORDER[i].focus == gBatteryFocus)) { cur = i; break; }
+    }
+    const Face& next = ORDER[(cur + dir + N) % N];
+    gHudFace = next.face;
+    gBatteryFocus = next.focus;
+    prefs.putInt("hudFace", gHudFace);
+    prefs.putInt("batFocus", gBatteryFocus);
+    gRedrawAll = true;
+}
+#endif
 
 // Zero the current ride/trip metrics and repaint. Shared by the LEFT long-press and
 // the companion app's TRIP_RESET command — both run on the UI thread.
