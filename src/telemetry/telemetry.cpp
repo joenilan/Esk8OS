@@ -164,7 +164,19 @@ static void simulateTelemetry() {
     static unsigned long lastDrain = 0;
     if (millis() - lastDrain > 2000) {
         lastDrain = millis();
-        if (currentBatteryPercent > 0) currentBatteryPercent--;
+        // Loop the ride: recharge to full at 10% instead of draining to the
+        // limp floor and sitting there. A buttonless board has no hold-L to
+        // recharge, so the old code left demo stuck blinking red (limp) forever
+        // — a fresh board boots into demo by default, so that was the
+        // out-of-box look on OLED/headless units. Recharging at 10% keeps the
+        // loop clear of the stuck deep-limp state while still showing a drain.
+        if (currentBatteryPercent > 10) {
+            currentBatteryPercent--;
+        } else {
+            currentBatteryPercent = 100;
+            currentWattHours = 0;          // fresh "ride" — reset the demo energy
+            currentWhRegen = 0;
+        }
         currentVoltage = BATTERY_MIN_V + (BATTERY_MAX_V - BATTERY_MIN_V) * currentBatteryPercent / 100.0;
     }
 }
