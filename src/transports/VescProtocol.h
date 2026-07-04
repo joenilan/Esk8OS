@@ -34,7 +34,7 @@ enum VescCommand : uint8_t {
     VESC_COMM_GET_VALUES                = 4,
     VESC_COMM_GET_MCCONF                = 14,
     VESC_COMM_TERMINAL_CMD              = 20,
-    VESC_COMM_PRINT                     = 26,
+    VESC_COMM_PRINT                     = 21,   // was wrongly 26 (=DETECT_FLUX); confirmed vs bldc datatypes.h
     VESC_COMM_ALIVE                     = 30,
     VESC_COMM_GET_DECODED_PPM           = 31,
     VESC_COMM_FORWARD_CAN               = 34,
