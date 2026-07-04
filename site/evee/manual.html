@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EVEE Manual — install, wire, ride</title>
+<meta name="description" content="The EVEE / ESK8OS manual: what it does, how to wire it to your VESC, which USB port to use, adding a screen, pairing the app, and updating firmware.">
+<meta name="theme-color" content="#0e0e10">
+<meta property="og:type" content="article">
+<meta property="og:title" content="EVEE Manual — install, wire, ride">
+<meta property="og:description" content="Wiring, flashing, pairing and riding with EVEE telemetry — preloaded boards or full DIY.">
+<meta property="og:url" content="https://evee.zombie.digital/manual.html">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1216'/%3E%3Cpath d='M10 7h13v4h-8v3h7v4h-7v3h8v4H10z' fill='%23b950d7'/%3E%3Crect x='6' y='7' width='2.5' height='18' rx='1' fill='%234fd8eb'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="evee.css?v=7">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <a class="brand" href="index.html" aria-label="EVEE — home">EVEE<span class="brand-tick"></span></a>
+    <nav class="topnav" aria-label="Manual sections">
+      <a href="#hardware">Hardware</a>
+      <a href="#wiring">Wiring</a>
+      <a href="#firstboot">First boot</a>
+      <a href="#updates">Updates</a>
+      <a href="#console">Console</a>
+    </nav>
+    <a class="btn small nav-cta" href="index.html#firmware">Download</a>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ── Intro ────────────────────────────────────────────────────────── -->
+  <section class="hero wrap" style="grid-template-columns:1fr">
+    <div class="hero-copy">
+      <p class="eyebrow">Manual</p>
+      <h1>Install, wire, ride.</h1>
+      <p class="lede">
+        EVEE is a telemetry computer for VESC-based vehicles. It plugs into
+        your ESC's COMM port, reads it a dozen times a second, and turns that
+        into a live dashboard, honest battery math, ride logs, and a phone
+        app. It is <strong>read-only by design</strong> — it can never
+        command your motors, so a dashboard fault can't become a ride fault.
+      </p>
+      <p class="lede narrow">
+        Two ways in: <strong>buy a preloaded board</strong> and just build the
+        cable, or <strong>DIY everything</strong> — the firmware is open
+        source and flashes onto off-the-shelf ESP32-S3 hardware.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── Hardware tiers ───────────────────────────────────────────────── -->
+  <section id="hardware" class="wrap section">
+    <p class="eyebrow">Hardware</p>
+    <h2>One firmware, three kinds of glass.</h2>
+    <p class="lede narrow">
+      Every tier runs the same firmware and the same app. Less display simply
+      moves more of the picture to your phone.
+    </p>
+    <div class="cards">
+      <div class="card">
+        <div class="card-head"><h3>Full display</h3><span class="pill">LilyGo T-Display-S3</span></div>
+        <p>1.9" color dashboard with two buttons: eight pages, four HUD faces,
+        eight themes, on-board settings. The flagship build.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Mini display</h3><span class="pill">ESP32-S3 + 0.91" OLED</span></div>
+        <p>A 128×32 glance display: speed, battery, volts, range, alerts,
+        pairing code and service screens. Your phone is the buttons — the app
+        flips its faces remotely.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Headless</h3><span class="pill">bare ESP32-S3</span></div>
+        <p>No screen at all. The board rides hidden in the enclosure; the app
+        is the entire dashboard. Cheapest way onto any vehicle.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Wiring ───────────────────────────────────────────────────────── -->
+  <section id="wiring" class="wrap section">
+    <p class="eyebrow">Wiring</p>
+    <h2>Four wires to the VESC.</h2>
+    <p class="lede narrow">
+      EVEE talks to the ESC over UART through the VESC's <strong>COMM
+      port</strong> and is powered by it. Same pinout on every tier.
+    </p>
+    <div class="spec-rows">
+      <div class="spec"><span class="mono">VESC COMM 5V</span><span>→ EVEE <span class="mono">5V</span> — the ESC powers the board</span></div>
+      <div class="spec"><span class="mono">VESC COMM GND</span><span>→ EVEE <span class="mono">GND</span></span></div>
+      <div class="spec"><span class="mono">VESC COMM TX</span><span>→ EVEE <span class="mono">GPIO&nbsp;18</span> (board RX)</span></div>
+      <div class="spec"><span class="mono">VESC COMM RX</span><span>→ EVEE <span class="mono">GPIO&nbsp;17</span> (board TX)</span></div>
+    </div>
+    <p class="fine">
+      TX crosses to RX — if the link stays down, swapping 17/18 is the first
+      thing to try. Most VESCs use a JST-PH 2.0 COMM connector; check your
+      ESC's pin label order before crimping.
+    </p>
+    <div class="cards">
+      <div class="card">
+        <div class="card-head"><h3>VESC Tool settings</h3><span class="pill">once</span></div>
+        <p>App Settings → General → <span class="mono">App to Use</span>:
+        <strong>PPM and UART</strong> (keeps a PPM remote working) or
+        <strong>UART</strong>. Baud <span class="mono">115200</span>. Dual
+        motors need CAN status messages on — EVEE finds the second ESC by
+        itself.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Adding the 0.91" OLED</h3><span class="pill">mini tier</span></div>
+        <p>SSD1306 128×32 I²C module, four wires:
+        <span class="mono">VCC→3.3V · GND→GND · SDA→GPIO 8 · SCL→GPIO 9</span>.
+        Address <span class="mono">0x3C</span> (the usual default). Flash the
+        OLED build and it just shows up.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>⚠ Power caution</h3><span class="pill">read this</span></div>
+        <p><strong>Never connect USB while the board is wired to a powered
+        vehicle.</strong> Bench with USB only (ESC unpowered), ride with
+        vehicle power only. One 5V source at a time.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── USB / flashing ───────────────────────────────────────────────── -->
+  <section id="usb" class="wrap section">
+    <p class="eyebrow">USB</p>
+    <h2>Which port is which.</h2>
+    <div class="cards">
+      <div class="card">
+        <div class="card-head"><h3>T-Display-S3</h3></div>
+        <p>One USB-C. That's the one.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>ESP32-S3 dev boards</h3></div>
+        <p>Most have <strong>two</strong> USB-C ports. EVEE uses the
+        <strong>native USB port — the one labeled <span class="mono">USB</span></strong>
+        (on the units we ship, the right-hand port with the connector facing
+        you). Flashing, the serial console, and log downloads all live there.
+        The port labeled <span class="mono">COM</span>/<span class="mono">UART</span>
+        is a serial bridge EVEE doesn't use.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>DIY first flash</h3><span class="pill">open source</span></div>
+        <p>Clone <a href="https://github.com/joenilan/Esk8OS">the repo</a>,
+        install <a href="https://platformio.org">PlatformIO</a>, plug the
+        native USB port and run
+        <span class="mono">pio run -e &lt;your board&gt; -t upload</span>.
+        Environments: <span class="mono">tdisplay_s3_ride_release</span> ·
+        <span class="mono">esp32s3_oled_i2c_usb</span> ·
+        <span class="mono">esp32s3_headless_usb</span>. Preloaded boards skip
+        this entirely.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── First boot ───────────────────────────────────────────────────── -->
+  <section id="firstboot" class="wrap section">
+    <p class="eyebrow">First boot</p>
+    <h2>It configures itself from your ESC.</h2>
+    <p class="lede narrow">
+      EVEE ships knowing <em>nothing</em> about your vehicle — and that's the
+      feature. On first link it reads your VESC's own configuration (cell
+      count, pack capacity, cutoff voltages, motor poles, gearing, wheel size)
+      and uses it as ground truth. Anything you change later is kept as
+      <strong>your override</strong> on top; the app's settings page shows
+      exactly which is which.
+    </p>
+    <div class="steps">
+      <div class="step"><span class="step-n mono">01</span><h3>Power it</h3>
+        <p>Wired to the ESC, turn the vehicle on. Displays show a boot bar,
+        then live data — or <span class="mono">NO VESC</span> with your
+        <strong>pairing code</strong> while unlinked. Demo mode (simulated
+        data, marked DEMO) is available for bench play.</p></div>
+      <div class="step"><span class="step-n mono">02</span><h3>Pair the app</h3>
+        <p>Install the ESK8OS app, scan, and match the 4-character pair code
+        shown on the board (screen, screensaver, or the scan list itself).
+        Telemetry starts streaming immediately.</p></div>
+      <div class="step"><span class="step-n mono">03</span><h3>Tune what's yours</h3>
+        <p>Wheel size is the classic override — measure your real rolling
+        diameter and set it in the app; GPS in the trip recorder will confirm
+        it. Battery floors, units, themes and rider name live there too.</p></div>
+    </div>
+    <p class="fine">
+      Buttonless boards navigate from the app: double-tap the dashboard →
+      Controls → <span class="mono">PREV FACE / NEXT FACE</span>.
+    </p>
+  </section>
+
+  <!-- ── What it does while you ride ──────────────────────────────────── -->
+  <section id="riding" class="wrap section">
+    <p class="eyebrow">Riding</p>
+    <h2>What it's doing back there.</h2>
+    <div class="feature-list">
+      <div><h3>Honest battery math</h3><p>Sag-compensated charge, learned pack
+        resistance and real deliverable energy — range that predicts the
+        loaded cutoff, not the resting one.</p></div>
+      <div><h3>Black-box logging</h3><p>One CSV per session on the board:
+        volts, amps, temps, faults, per-motor split — with link-loss and
+        voltage-collapse events flushed the moment they happen.</p></div>
+      <div><h3>Ride recording</h3><p>The app maps every ride with the board as
+        the source of truth for speed and distance, GPS as the fallback, and
+        full playback with per-second telemetry.</p></div>
+      <div><h3>VESC Tool passthrough</h3><p>Bridge mode turns EVEE into a
+        wireless VESC Tool link (BLE or WiFi) — configure your ESC without
+        pulling the enclosure.</p></div>
+    </div>
+  </section>
+
+  <!-- ── Updates ──────────────────────────────────────────────────────── -->
+  <section id="updates" class="wrap section">
+    <p class="eyebrow">Updates</p>
+    <h2>Over the air, from the app.</h2>
+    <div class="steps">
+      <div class="step"><span class="step-n mono">01</span><h3>Start export</h3>
+        <p>App → Controls → <span class="mono">EXPORT / OTA</span>. The board
+        raises its own WiFi network — name and per-device password appear on
+        its screen and in the app.</p></div>
+      <div class="step"><span class="step-n mono">02</span><h3>Join it</h3>
+        <p>Connect your phone to that network and open
+        <span class="mono">http://192.168.4.1</span> — ride logs to download,
+        firmware update form below.</p></div>
+      <div class="step"><span class="step-n mono">03</span><h3>Flash</h3>
+        <p>Upload the build for your hardware from the
+        <a href="index.html#firmware">release feed</a> (checksums published).
+        The board verifies, reboots, and keeps your odometer and settings.</p></div>
+    </div>
+  </section>
+
+  <!-- ── Console ──────────────────────────────────────────────────────── -->
+  <section id="console" class="wrap section">
+    <p class="eyebrow">For tinkerers</p>
+    <h2>The serial console.</h2>
+    <p class="lede narrow">
+      Plug the native USB port into any serial terminal at
+      <span class="mono">115200</span> baud and type
+      <span class="mono">help</span>. Highlights:
+    </p>
+    <div class="spec-rows">
+      <div class="spec"><span class="mono">stat · diag</span><span>live telemetry · VESC link diagnostics down to the wire counters</span></div>
+      <div class="spec"><span class="mono">cfg</span><span>every setting with its source — your override, VESC-read, or default</span></div>
+      <div class="spec"><span class="mono">vstat</span><span>the ESC's own accumulated ride stats (FW6+)</span></div>
+      <div class="spec"><span class="mono">trip · odo · cal</span><span>trip, lifetime odometer, learned battery calibration</span></div>
+      <div class="spec"><span class="mono">logs · cat · mcconf</span><span>session CSVs and the raw VESC config capture</span></div>
+      <div class="spec"><span class="mono">demo on|off</span><span>simulated telemetry for bench testing</span></div>
+    </div>
+    <p class="fine">
+      Safety, restated: the firmware's only write to the ESC is the odometer.
+      No current control, no duty control, no cutoffs — your VESC and remote
+      remain the only things that drive the motors. EVEE is instrumentation.
+      Ride within your limits; watch the road, not the dashboard.
+    </p>
+  </section>
+</main>
+
+<footer class="footer-outer">
+  <div class="wrap footer">
+    <a class="brand small" href="index.html">EVEE</a>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="https://github.com/joenilan/Esk8OS">GitHub</a>
+      <a href="https://apps.zombie.digital/downloads/esk8os-firmware/latest.json">Release feed</a>
+      <a href="https://apps.zombie.digital">zombie.digital</a>
+    </nav>
+    <span class="footer-note">An open project · <span id="year"></span></span>
+  </div>
+</footer>
+
+<script src="evee.js?v=7" defer></script>
+</body>
+</html>

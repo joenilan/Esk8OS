@@ -21,6 +21,8 @@ const chipsBox = document.getElementById("theme-chips");
 const themeShot = document.getElementById("theme-shot");
 const themeShotCap = document.getElementById("theme-shot-cap");
 
+// Theme bits are null-guarded so subpages (manual.html) that lack the theme
+// section still get the saved palette applied on load.
 function applyTheme(name) {
   const t = THEMES[name] || THEMES.cam;
   const map = { "--bg": t.page, "--panel": t.panel, "--line": t.line, "--text": t.text,
@@ -29,22 +31,24 @@ function applyTheme(name) {
   for (const [k, v] of Object.entries(map)) root.style.setProperty(k, v);
   root.classList.toggle("light", t.light);
   document.querySelector('meta[name="theme-color"]').content = t.page;
-  themeShot.src = `img/theme_${name}.png?v=2`;
-  themeShotCap.textContent = `${name} — ${t.cap}`;
-  for (const b of chipsBox.querySelectorAll("button"))
-    b.setAttribute("aria-pressed", String(b.dataset.theme === name));
+  if (themeShot) themeShot.src = `img/theme_${name}.png?v=2`;
+  if (themeShotCap) themeShotCap.textContent = `${name} — ${t.cap}`;
+  if (chipsBox)
+    for (const b of chipsBox.querySelectorAll("button"))
+      b.setAttribute("aria-pressed", String(b.dataset.theme === name));
   try { localStorage.setItem("evee-theme", name); } catch (_) {}
 }
 
-for (const [name, t] of Object.entries(THEMES)) {
-  const b = document.createElement("button");
-  b.type = "button";
-  b.className = "theme-chip";
-  b.dataset.theme = name;
-  b.innerHTML = `<span class="theme-swatch" style="background:linear-gradient(135deg,${t.accent} 50%,${t.panel} 50%)"></span>${name}`;
-  b.addEventListener("click", () => applyTheme(name));
-  chipsBox.appendChild(b);
-}
+if (chipsBox)
+  for (const [name, t] of Object.entries(THEMES)) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "theme-chip";
+    b.dataset.theme = name;
+    b.innerHTML = `<span class="theme-swatch" style="background:linear-gradient(135deg,${t.accent} 50%,${t.panel} 50%)"></span>${name}`;
+    b.addEventListener("click", () => applyTheme(name));
+    chipsBox.appendChild(b);
+  }
 let saved = new URLSearchParams(location.search).get("theme");
 if (!(saved in THEMES)) {
   try { saved = localStorage.getItem("evee-theme"); } catch (_) {}
@@ -59,7 +63,7 @@ const dotsBox = document.getElementById("face-dots");
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let face = 0, hudTimer = null;
 
-FACE_NAMES.forEach((n, i) => {
+if (dotsBox) FACE_NAMES.forEach((n, i) => {
   const d = document.createElement("button");
   d.type = "button";
   d.setAttribute("role", "tab");
@@ -68,23 +72,26 @@ FACE_NAMES.forEach((n, i) => {
   d.addEventListener("click", () => { setFace(i); restartHud(); });
   dotsBox.appendChild(d);
 });
-const dots = [...dotsBox.children];
+const dots = dotsBox ? [...dotsBox.children] : [];
 
 function setFace(i) {
   face = (i + screens.length) % screens.length;
   screens.forEach((img, k) => img.classList.toggle("active", k === face));
   dots.forEach((d, k) => d.setAttribute("aria-selected", String(k === face)));
-  faceLabel.textContent = FACE_NAMES[face];
+  if (faceLabel) faceLabel.textContent = FACE_NAMES[face];
 }
 function restartHud() {
   clearInterval(hudTimer);
   if (!reduced) hudTimer = setInterval(() => setFace(face + 1), 3800);
 }
-document.getElementById("hud-btn").addEventListener("click", () => { setFace(face + 1); restartHud(); });
+const hudBtn = document.getElementById("hud-btn");
+if (hudBtn) hudBtn.addEventListener("click", () => { setFace(face + 1); restartHud(); });
 // only cycle while the device is on screen
-new IntersectionObserver((en) => {
-  if (en[0].isIntersecting) restartHud(); else clearInterval(hudTimer);
-}, { threshold: 0.2 }).observe(document.querySelector(".device"));
+const deviceEl = document.querySelector(".device");
+if (deviceEl)
+  new IntersectionObserver((en) => {
+    if (en[0].isIntersecting) restartHud(); else clearInterval(hudTimer);
+  }, { threshold: 0.2 }).observe(deviceEl);
 
 // ── Scroll-reveal sections (skipped for reduced motion via CSS) ──
 const sections = document.querySelectorAll("main section");
@@ -115,6 +122,7 @@ const LABELS = {
 
 const jf = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
 
+if (document.getElementById("fw-version"))
 Promise.all([jf(`${FEED}/latest.json`), jf(`${FEED}/manifest.json`).catch(() => null)])
   .then(([rel, man]) => {
     document.getElementById("fw-version").textContent = "v" + rel.version;
