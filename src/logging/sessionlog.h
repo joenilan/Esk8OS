@@ -16,6 +16,7 @@ void sessionLogFlush();       // flush active CSV, keeping the same session open
 void sessionLogEnd();         // flush + close the active session file
 void sessionLogTick();        // append a 1 Hz dashboard sample
 void sessionLogMark(const char* event); // append a one-off event row
+void sessionLogNote(const char* text);  // append free-text '#' comment lines (flushed) — forensics
 void sessionLogDeleteAll();   // close current session, delete CSVs, start fresh
 bool sessionLogReady();       // true if LittleFS mounted (logging available)
 

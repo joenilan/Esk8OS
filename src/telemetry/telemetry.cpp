@@ -519,15 +519,42 @@ void pollVescData() {
     // the collapse row survives even if power dies before the periodic flush.
     static float lastBusV = 0;
     static uint32_t lastBusMs = 0, lastCollapseMs = 0;
+    static bool escFaultSnapPending = false;
+    static uint32_t lastFaultSnapMs = 0;
     if (telemetryLive && !DEMO_DATA) {
         uint32_t nowBusMs = millis();
         if (lastBusV > 15.0f && currentVoltage < lastBusV - 8.0f &&
             nowBusMs - lastBusMs < 2000 && nowBusMs - lastCollapseMs > 2000) {
             lastCollapseMs = nowBusMs;
             sessionLogMark("vcollapse");
+            // Grab the ESC's own fault log while its logic is still alive —
+            // it's RAM-only on the ESC, gone at its next power-up.
+            if (Esk8OS::Transports::requestVescTerminal("faults")) {
+                escFaultSnapPending = true;
+                lastFaultSnapMs = nowBusMs;
+            }
         }
         lastBusV = currentVoltage;
         lastBusMs = nowBusMs;
+    }
+
+    // Same snapshot on a freshly-raised VESC fault code (rate-limited).
+    static int prevFaultCode = 0;
+    if (!DEMO_DATA && vescFault != 0 && vescFault != prevFaultCode &&
+        millis() - lastFaultSnapMs > 30000UL) {
+        if (Esk8OS::Transports::requestVescTerminal("faults")) {
+            escFaultSnapPending = true;
+            lastFaultSnapMs = millis();
+        }
+    }
+    prevFaultCode = vescFault;
+
+    if (escFaultSnapPending) {
+        const char* ftxt;
+        if (Esk8OS::Transports::fetchVescTerminal(&ftxt)) {
+            sessionLogNote(ftxt[0] ? ftxt : "esc faults: no reply");
+            escFaultSnapPending = false;
+        }
     }
 
     bool discharging = currentAmps > 2.0f && currentWatts > 50.0f;

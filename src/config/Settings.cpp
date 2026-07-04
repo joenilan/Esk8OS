@@ -247,5 +247,24 @@ const char* sourceTag(const char* nvsKey, bool vescProvides) {
     return "default";
 }
 
+bool removeOverride(const char* nvsKey) {
+    static const char* KEYS[] = { "cells", "packAh", "stopCell", "homeCell", "whmi", "wheelmm" };
+    bool known = false;
+    for (const char* k : KEYS) if (!strcmp(k, nvsKey)) { known = true; break; }
+    if (!known) return false;
+    prefs.remove(nvsKey);
+    // Reset to the compiled generic, then let the VESC base win where valid.
+    if      (!strcmp(nvsKey, "cells"))    BATTERY_CELLS_COUNT = 10;
+    else if (!strcmp(nvsKey, "packAh"))   BATTERY_EFFECTIVE_CAPACITY_AH = 10.0f;
+    else if (!strcmp(nvsKey, "stopCell")) BATTERY_STOP_CELL_V = 3.10f;
+    else if (!strcmp(nvsKey, "homeCell")) BATTERY_HOME_CELL_V = 3.40f;
+    else if (!strcmp(nvsKey, "whmi"))     RANGE_DEFAULT_WH_PER_MILE = 20.0f;
+    else if (!strcmp(nvsKey, "wheelmm"))  gWheelDiameterMm = 0;
+    applyBaseTier();
+    recalcBatteryBounds();
+    gRedrawAll = true;
+    return true;
+}
+
 } // namespace Settings
 } // namespace Esk8OS

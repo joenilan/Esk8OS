@@ -174,6 +174,25 @@ void sessionLogMark(const char* event) {
     sessionLogFlush();
 }
 
+// Free-text forensics inline with the CSV rows (e.g. the ESC's own fault log,
+// captured the moment a fault appears). '#'-prefixed so CSV parsers skip it.
+// Flushed immediately — these exist precisely for the moments power might die.
+void sessionLogNote(const char* text) {
+    if (!g_enabled || !text || !text[0]) return;
+    if (!g_active) sessionLogStart();
+    if (!g_active || !g_file) return;
+    const char* p = text;
+    while (*p) {
+        const char* nl = strchr(p, '\n');
+        int len = nl ? (int)(nl - p) : (int)strlen(p);
+        g_file.print("# ");
+        g_file.write((const uint8_t*)p, len);
+        g_file.print("\n");
+        p += len + (nl ? 1 : 0);
+    }
+    g_file.flush();
+}
+
 void sessionLogTick() {
     if (!g_enabled) return;
     if (!g_active) sessionLogStart();

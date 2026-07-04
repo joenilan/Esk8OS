@@ -4,6 +4,7 @@
 #include "telemetry/telemetry.h"
 #include "transports/VescUartTransport.h"
 #include "config/Settings.h"
+#include "services/companion_ble.h"
 #include "version.h"
 #include "logging/sessionlog.h"
 #include "services/webexport.h"
@@ -264,6 +265,93 @@ static void cmdTrip(const char* arg) {
         estimatedRangeKm * cv, u, remainingRangeKm * cv,
         estimatedLimpRangeKm * cv, u, remainingLimpRangeKm * cv,
         rangeEstimateReady ? "[learned]" : "[default]");
+}
+
+// Passthrough to the ESC's own terminal (COMM_TERMINAL_CMD) — the commands
+// VESC Tool's Terminal tab speaks: `vesc faults`, `vesc ping`, `vesc threads`…
+// Serviced by the poll task so it can't collide with telemetry on the UART.
+static void cmdVescTerm(const char* arg) {
+    String a = arg; a.trim();
+    if (!a.length()) { consoleOut().println("usage: vesc <terminal cmd>   e.g. vesc faults"); return; }
+    if (!Esk8OS::Transports::requestVescTerminal(a.c_str())) {
+        consoleOut().println("terminal busy - try again");
+        return;
+    }
+    const char* text = nullptr;
+    uint32_t t0 = millis();
+    while (millis() - t0 < 3000) {
+        if (Esk8OS::Transports::fetchVescTerminal(&text)) break;
+        delay(20);
+    }
+    if (!text) consoleOut().println("no response (bridge active, or poll task stalled)");
+    else if (!text[0]) consoleOut().println("(no output - VESC link down or command unknown)");
+    else consoleOut().print(text);
+}
+
+// Generic setter riding the SAME path as the app's BLE settings write — every
+// writable key in docs/companion_api_spec.md section 4 works here too.
+static void cmdSet(const char* arg) {
+    String a = arg; a.trim();
+    int sp = a.indexOf(' ');
+    if (sp <= 0) {
+        consoleOut().println("usage: set <key> <value>   e.g. set stopCell 3.35 | set hud watts | set rider ZOMBIE");
+        consoleOut().println("keys: spec section 4 (mph, theme, bat_s, packAh, homeCell, stopCell, whmi, wheelmm, hud, rider, name, ...)");
+        return;
+    }
+    String key = a.substring(0, sp);
+    String val = a.substring(sp + 1); val.trim();
+    bool numeric = val.length() > 0;
+    bool dot = false;
+    for (unsigned i = 0; i < val.length(); i++) {
+        char c = val[i];
+        if (c == '-' && i == 0) continue;
+        if (c == '.') { if (dot) { numeric = false; break; } dot = true; continue; }
+        if (!isdigit((unsigned char)c)) { numeric = false; break; }
+    }
+    bool boolean = (val == "true" || val == "false");
+    char buf[128];
+    if (numeric || boolean) snprintf(buf, sizeof(buf), "{\"%s\":%s}", key.c_str(), val.c_str());
+    else                    snprintf(buf, sizeof(buf), "{\"%s\":\"%s\"}", key.c_str(), val.c_str());
+    companionApplySettingsJson(buf);
+    consoleOut().printf("applied %s - `cfg` to verify\n", buf);
+}
+
+// Delete a rider override: the value falls back to the VESC base (or generic
+// default) - the reset-to-base half of the three-tier config.
+static void cmdUnset(const char* arg) {
+    String a = arg; a.trim();
+    if (!a.length()) {
+        consoleOut().println("usage: unset <cells|packAh|stopCell|homeCell|whmi|wheelmm>");
+        return;
+    }
+    if (Esk8OS::Settings::removeOverride(a.c_str()))
+        consoleOut().printf("override '%s' removed - `cfg` shows the fallback tier\n", a.c_str());
+    else
+        consoleOut().println("unknown key (cells, packAh, stopCell, homeCell, whmi, wheelmm)");
+}
+
+// One-line machine-readable full state: live telemetry + settings + VESC base.
+// For scripts and AI tooling - no printf scraping.
+static void cmdJsonDump() {
+    char buf[560];
+    consoleOut().printf(
+        "{\"live\":{\"link\":%s,\"demo\":%s,\"spd_kmh\":%.1f,\"volts\":%.1f,\"cellv\":%.2f,"
+        "\"batt\":%d,\"watts\":%d,\"batA\":%.1f,\"motA\":%.1f,\"duty\":%d,\"motC\":%d,\"escC\":%d,"
+        "\"fault\":%d,\"lfault\":%d,\"trip_km\":%.2f,\"odo_km\":%.2f,\"range_km\":%.1f,\"limp_km\":%.1f,\"up_s\":%lu},",
+        vescLinkOk ? "true" : "false", gDemoMode ? "true" : "false",
+        currentSpeedKmh, currentVoltage, loadedCellVoltage,
+        currentBatteryPercent, (int)currentWatts, currentAmps, currentMotorAmps,
+        (int)currentDuty, (int)currentMotorTemp, (int)currentEscTemp,
+        vescFault, gLastFault, tripDistanceKm, totalDistanceKm,
+        remainingRangeKm, remainingLimpRangeKm, millis() / 1000UL);
+    companionSettingsJson(buf, sizeof(buf));
+    consoleOut().print("\"settings\":");
+    consoleOut().print(buf);
+    consoleOut().print(",");
+    companionBaseConfJson(buf, sizeof(buf));
+    consoleOut().print("\"base\":");
+    consoleOut().print(buf);
+    consoleOut().println("}");
 }
 
 // ESC-side ride statistics (COMM_GET_STATS): the VESC's OWN accumulated
@@ -573,6 +661,12 @@ static void cmdHelp() {
     consoleOut().println(F("  cal [reset]     learned battery calibration (pack R/energy/Wh-mi)"));
     consoleOut().println(F("  wheel [mm|reset] wheel-size calibration (120-350mm; reset=use preset)"));
     consoleOut().println(F("  vstat           ESC's own ride stats (avg/max spd, power, temps)"));
+    consoleOut().println(F("  vesc <cmd>      ESC terminal passthrough (vesc faults, vesc ping, ...)"));
+    consoleOut().println(F("  faults          shortcut for `vesc faults` (ESC's own fault log)"));
+    consoleOut().println(F("  set <k> <v>     any app-writable setting (same path as BLE, spec s4)"));
+    consoleOut().println(F("  unset <k>       drop a rider override -> falls back to VESC base"));
+    consoleOut().println(F("  json            full state as one JSON line (for scripts/AI)"));
+    consoleOut().println(F("  ping            liveness + version (for scripts)"));
     consoleOut().println(F("  mcconf          raw VESC config capture status + saved dump"));
     consoleOut().println(F("  sys             fw, uptime, heap/psram, reset reason, fps"));
     consoleOut().println(F("  cfg             units/demo/brightness/battery/wheel config"));
@@ -651,6 +745,12 @@ static void dispatch(char* line) {
         }
     }
     else if (!strcmp(line, "vstat")) cmdVstat();
+    else if (!strcmp(line, "vesc")) cmdVescTerm(arg);
+    else if (!strcmp(line, "faults")) cmdVescTerm("faults");
+    else if (!strcmp(line, "set")) cmdSet(arg);
+    else if (!strcmp(line, "unset")) cmdUnset(arg);
+    else if (!strcmp(line, "json")) cmdJsonDump();
+    else if (!strcmp(line, "ping")) consoleOut().printf("pong %s up %lus\n", FW_VERSION_FULL, millis() / 1000UL);
     else if (!strcmp(line, "mcconf")) cmdMcconf();
     else if (!strcmp(line, "sys"))  cmdSys();
     else if (!strcmp(line, "i2c"))  cmdI2c();

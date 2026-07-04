@@ -171,6 +171,12 @@ static void saveMcconfFile() {
     f.close();
 }
 
+// One-shot VESC terminal passthrough (see header). The buffer is handed to the
+// consumer by pointer after state flips to READY; single-flight keeps it safe.
+static char gTermCmd[32];
+static char gTermText[1024];
+static volatile uint8_t gTermState = 0;   // 0 idle, 1 queued, 2 ready
+
 // ESC-side ride stats (COMM_GET_STATS). Slow-changing, so read every ~20th
 // poll cycle (~2 s); a few consecutive failures means the firmware predates
 // the command — stop asking (retries again after a link re-probe).
@@ -391,6 +397,13 @@ static void vescPollTask(void* pvParameters) {
                     consecutiveMisses = 0;
                 }
             }
+            // Terminal passthrough: only while this task owns the UART (never
+            // during bridge mode, when VESC Tool owns the wire).
+            if (gTermState == 1) {
+                gTermText[0] = 0;
+                gProto.terminalCmd(gTermCmd, gTermText, sizeof(gTermText));
+                gTermState = 2;
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -457,6 +470,30 @@ bool getVescBaseConfig(VescBaseConfig* out) {
     *out = gVescBase;
     return true;
 #else
+    return false;
+#endif
+}
+
+bool requestVescTerminal(const char* cmd) {
+#ifndef WOKWI_SIMULATION
+    if (gTermState == 1 || cmd == nullptr || !cmd[0]) return false;
+    strlcpy(gTermCmd, cmd, sizeof(gTermCmd));
+    gTermState = 1;
+    return true;
+#else
+    (void)cmd;
+    return false;
+#endif
+}
+
+bool fetchVescTerminal(const char** text) {
+#ifndef WOKWI_SIMULATION
+    if (gTermState != 2) return false;
+    *text = gTermText;
+    gTermState = 0;
+    return true;
+#else
+    (void)text;
     return false;
 #endif
 }

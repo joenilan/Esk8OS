@@ -33,6 +33,8 @@ enum VescCommand : uint8_t {
     VESC_COMM_FW_VERSION                = 0,
     VESC_COMM_GET_VALUES                = 4,
     VESC_COMM_GET_MCCONF                = 14,
+    VESC_COMM_TERMINAL_CMD              = 20,
+    VESC_COMM_PRINT                     = 26,
     VESC_COMM_ALIVE                     = 30,
     VESC_COMM_GET_DECODED_PPM           = 31,
     VESC_COMM_FORWARD_CAN               = 34,
@@ -164,6 +166,12 @@ public:
     // whose layout is firmware-version-specific (COMM_GET_MCCONF is several
     // hundred bytes on the 16-bit-length framing, hence the longer timeout).
     int rawCommand(uint8_t cmd, uint8_t* reply, int maxReply, uint32_t timeoutMs = 500);
+
+    // Send a VESC terminal command (COMM_TERMINAL_CMD) and collect the text
+    // from its COMM_PRINT replies until the line goes quiet. Returns the text
+    // length written to out (NUL-terminated; 0 = no reply). `faults`, `ping`,
+    // `hw_status` etc — the same commands VESC Tool's Terminal tab speaks.
+    int terminalCmd(const char* cmd, char* out, int maxOut, uint32_t totalMs = 1200);
     void setOdometerMeters(uint32_t meters);                                   // no ack from ESC
 
     // Probe one CAN ID with a tiny forwarded request; true if it answered.

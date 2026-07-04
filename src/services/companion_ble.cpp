@@ -660,10 +660,18 @@ void companionBleTick() {
     g_ses->notify();
 }
 
+// Serial-console access to the same settings machinery the app uses.
+void companionApplySettingsJson(const char* json) { applySettings(json); }
+void companionSettingsJson(char* out, size_t cap) { buildSettingsJson(out, cap); }
+void companionBaseConfJson(char* out, size_t cap) { buildBaseConfJson(out, cap); }
+
 #else
 // ---------------------------------------------------------------------------
 // No-op stubs (BLE disabled, or Wokwi build).
 // ---------------------------------------------------------------------------
 void companionBleBegin() {}
 void companionBleTick() {}
+void companionApplySettingsJson(const char* json) { (void)json; }
+void companionSettingsJson(char* out, size_t cap) { if (cap) { strlcpy(out, "{}", cap); } }
+void companionBaseConfJson(char* out, size_t cap) { if (cap) { strlcpy(out, "{}", cap); } }
 #endif

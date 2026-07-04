@@ -263,6 +263,78 @@ int VescProtocol::rawCommand(uint8_t cmd, uint8_t* reply, int maxReply, uint32_t
     return transact(payload, 1, cmd, reply, maxReply, timeoutMs);
 }
 
+// Unlike transact() (one request, one typed reply), a terminal command fans out
+// into ANY number of COMM_PRINT frames, so this has its own collect-until-quiet
+// reader: keep accepting frames, append COMM_PRINT payload text, stop after
+// 250 ms of silence or totalMs overall.
+int VescProtocol::terminalCmd(const char* cmd, char* out, int maxOut, uint32_t totalMs) {
+    if (_port == nullptr || cmd == nullptr || maxOut < 2) return 0;
+    int clen = (int)strlen(cmd);
+    if (clen == 0 || clen > 200) return 0;
+
+    uint8_t payload[202];
+    payload[0] = VESC_COMM_TERMINAL_CMD;
+    memcpy(payload + 1, cmd, clen);
+    int plen = clen + 1;
+
+    while (_port->available()) _port->read();   // drop stale bytes
+
+    uint8_t frame[256 + 5];
+    int n = 0;
+    frame[n++] = 0x02;
+    frame[n++] = (uint8_t)plen;
+    memcpy(frame + n, payload, plen); n += plen;
+    uint16_t crc = crc16(payload, plen);
+    frame[n++] = (uint8_t)(crc >> 8);
+    frame[n++] = (uint8_t)(crc & 0xFF);
+    frame[n++] = 0x03;
+    _port->write(frame, n);
+    _port->flush();
+    dbgTxFrames++;
+
+    const uint32_t deadline = millis() + totalMs;
+    uint32_t quietBy = millis() + 400;          // first reply gets a bit longer
+    auto readByte = [&](int& b) -> bool {
+        while (!_port->available()) {
+            if ((long)(millis() - deadline) > 0 || (long)(millis() - quietBy) > 0) return false;
+            delay(1);
+        }
+        b = _port->read();
+        dbgRxBytes++;
+        return true;
+    };
+
+    int w = 0;
+    for (;;) {
+        int b;
+        do { if (!readByte(b)) { out[w] = 0; return w; } } while (b != 0x02 && b != 0x03);
+        int len;
+        if (b == 0x02) {
+            if (!readByte(len)) break;
+        } else {
+            int hi, lo;
+            if (!readByte(hi) || !readByte(lo)) break;
+            len = (hi << 8) | lo;
+        }
+        if (len <= 0 || len > 300) break;
+        uint8_t reply[300];
+        bool ok = true;
+        for (int i = 0; i < len; i++) { if (!readByte(b)) { ok = false; break; } reply[i] = (uint8_t)b; }
+        if (!ok) break;
+        int crcHi, crcLo, stop;
+        if (!readByte(crcHi) || !readByte(crcLo) || !readByte(stop)) break;
+        if (stop != 0x03) continue;
+        if (((crcHi << 8) | crcLo) != crc16(reply, len)) { dbgCrcErrors++; continue; }
+        if (reply[0] != VESC_COMM_PRINT) continue;          // telemetry echo etc — skip
+        dbgReplies++;
+        for (int i = 1; i < len && w < maxOut - 2; i++) out[w++] = (char)reply[i];
+        if (w > 0 && out[w - 1] != '\n' && w < maxOut - 1) out[w++] = '\n';
+        quietBy = millis() + 250;                            // more may follow
+    }
+    out[w] = 0;
+    return w;
+}
+
 void VescProtocol::setOdometerMeters(uint32_t meters) {
     if (_port == nullptr) return;
     uint8_t payload[5] = { VESC_COMM_SET_ODOMETER,

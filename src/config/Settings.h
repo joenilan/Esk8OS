@@ -18,5 +18,9 @@ namespace Settings {
     // override), "vesc" (base tier), or "default" (neutral generic).
     // vescProvides=false for values the ESC can't supply (e.g. Wh/mi).
     const char* sourceTag(const char* nvsKey, bool vescProvides = true);
+
+    // Delete a rider override so the value falls back to the VESC base (or
+    // the generic default). Whitelisted keys only; false = unknown key.
+    bool removeOverride(const char* nvsKey);
 }
 }

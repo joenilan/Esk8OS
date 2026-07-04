@@ -94,6 +94,15 @@ namespace Transports {
     };
     bool getVescBaseConfig(VescBaseConfig* out);
 
+    // One-shot VESC terminal command (COMM_TERMINAL_CMD -> COMM_PRINT text),
+    // serviced inside the poll task so it can't collide with telemetry on the
+    // UART. Single-flight: request() is false while one is pending; fetch()
+    // hands the reply text over exactly once (empty string = no reply — link
+    // down, or the bridge owns the UART). Used by the console `vesc` command
+    // and the automatic fault-log snapshot.
+    bool requestVescTerminal(const char* cmd);
+    bool fetchVescTerminal(const char** text);
+
     // ESC-side ride statistics (COMM_GET_STATS, FW 6+): the VESC's OWN
     // accumulated averages/maxima since ESC power-on — independent of this
     // firmware's math, so they cross-check it. Polled every ~2 s on the modern
