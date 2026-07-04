@@ -50,7 +50,10 @@ static void setOledDimmed(bool dimmed) {
 }
 
 static bool oledShouldDim(bool screensaverActive) {
-    return screensaverActive || currentBatteryPercent <= 15;
+    // Battery-low dim only with real data — the 0% boot-seed with no VESC
+    // linked otherwise kept the bench screen needlessly dim (TFT has the
+    // same telemetryLive gate on its low-power dim).
+    return screensaverActive || (oledTelemetryLive() && currentBatteryPercent <= 15);
 }
 
 static void drawOledBootSplash(uint8_t progressPct, const char* status) {
@@ -393,12 +396,16 @@ static void drawOledScreensaver() {
     oled.print("EVEE");
     oled.setTextColor(SSD1306_WHITE);
     oled.setTextSize(1);
-    oled.setCursor(1, 0);
-    oled.print(currentBatteryPercent);
-    oled.print("%");
-    oled.setCursor(92, 24);
-    oled.print((int)(useMph ? remainingRangeKm * 0.621371f : remainingRangeKm));
-    oled.print(useMph ? "mi" : "km");
+    // Live stat corners only with real data (TFT saver rule): with no VESC
+    // they'd read a fake "0% 0mi", so the logo + pair code stand alone.
+    if (oledTelemetryLive()) {
+        oled.setCursor(1, 0);
+        oled.print(currentBatteryPercent);
+        oled.print("%");
+        oled.setCursor(92, 24);
+        oled.print((int)(useMph ? remainingRangeKm * 0.621371f : remainingRangeKm));
+        oled.print(useMph ? "mi" : "km");
+    }
     // Pair code while idle — matches the TFT saver, so the rider can match the
     // board to the app's scan list on any display tier.
     if (gPairCode[0]) {
@@ -729,8 +736,11 @@ void renderMiniFrame(int alertState) {
 
     static unsigned long idleSinceMs = 0;
     const bool noRideActivity = currentSpeedKmh < 0.5f && fabs(currentAmps) < 1.0f;
-    bool idle = oledTelemetryLive() && !gDemoMode && noRideActivity &&
-                rangeAlertState == 0 && alertState == 0;
+    // "No VESC linked" is ALSO idle (alertState 2 with speeds masked to 0) —
+    // mirrors the TFT saver. Requiring live telemetry meant the bench NO VESC
+    // card could never yield to the saver and sat static on the OLED for hours.
+    bool idle = !gDemoMode && noRideActivity && rangeAlertState == 0 &&
+                (alertState == 0 || alertState == 2);
     if (idle) {
         if (idleSinceMs == 0) idleSinceMs = millis();
     } else {
@@ -740,6 +750,11 @@ void renderMiniFrame(int alertState) {
     bool screensaverActive = previewSaver || (idleSinceMs != 0 && millis() - idleSinceMs > 30000UL);
     setOledDimmed(oledShouldDim(screensaverActive));
 
+    if (screensaverActive) {
+        drawOledScreensaver();
+        oled.display();
+        return;
+    }
     if (!oledTelemetryLive() && !gDemoMode) {
         // The pairing moment: no ESC linked = bench = the rider is most likely
         // setting up the app. Put the scan-list pair code front and center.
@@ -761,8 +776,6 @@ void renderMiniFrame(int alertState) {
         oled.print(vescFault);
     } else if (alertState == 2) {
         oled.println("VESC LINK LOST");
-    } else if (screensaverActive) {
-        drawOledScreensaver();
     } else {
         drawOledLiveHud(alertState);
     }
