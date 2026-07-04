@@ -156,6 +156,11 @@ static void buildSettingsJson(char* out, size_t cap) {
     // rider the per-device password (it's no longer a fixed public string).
     doc["wifiSsid"] = wifiBridgeSsid();
     doc["wifiPass"] = wifiBridgePass();
+    // True only once the export AP is actually up (after the on-board L-press
+    // confirm). The app polls this to know the network exists before telling
+    // the rider to connect — a WIFI_EXPORT_START that's never approved leaves
+    // this false.
+    doc["wifiOn"]   = webServiceActive();
     // Read-only: on-board adaptive battery calibration (fw 0.9.5+ learns these
     // while riding — see telemetry.cpp / the `cal` console command). Presence
     // of calR tells the app the BOARD is the range authority: it should show
