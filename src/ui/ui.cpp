@@ -1538,11 +1538,15 @@ void updateOverlays(int state) {
             GFX->setFont(&BebasNeue18pt7b);
             GFX->drawString(line3, X0 + UI_W / 2, by + 68);
         } else if (confirmModal) {
-            // BRIDGE / TRIP-RESET CONFIRM: title in Bebas24, "L=YES R=NO" in Bebas18
+            // BRIDGE / TRIP-RESET / WIFI CONFIRM: WHITE text with a black
+            // drop-shadow — black-on-accent was hard to read on the purple.
+            int cx = X0 + UI_W / 2;
             GFX->setFont(&BebasNeue24pt7b);
-            GFX->drawString(line1, X0 + UI_W / 2, by + 6);
+            GFX->setTextColor(COL_BG);   GFX->drawString(line1, cx + 1, by + 7);
+            GFX->setTextColor(COL_WHITE); GFX->drawString(line1, cx, by + 6);
             GFX->setFont(&BebasNeue18pt7b);
-            GFX->drawString(line2, X0 + UI_W / 2, by + 34);
+            GFX->setTextColor(COL_BG);   GFX->drawString(line2, cx + 1, by + 35);
+            GFX->setTextColor(COL_WHITE); GFX->drawString(line2, cx, by + 34);
         } else {
             // FAULT / LINK LOST / HOT: line1 big, line2 medium
             GFX->setFont(&BebasNeue40pt7b);

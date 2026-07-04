@@ -309,11 +309,18 @@ void checkButtons() {
     }
     if (systemMode == MODE_VESC_BRIDGE) { lastLeftBtn = left; lastRightBtn = right; return; }
 
+    // Confirm modals resolve on the button PRESS edge, then hand back to the
+    // dashboard. Without this, the following RELEASE edge is read by the nav
+    // code below as a page tap — so answering a dialog would also flip a page.
+    // lockSingles makes nav wait for a full release before singles resume.
+
     // BRIDGE CONFIRMATION logic
     if (systemMode == MODE_BRIDGE_CONFIRM) {
         if (left == LOW && lastLeftBtn == HIGH) {
+            lockSingles = true;
             enterBridgeMode();
         } else if (right == LOW && lastRightBtn == HIGH) {
+            lockSingles = true;
             systemMode = MODE_DASHBOARD;
             gRedrawAll = true;
         }
@@ -326,12 +333,14 @@ void checkButtons() {
     // can't raise it unattended. R (or the 30s timeout in dashboardLoop) cancels.
     if (systemMode == MODE_WIFI_CONFIRM) {
         if (left == LOW && lastLeftBtn == HIGH) {
+            lockSingles = true;
             systemMode = MODE_DASHBOARD;
             webServiceStart();
             showToast("WIFI EXPORT");
             drawStaticFrame();
             gRedrawAll = true;
         } else if (right == LOW && lastRightBtn == HIGH) {
+            lockSingles = true;
             systemMode = MODE_DASHBOARD;
             drawStaticFrame();
             gRedrawAll = true;
@@ -344,9 +353,11 @@ void checkButtons() {
     // hold-L to be released first (needs a HIGH->LOW edge), so it can't auto-confirm.
     if (systemMode == MODE_TRIP_RESET_CONFIRM) {
         if (left == LOW && lastLeftBtn == HIGH) {
+            lockSingles = true;
             systemMode = MODE_DASHBOARD;
             resetTrip();                 // repaints + toasts on its own
         } else if (right == LOW && lastRightBtn == HIGH) {
+            lockSingles = true;
             systemMode = MODE_DASHBOARD;
             drawStaticFrame();
             gRedrawAll = true;
