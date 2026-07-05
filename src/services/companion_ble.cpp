@@ -121,7 +121,11 @@ static void buildSettingsJson(char* out, size_t cap) {
         false;
 #endif
     doc["mph"]     = useMph;
+    // Color themes only exist on the TFT (8-palette). The OLED is monochrome
+    // and headless has no screen, so they never send/read a theme.
+#if ESK8OS_DISPLAY_TFT
     doc["theme"]   = THEMES[gThemeIdx].name;
+#endif
     doc["poles"]   = (int)lroundf(profilePolePairs() * 2.0f);                                   // pole pairs -> poles
     doc["wheel"]   = effectiveWheelDiameterMm();   // mm actually used for speed/distance (preset or rider override)
     doc["wheelmm"] = gWheelDiameterMm;             // rider calibration override, 0 = using the preset's nominal size
@@ -137,21 +141,33 @@ static void buildSettingsJson(char* out, size_t cap) {
     doc["homeEff"]  = r2(effectiveHomeFloorCellV());
     doc["stopEff"]  = r2(effectiveLimpFloorCellV());
     doc["whmi"]     = r1(RANGE_DEFAULT_WH_PER_MILE);
-    doc["bright"]   = gBrightnessPct;
+    // Per-tier display fields: the app hides a control when its field is absent,
+    // and each build only sends what it can actually use — so a headless board
+    // (no screen) never ships theme/brightness/hud/invert, which is where the
+    // settings JSON had ballooned toward the 512 B BLE cap.
+#if ESK8OS_DISPLAY_TFT || ESK8OS_DISPLAY_OLED
+    doc["bright"]   = gBrightnessPct;                    // backlight (TFT) / contrast (OLED)
+    doc["hud"]      = hudSettingName();                  // HUD face
+    doc["bfocus"]   = batteryFocusName(gBatteryFocus);
+#endif
+#if ESK8OS_DISPLAY_OLED
+    doc["oled_inv"] = gOledInvert;                       // pixel invert — OLED only
+#endif
 #if ESK8OS_STATUS_RGB
     // Only builds with a controllable status LED report the setting at all —
     // its absence tells the app to hide the toggle (T-Display has no LED).
     doc["rgb"]      = gStatusRgbEnabled;
 #endif
-    doc["oled_inv"] = gOledInvert;
     doc["demo"]     = gDemoMode;
     doc["rider"]    = RIDER_NAME;
-    doc["hud"]      = hudSettingName();
-    doc["bfocus"]   = batteryFocusName(gBatteryFocus);
     doc["name"]     = gDeviceName;
     doc["vtype"]    = gVehicleType;
-    doc["vlabel"]   = gVehicleLabel;        // custom vehicle name (used when vtype = VT_CUSTOM)
-    doc["vicon"]    = gVehicleCustomIcon;    // app icon index for the custom vehicle
+    // Custom-vehicle name/icon only matter when the vehicle IS custom; otherwise
+    // they're empty/0 and just eat bytes. The app defaults them when absent.
+    if (gVehicleType == VT_CUSTOM) {
+        doc["vlabel"] = gVehicleLabel;
+        doc["vicon"]  = gVehicleCustomIcon;
+    }
     // Read-only: the board's log/OTA AP credentials, so the app can show the
     // rider the per-device password (it's no longer a fixed public string).
     doc["wifiSsid"] = wifiBridgeSsid();
