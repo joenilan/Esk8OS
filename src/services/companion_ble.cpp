@@ -156,11 +156,11 @@ static void buildSettingsJson(char* out, size_t cap) {
     // rider the per-device password (it's no longer a fixed public string).
     doc["wifiSsid"] = wifiBridgeSsid();
     doc["wifiPass"] = wifiBridgePass();
-    // True only once the export AP is actually up (after the on-board L-press
-    // confirm). The app polls this to know the network exists before telling
-    // the rider to connect — a WIFI_EXPORT_START that's never approved leaves
-    // this false.
-    doc["wifiOn"]   = webServiceActive();
+    // NOTE: wifiOn lives on the base-config characteristic (0005), NOT here.
+    // This settings JSON is at the edge of the 512-byte BLE read buffer; adding
+    // wifiOn here pushed it to 521 B, which truncated the read and broke the
+    // app's settings page entirely (stuck units + "edit settings error"). Keep
+    // additions OFF this characteristic — it has no headroom.
     // Read-only: on-board adaptive battery calibration (fw 0.9.5+ learns these
     // while riding — see telemetry.cpp / the `cal` console command). Presence
     // of calR tells the app the BOARD is the range authority: it should show
@@ -195,6 +195,10 @@ static void buildBaseConfJson(char* out, size_t cap) {
         doc["batA"]  = r1(b.battAmpMax);
         doc["regA"]  = r1(b.battAmpRegen);
     }
+    // Export-AP state lives here (moved off the settings char, which has no
+    // room). The app polls this after WIFI_EXPORT_START to know the network is
+    // really up before telling the rider to connect.
+    doc["wifiOn"] = webServiceActive();
     JsonObject src = doc["src"].to<JsonObject>();
     using Esk8OS::Settings::sourceTag;
     src["cells"] = String(sourceTag("cells")[0]);
@@ -395,9 +399,15 @@ static void applySettings(const char* json) {
 
 class SettingsCallbacks : public NimBLECharacteristicCallbacks {
     void onRead(NimBLECharacteristic* c) override {
-        char buf[512];
+        char buf[640];   // was 512 — the JSON hit 521 B and truncated into
+                         // invalid JSON, breaking the app's settings read.
         buildSettingsJson(buf, sizeof(buf));
-        c->setValue((uint8_t*)buf, strlen(buf));
+        size_t n = strlen(buf);
+        // Serialized cleanly and fits the ATT MTU (512 → 511-byte single read;
+        // the app negotiates 512). If it ever exceeds this, warn on serial so
+        // the next field addition doesn't silently break the settings page.
+        if (n > 507) Serial.printf("[ble] WARN settings JSON %u B — near BLE read limit, trim a field\n", (unsigned)n);
+        c->setValue((uint8_t*)buf, n);
     }
     void onWrite(NimBLECharacteristic* c) override {
         std::string v = c->getValue();
