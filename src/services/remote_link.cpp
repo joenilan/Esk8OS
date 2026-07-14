@@ -202,36 +202,67 @@ void begin() {
 // Write the throttle. Coast means zero current, never brake current: an
 // automatic hard brake at speed throws the rider off the board.
 // ---------------------------------------------------------------------------
-static void writeThrottle(Transports::VescProtocol& proto, int16_t thr) {
-    float amps = 0.0f;
+// Slew state. Only acceleration is limited (see the note in evee_link.h), so
+// this tracks the last commanded ACCEL current and nothing else.
+static float gLastAccelAmps = 0.0f;
+
+// The single place a motor command leaves this firmware. Live or dry, everything
+// funnels through here — one send path is one path to audit.
+static void emit(Transports::VescProtocol& proto, float amps, bool brake, const char* note) {
+#if EVEE_LINK_LIVE
+    (void)note;
+    if (brake) proto.setCurrentBrake(amps);
+    else       proto.setCurrent(amps);
+#else
+    (void)proto;
+    // Log on change only — 100 Hz would drown the console.
+    static float lastAmps  = -999.0f;
+    static bool  lastBrake = false;
+    if (fabsf(amps - lastAmps) > 0.05f || brake != lastBrake) {
+        lastAmps = amps; lastBrake = brake;
+        Serial.printf("[evee] would send %s %.2f A %s\n",
+                      brake ? "BRAKE" : "CURRENT", amps, note ? note : "");
+    }
+#endif
+}
+
+static void writeThrottle(Transports::VescProtocol& proto, int16_t rawThr) {
+    // The wire carries raw linear position; the curve is ours to apply. Tuning
+    // the feel here means never reflashing a sealed handheld to do it.
+    const int16_t thr = eveeApplyExpo(rawThr, EVEE_EXPO_PCT_DEFAULT);
+
+    float amps  = 0.0f;
     bool  brake = false;
 
     if (!eveeIsNeutral(thr)) {
         if (thr > 0) {
             amps = ((float)thr / (float)EVEE_THROTTLE_MAX) * EVEE_MAX_MOTOR_CURRENT_A;
+
+            // Slew-limit the rise only. Falling off the throttle is always allowed
+            // to happen instantly — the rider asking for LESS power must never be
+            // made to wait.
+            const float step = EVEE_ACCEL_SLEW_A_PER_S * (EVEE_CONTROL_MS / 1000.0f);
+            if (amps > gLastAccelAmps + step) amps = gLastAccelAmps + step;
         } else {
-            amps = ((float)(-thr) / (float)(-EVEE_THROTTLE_MIN)) * EVEE_MAX_BRAKE_CURRENT_A;
+            // Brake is never slew-limited. A mushy, delayed brake is a safety
+            // problem, not a comfort feature.
+            amps  = ((float)(-thr) / (float)(-EVEE_THROTTLE_MIN)) * EVEE_MAX_BRAKE_CURRENT_A;
             brake = true;
         }
     }
 
-#if EVEE_LINK_LIVE
-    if (brake) proto.setCurrentBrake(amps);
-    else       proto.setCurrent(amps);
-#else
-    (void)proto;
-    // Dry run. Log on change only — 50 Hz would drown the console.
-    static float lastAmps = -999.0f;
-    static bool  lastBrake = false;
-    if (amps != lastAmps || brake != lastBrake) {
-        lastAmps = amps; lastBrake = brake;
-        Serial.printf("[evee] would send %s %.2f A\n", brake ? "BRAKE" : "CURRENT", amps);
-    }
-#endif
+    gLastAccelAmps = brake ? 0.0f : amps;
+
+    char note[40];
+    snprintf(note, sizeof(note), "(raw %+d -> %+d)", (int)rawThr, (int)thr);
+    emit(proto, amps, brake, note);
 }
 
+// Immediate zero. Bypasses the slew limiter on purpose: a failsafe coast must
+// drop to zero NOW, not ramp down over a tenth of a second.
 static void coast(Transports::VescProtocol& proto) {
-    writeThrottle(proto, 0);
+    gLastAccelAmps = 0.0f;
+    emit(proto, 0.0f, false, "(coast)");
 }
 
 static void sendStatus() {

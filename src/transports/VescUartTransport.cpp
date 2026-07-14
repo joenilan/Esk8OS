@@ -387,10 +387,11 @@ static void probePath() {
 // control tick.
 //
 // Cadence without EVEE Link: 100 ms, exactly as before.
-// Cadence with it:  a 20 ms tick. The throttle write goes out FIRST on every
-//                   tick (fire-and-forget, well under 1 ms), and the telemetry
-//                   poll runs on every 5th tick — so telemetry keeps its old
-//                   10 Hz and the throttle gets its 50 Hz.
+// Cadence with it:  an EVEE_CONTROL_MS tick (10 ms at 100 Hz). The throttle write
+//                   goes out FIRST on every tick (fire-and-forget, well under
+//                   1 ms), and the telemetry poll runs on every Nth tick, where N
+//                   is derived from the control rate so that telemetry keeps its
+//                   original 10 Hz no matter what the throttle rate becomes.
 //
 // While ARMED the telemetry poll is skipped entirely. A poll is several blocking
 // transacts, and if the ESC goes quiet they each burn their timeout; a poll cycle
@@ -399,6 +400,10 @@ static void probePath() {
 static void vescPollTask(void* pvParameters) {
     int consecutiveMisses = 0;
 #if EVEE_LINK_ENABLED
+    // Derived, not hardcoded: telemetry stays at 10 Hz whatever EVEE_CONTROL_HZ
+    // is. Raising the control rate must not silently speed up the poll — that
+    // would eat the UART headroom the throttle depends on.
+    static const uint8_t kPollEveryNTicks = EVEE_CONTROL_HZ / 10;
     uint8_t tickN = 0;
 #endif
 
@@ -407,7 +412,7 @@ static void vescPollTask(void* pvParameters) {
         // Throttle first, always. It is the only thing here with a deadline.
         const bool linkArmed = RemoteLink::tick(gProto);
 
-        const bool pollThisTick = !linkArmed && (++tickN % 5 == 0);
+        const bool pollThisTick = !linkArmed && (++tickN % kPollEveryNTicks == 0);
 #else
         const bool linkArmed = false;
         const bool pollThisTick = true;
