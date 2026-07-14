@@ -36,6 +36,18 @@ bool tick(Esk8OS::Transports::VescProtocol& proto);
 bool armed();
 const char* stateName();
 
+// Button actions, consumed by App::loop() on the UI core.
+//
+// tick() runs on core 0 in the throttle loop; the renderer runs on core 1. A page
+// change or a trip reset mutates UI state and repaints, so it must NOT be called
+// from the throttle task — it would race the renderer, and it would put a screen
+// repaint on the critical path of a 100 Hz control loop. So tick() only latches a
+// request, and the UI thread picks it up.
+//
+// take*() returns true once per press and clears the latch.
+bool takePageNext();
+bool takeTripReset();
+
 // True while the link is armed OR could arm. The WiFi AP and the VESC-Tool
 // bridge both refuse to start while this is set: the AP would drag the shared
 // radio off EVEE_CHANNEL, and the bridge would hand the UART to VESC Tool.
@@ -49,6 +61,8 @@ inline void begin() {}
 inline bool armed() { return false; }
 inline bool blocksRadioAndUart() { return false; }
 inline const char* stateName() { return "OFF"; }
+inline bool takePageNext() { return false; }
+inline bool takeTripReset() { return false; }
 
 #endif
 

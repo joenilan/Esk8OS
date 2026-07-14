@@ -10,6 +10,7 @@
 #include "board/StatusLed.h"
 #include "services/bridge.h"
 #include "services/companion_ble.h"
+#include "services/remote_link.h"
 #include "services/webexport.h"
 #include "util/console.h"
 #include "transports/VescUartTransport.h"
@@ -611,6 +612,13 @@ void loop() {
     consolePoll();
     checkButtons();
     Esk8OS::StatusLed::tick();   // sole tick — dashboardLoop must not double it
+
+    // EVEE remote buttons. The link task latches these on core 0; they are acted
+    // on HERE, on the UI core, because both repaint. Calling them from the
+    // throttle loop would race the renderer and put a screen redraw on the
+    // critical path of a 100 Hz control loop. No-ops without EVEE_LINK_ENABLED.
+    if (RemoteLink::takePageNext())  pageRel(+1);
+    if (RemoteLink::takeTripReset()) resetTrip();
 
     if (systemMode == MODE_VESC_BRIDGE) {
         companionBleTick();

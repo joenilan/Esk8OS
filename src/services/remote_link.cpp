@@ -51,6 +51,7 @@ static const uint8_t kRemoteMac[6] = EVEE_REMOTE_MAC;
 // ---------------------------------------------------------------------------
 static volatile int16_t  rxThrottle  = 0;
 static volatile uint8_t  rxFlags     = 0;
+static volatile uint8_t  rxButtons   = 0;
 static volatile uint32_t rxLastMs    = 0;
 static volatile bool     rxRestarted = false;
 
@@ -62,6 +63,51 @@ static bool     gSecure      = false;
 static EveeLinkState gState        = EVEE_STATE_BOOT;
 static uint32_t      gNeutralSince = 0;
 static uint32_t      gStatusAt     = 0;
+
+// Button edge/long-press state. The wire carries LEVELS (a held button appears in
+// dozens of consecutive packets, so a dropped packet cannot lose a press the way
+// a one-shot edge could), so the receiver does the edge detection.
+static uint8_t  gLastButtons = 0;
+static uint32_t gTripHeldSince = 0;
+static bool     gTripFired = false;
+
+// Latched for the UI thread. tick() runs on core 0; the renderer is on core 1.
+static volatile bool gPageNextPending = false;
+static volatile bool gTripResetPending = false;
+
+bool takePageNext() {
+    if (!gPageNextPending) return false;
+    gPageNextPending = false;
+    return true;
+}
+
+bool takeTripReset() {
+    if (!gTripResetPending) return false;
+    gTripResetPending = false;
+    return true;
+}
+
+static void handleButtons(uint8_t buttons, uint32_t now) {
+    const uint8_t pressed = (uint8_t)(buttons & ~gLastButtons);   // rising edges
+
+    if (pressed & EVEE_BTN_PAGE) gPageNextPending = true;
+
+    // Trip reset is destructive — it throws away the ride's numbers — so it needs
+    // a deliberate hold, not a brush. Fires once per hold, not repeatedly.
+    if (buttons & EVEE_BTN_TRIP) {
+        if (gTripHeldSince == 0) { gTripHeldSince = now; gTripFired = false; }
+        if (!gTripFired && (now - gTripHeldSince) >= EVEE_BTN_LONG_MS) {
+            gTripResetPending = true;
+            gTripFired = true;
+            Serial.println("[evee] trip reset (long press)");
+        }
+    } else {
+        gTripHeldSince = 0;
+        gTripFired = false;
+    }
+
+    gLastButtons = buttons;
+}
 
 const char* stateName() {
     switch (gState) {
@@ -143,6 +189,7 @@ static void onRecv(const uint8_t* mac, const uint8_t* data, int len) {
 
     rxThrottle = eveeClampThrottle(c.throttle);   // never trust the sender's range
     rxFlags    = c.flags;
+    rxButtons  = c.buttons;
     rxLastMs   = millis();
     if (restarted) rxRestarted = true;
 }
@@ -300,6 +347,11 @@ bool tick(Transports::VescProtocol& proto) {
     const bool linkUp    = rxLastMs != 0 && (now - rxLastMs) < EVEE_FAILSAFE_MS;
     const int16_t thr    = rxThrottle;
     const uint8_t flags  = rxFlags;
+
+    // Buttons only count while the link is actually up — a stale mask from a
+    // remote that vanished must not keep firing page changes.
+    if (linkUp) handleButtons(rxButtons, now);
+    else        gLastButtons = 0;
 
     if (rxRestarted) {
         rxRestarted = false;
