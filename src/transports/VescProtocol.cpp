@@ -335,23 +335,44 @@ int VescProtocol::terminalCmd(const char* cmd, char* out, int maxOut, uint32_t t
     return w;
 }
 
-void VescProtocol::setOdometerMeters(uint32_t meters) {
-    if (_port == nullptr) return;
-    uint8_t payload[5] = { VESC_COMM_SET_ODOMETER,
-                           (uint8_t)(meters >> 24), (uint8_t)(meters >> 16),
-                           (uint8_t)(meters >> 8),  (uint8_t)meters };
-    // Fire-and-forget: the ESC sends no ack for SET_ODOMETER.
-    uint8_t frame[16];
+void VescProtocol::sendNoReply(const uint8_t* payload, int len) {
+    if (_port == nullptr || len <= 0 || len > 250) return;
+    uint8_t frame[256 + 5];
     int n = 0;
     frame[n++] = 0x02;
-    frame[n++] = sizeof(payload);
-    memcpy(frame + n, payload, sizeof(payload)); n += sizeof(payload);
-    uint16_t crc = crc16(payload, sizeof(payload));
+    frame[n++] = (uint8_t)len;
+    memcpy(frame + n, payload, len); n += len;
+    const uint16_t crc = crc16(payload, len);
     frame[n++] = (uint8_t)(crc >> 8);
     frame[n++] = (uint8_t)(crc & 0xFF);
     frame[n++] = 0x03;
     _port->write(frame, n);
     _port->flush();
+    dbgTxFrames++;
+}
+
+void VescProtocol::setOdometerMeters(uint32_t meters) {
+    // Fire-and-forget: the ESC sends no ack for SET_ODOMETER.
+    const uint8_t payload[5] = { VESC_COMM_SET_ODOMETER,
+                                 (uint8_t)(meters >> 24), (uint8_t)(meters >> 16),
+                                 (uint8_t)(meters >> 8),  (uint8_t)meters };
+    sendNoReply(payload, sizeof(payload));
+}
+
+void VescProtocol::setCurrent(float amps) {
+    const int32_t mA = (int32_t)(amps * 1000.0f);
+    const uint8_t payload[5] = { VESC_COMM_SET_CURRENT,
+                                 (uint8_t)(mA >> 24), (uint8_t)(mA >> 16),
+                                 (uint8_t)(mA >> 8),  (uint8_t)mA };
+    sendNoReply(payload, sizeof(payload));
+}
+
+void VescProtocol::setCurrentBrake(float amps) {
+    const int32_t mA = (int32_t)(amps * 1000.0f);
+    const uint8_t payload[5] = { VESC_COMM_SET_CURRENT_BRAKE,
+                                 (uint8_t)(mA >> 24), (uint8_t)(mA >> 16),
+                                 (uint8_t)(mA >> 8),  (uint8_t)mA };
+    sendNoReply(payload, sizeof(payload));
 }
 
 bool VescProtocol::probeCanId(uint8_t canId, uint32_t timeoutMs) {

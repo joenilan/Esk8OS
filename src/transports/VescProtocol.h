@@ -32,6 +32,8 @@ namespace Transports {
 enum VescCommand : uint8_t {
     VESC_COMM_FW_VERSION                = 0,
     VESC_COMM_GET_VALUES                = 4,
+    VESC_COMM_SET_CURRENT               = 6,
+    VESC_COMM_SET_CURRENT_BRAKE         = 7,
     VESC_COMM_GET_MCCONF                = 14,
     VESC_COMM_TERMINAL_CMD              = 20,
     VESC_COMM_PRINT                     = 21,   // was wrongly 26 (=DETECT_FLUX); confirmed vs bldc datatypes.h
@@ -174,6 +176,20 @@ public:
     int terminalCmd(const char* cmd, char* out, int maxOut, uint32_t totalMs = 1200);
     void setOdometerMeters(uint32_t meters);                                   // no ack from ESC
 
+    // ---- motor commands (EVEE Link receiver mode) --------------------------
+    // Fire-and-forget: the ESC acks none of these, and a throttle write must
+    // never block behind a reply. ~10 bytes each, so a write costs under a
+    // millisecond at 115200 and fits inside a 20 ms control tick with room to
+    // spare for the telemetry poll that shares this UART.
+    //
+    // The VESC applies its own timeout to these (App Settings -> General ->
+    // Timeout): if the commands stop arriving it zeroes the motor by itself.
+    // That is the failsafe that still works when OUR firmware hangs, and it is
+    // the reason the throttle goes out as a set-command rather than as a value
+    // latched somewhere the ESC cannot supervise.
+    void setCurrent(float amps);
+    void setCurrentBrake(float amps);
+
     // Probe one CAN ID with a tiny forwarded request; true if it answered.
     // (COMM_PING_CAN exists but blocks the ESC for seconds scanning all 255
     // IDs, which would starve the poll loop — incremental probing instead.)
@@ -186,6 +202,9 @@ private:
     // byte equals expectCmd. Returns payload length (>=1) or 0 on failure.
     int transact(const uint8_t* payload, int len, uint8_t expectCmd,
                  uint8_t* reply, int maxReply, uint32_t timeoutMs = 100);
+
+    // Frame and send, expecting no reply. For commands the ESC does not ack.
+    void sendNoReply(const uint8_t* payload, int len);
     bool parseValues(const uint8_t* p, int len, uint32_t mask, bool maskEchoed, VescMotorValues& out);
 };
 

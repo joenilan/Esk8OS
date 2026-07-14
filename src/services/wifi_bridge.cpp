@@ -1,6 +1,9 @@
 #include "wifi_bridge.h"
 #include <WiFi.h>
 #include "esk8os.h"
+#include "remote_link.h"
+
+using namespace Esk8OS;
 
 // VESC Tool WiFi-TCP transport. Owns the softAP credentials + TCP server and
 // forwards raw bytes between the TCP client (desktop VESC Tool) and Serial1 (the
@@ -34,7 +37,24 @@ static WiFiClient    g_client;
 static unsigned long g_rx = 0;   // app -> ESC, bytes this session
 static unsigned long g_tx = 0;   // ESC -> app, bytes this session
 
+// Both AP entry points refuse while an EVEE Link throttle is live or arming.
+//
+// Two separate reasons, either one fatal:
+//   - The softAP drags the shared 2.4 GHz radio onto its own channel, off
+//     EVEE_CHANNEL, and the ESP-NOW link dies under a live throttle.
+//   - The VESC-Tool bridge hands the UART to VESC Tool, so no set-command
+//     reaches the ESC and it coasts on its timeout.
+// Neither is survivable mid-ride, and neither is worth a channel-juggling
+// workaround on a safety path. Disarm first.
+static bool apRefused(const char* what) {
+    if (!RemoteLink::blocksRadioAndUart()) return false;
+    Serial.printf("[wifi] %s refused: EVEE Link is %s. Disarm the remote first.\n",
+                  what, RemoteLink::stateName());
+    return true;
+}
+
 void wifiBridgeStart() {
+    if (apRefused("VESC bridge")) return;
     WiFi.mode(WIFI_AP);
     WiFi.softAP(WIFI_SSID, wifiPassword());
     g_server.begin();
@@ -53,6 +73,7 @@ void wifiBridgeStop() {
 // AP only — no TCP bridge server. Used by the standalone web service so the
 // log/OTA pages are reachable without entering VESC bridge mode.
 void wifiApStart() {
+    if (apRefused("export AP")) return;
     WiFi.mode(WIFI_AP);
     WiFi.softAP(WIFI_SSID, wifiPassword());
 }

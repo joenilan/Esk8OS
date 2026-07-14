@@ -3,7 +3,12 @@
 
 #ifndef WOKWI_SIMULATION
 #include "transports/VescProtocol.h"
+#include "services/remote_link.h"
 #include <LittleFS.h>
+#endif
+
+#if EVEE_LINK_ENABLED
+#include <evee_link.h>
 #endif
 
 namespace Esk8OS {
@@ -375,10 +380,40 @@ static void probePath() {
     }
 }
 
+// This task is the SOLE owner of the VESC UART, and (with EVEE Link) it is also
+// the throttle's control loop. Both live here on purpose: two writers on one
+// UART interleave bytes and corrupt each other's frames, and the throttle must
+// not share a core with the renderer (core 1) where a redraw could stretch a
+// control tick.
+//
+// Cadence without EVEE Link: 100 ms, exactly as before.
+// Cadence with it:  a 20 ms tick. The throttle write goes out FIRST on every
+//                   tick (fire-and-forget, well under 1 ms), and the telemetry
+//                   poll runs on every 5th tick — so telemetry keeps its old
+//                   10 Hz and the throttle gets its 50 Hz.
+//
+// While ARMED the telemetry poll is skipped entirely. A poll is several blocking
+// transacts, and if the ESC goes quiet they each burn their timeout; a poll cycle
+// that overran EVEE_VESC_TIMEOUT_MS would trip the VESC's own UART timeout and
+// coast the rider mid-ride for no reason. Telemetry is worth less than that.
 static void vescPollTask(void* pvParameters) {
     int consecutiveMisses = 0;
+#if EVEE_LINK_ENABLED
+    uint8_t tickN = 0;
+#endif
+
     for (;;) {
-        if (!gPollPaused) {
+#if EVEE_LINK_ENABLED
+        // Throttle first, always. It is the only thing here with a deadline.
+        const bool linkArmed = RemoteLink::tick(gProto);
+
+        const bool pollThisTick = !linkArmed && (++tickN % 5 == 0);
+#else
+        const bool linkArmed = false;
+        const bool pollThisTick = true;
+#endif
+
+        if (!gPollPaused && !linkArmed && pollThisTick) {
             if (gPath == PATH_UNKNOWN) {
                 probePath();
                 if (gPath != PATH_UNKNOWN) consecutiveMisses = 0;
@@ -405,7 +440,12 @@ static void vescPollTask(void* pvParameters) {
                 gTermState = 2;
             }
         }
+
+#if EVEE_LINK_ENABLED
+        vTaskDelay(pdMS_TO_TICKS(EVEE_CONTROL_MS));
+#else
         vTaskDelay(pdMS_TO_TICKS(100));
+#endif
     }
 }
 #endif
@@ -417,12 +457,22 @@ void beginVescUart(uint8_t slaveIdHint) {
     Serial1.begin(115200, SERIAL_8N1, 18, 17); // GPIO 18 RX, 17 TX
     gProto.begin(&Serial1);
 
+#if EVEE_LINK_ENABLED
+    RemoteLink::begin();
+#endif
+
     xTaskCreatePinnedToCore(
         vescPollTask,
         "VESC_Poll",
         4096,
         NULL,
+#if EVEE_LINK_ENABLED
+        // With EVEE Link this task carries the throttle, so it must not be
+        // preempted by the WiFi/BLE housekeeping that also lives on core 0.
+        configMAX_PRIORITIES - 2,
+#else
         1,
+#endif
         &gVescTaskHandle,
         0  // Pin to Core 0 (UI runs on Core 1)
     );
