@@ -3,6 +3,7 @@
 #include "app/App.h"
 #include "telemetry/telemetry.h"
 #include "transports/VescUartTransport.h"
+#include "transports/DalyBms.h"
 #include "config/Settings.h"
 #include "services/companion_ble.h"
 #include "version.h"
@@ -683,6 +684,49 @@ static void cmdWheel(const char* arg) {
         w.name, w.wheelDiameterM * 1000.0f);
 }
 
+static void cmdBms() {
+    using namespace Esk8OS::Transports;
+    const BmsData& b = gBms;
+
+#if !ESK8OS_BMS_DALY
+    consoleOut().println(F("BMS support not built in (build env tdisplay_s3_bms)"));
+    return;
+#endif
+
+    if (!b.linkOk) {
+        consoleOut().println(F("BMS link down (no Daly frame yet - check UART wiring 43/44, dongle removed)"));
+        return;
+    }
+
+    consoleOut().printf("pack %.1f V  %.1f A  SOC %.0f%%  %.2f Ah  %u cycles\n",
+                        b.packVoltage, b.current, b.soc, b.remainingAh, (unsigned)b.cycles);
+    consoleOut().printf("MOS  chg %s  dischg %s%s\n",
+                        b.chargeMos ? "ON" : "off",
+                        b.dischargeMos ? "ON" : "off",
+                        b.hasFault ? "   *** FAULT ***" : "");
+
+    const int cells = b.cellCount ? b.cellCount : 0;
+    for (int c = 0; c < cells; c++) {
+        const bool isMin = (c + 1) == b.minCellNo;
+        const bool isMax = (c + 1) == b.maxCellNo;
+        consoleOut().printf("  cell %2d  %4u mV %s%s\n", c + 1, (unsigned)b.cellmV[c],
+                            b.balancing[c] ? "bal " : "",
+                            isMin ? "<-min" : (isMax ? "<-max" : ""));
+    }
+    consoleOut().printf("delta %u mV  (min %u / max %u)\n",
+                        (unsigned)b.cellDeltamV, (unsigned)b.minCellmV, (unsigned)b.maxCellmV);
+
+    consoleOut().print(F("temps"));
+    for (int t = 0; t < b.tempCount; t++) consoleOut().printf(" %dC", b.temps[t]);
+    consoleOut().printf("  (min %dC / max %dC)\n", b.tempMin, b.tempMax);
+
+    if (b.hasFault) {
+        consoleOut().print(F("fault bytes:"));
+        for (int i = 0; i < 7; i++) consoleOut().printf(" %02X", b.faultBytes[i]);
+        consoleOut().println();
+    }
+}
+
 static void cmdHelp() {
     consoleOut().println(F("commands:"));
     consoleOut().println(F("  help            this list"));
@@ -698,6 +742,7 @@ static void cmdHelp() {
     consoleOut().println(F("  trip [reset]    trip distance/time/avg/max/range, or full reset"));
     consoleOut().println(F("  cal [reset]     learned battery calibration (pack R/energy/Wh-mi)"));
     consoleOut().println(F("  wheel [mm|reset] wheel-size calibration (120-350mm; reset=use preset)"));
+    consoleOut().println(F("  bms             Daly BMS: pack, per-cell mV, temps, MOS, faults"));
     consoleOut().println(F("  vstat           ESC's own ride stats (avg/max spd, power, temps)"));
     consoleOut().println(F("  vesc <cmd>      ESC terminal passthrough (vesc faults, vesc ping, ...)"));
     consoleOut().println(F("  faults          shortcut for `vesc faults` (ESC's own fault log)"));
@@ -739,6 +784,7 @@ static void dispatch(char* line) {
         cmdRm(arg);
     }
     else if (!strcmp(line, "log"))  cmdLog(arg);
+    else if (!strcmp(line, "bms"))  cmdBms();
     else if (!strcmp(line, "wifi")) cmdWifi(arg);
     else if (!strcmp(line, "free")) consoleOut().printf("FS %u/%u B used\n",
                  (unsigned)LittleFS.usedBytes(), (unsigned)LittleFS.totalBytes());

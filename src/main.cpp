@@ -7,6 +7,7 @@
 #include "ui/ui.h"
 #include "app/App.h"
 #include "transports/VescUartTransport.h"
+#include "transports/DalyBms.h"
 #include "services/companion_ble.h"
 #include "telemetry/telemetry.h"
 #include "logging/sessionlog.h"
@@ -40,6 +41,7 @@ void setup() {
     Esk8OS::Board::begin();
     Esk8OS::UiRenderer::showBootSplash(44, "BOARD");
     Esk8OS::Transports::beginVescUart(prefs.getUChar("slaveId", 0));
+    Esk8OS::Transports::beginDalyBms();   // no-op unless -DESK8OS_BMS_DALY
     Esk8OS::UiRenderer::showBootSplash(60, "UART");
 
     // Bring up the companion BLE service now so it advertises 100% of the time.
