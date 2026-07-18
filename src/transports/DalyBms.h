@@ -1,18 +1,22 @@
 // ============================================================================
-// Daly smart BMS client, over the BMS's UART port.
+// Daly Smart BMS 40A "K" client.
 //
-// The plan this serves: ESK8OS replaces the Daly phone app. You pull the Daly's
-// BLE dongle, wire the ESP32 into that same UART port, and ESK8OS becomes the
-// BMS master — reading everything the Daly app shows and re-exposing it through
-// ESK8OS's own display and companion BLE. There is no dual-Bluetooth and no port
-// contention, because the dongle is gone and we are the only thing on the wire.
+// The plan this serves: ESK8OS replaces the Daly phone app — reading everything
+// the Daly app shows and re-exposing it through ESK8OS's own display and
+// companion BLE. The connection is BLUETOOTH: ESK8OS talks to the Daly's BLE
+// dongle wirelessly, nothing is wired.
+//
+// ⚠️ The transport in DalyBms.cpp is still the old UART placeholder and must be
+// rebuilt as a BLE client (see the big note there). The Daly protocol decode
+// (0x90–0x98), the BmsData model, and the demo sim are transport-agnostic and
+// unaffected — only the byte send/receive layer changes.
 //
 // The value the VESC cannot give you: the individual cell voltages. A single
 // lagging cell is how a DIY pack strands you or catches fire, and it is invisible
 // from the pack terminals. This is the whole reason to read the BMS at all.
 //
-// Compiled out entirely unless -DESK8OS_BMS_DALY. Protocol: 13-byte frames,
-// 0xA5 start, 0x40 host address, 9600 baud, one-byte sum checksum.
+// Compiled out entirely unless -DESK8OS_BMS_DALY. Daly frame format (same over
+// UART or the BLE dongle): 13-byte frames, 0xA5 start, 0x40 host, sum checksum.
 // ============================================================================
 #pragma once
 #include <Arduino.h>

@@ -63,6 +63,25 @@ enum {
     CMD_FAULT      = 0x98,   // protection / alarm flags
 };
 
+// ============================================================================
+// TRANSPORT — PLACEHOLDER, TO BE REBUILT OVER BLE.
+//
+// The real Daly Smart BMS 40A "K" connects over BLUETOOTH: ESK8OS talks to the
+// Daly's BLE dongle wirelessly, nothing is wired. This UART transport
+// (sendRequest / readFrame below) does NOT match that and must be replaced with
+// a BLE client — ESP32 as a BLE central to the dongle: subscribe to its notify
+// characteristic, write the same 0xA5 command frames to its write characteristic.
+//
+// Build it against the PHYSICAL dongle (not in hand yet): the exact service /
+// characteristic UUIDs, any init handshake, and BLE server(phone)+client(Daly)
+// dual-role coexistence all need verification on the real unit, not guesswork.
+//
+// Everything BELOW the transport — the 0x90–0x98 decoders, the BmsData model,
+// the per-cell display page, companion char 0006, and simulateBms() — is
+// transport-agnostic and stays. Only this send/read layer changes. In demo the
+// transport is never used (the sim fills gBms directly), so the demo BMS surface
+// already works regardless.
+// ============================================================================
 static HardwareSerial* sPort = nullptr;
 
 static uint16_t be16(const uint8_t* p) { return (uint16_t)((p[0] << 8) | p[1]); }
