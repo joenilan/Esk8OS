@@ -1563,6 +1563,15 @@ int alertState() {
     return 0;
 }
 
+// One banner line: white text over a 1px black drop-shadow. The shadow keeps it
+// readable on every banner colour (red / orange / yellow / accent) so all alerts
+// share one look and only the colour changes — no black-on-yellow special case.
+static void drawBannerLine(const String& s, const GFXfont* font, int cx, int y) {
+    GFX->setFont(font);
+    GFX->setTextColor(COL_BG);    GFX->drawString(s, cx + 1, y + 1);
+    GFX->setTextColor(COL_WHITE); GFX->drawString(s, cx, y);
+}
+
 void updateOverlays(int state) {
     static int lastState = 0;
     static String lastText = "";
@@ -1625,35 +1634,24 @@ void updateOverlays(int state) {
         bool confirmModal = (state == 5 || state == 6 || state == 10);
         uint16_t bgColor = confirmModal ? COL_ACCENT :
                            (state == 8 ? COL_ORANGE : (state == 9 ? COL_YELLOW : COL_RED));
-        uint16_t fgColor = confirmModal ? COL_BG : COL_WHITE;
-        if (state == 9) fgColor = COL_BG;
         GFX->fillRect(X0 + 8, by, UI_W - 16, bh, bgColor);
         GFX->setTextDatum(TC_DATUM);
-        GFX->setTextColor(fgColor);
+        int cx = X0 + UI_W / 2;
+        // All banners share the white-on-shadow treatment (see drawBannerLine);
+        // only the colour and the line sizes differ between alert types.
         if (crit) {
-            // LOW BATTERY: big line1 in Bebas40, line2 in Bebas24, line3 (pct/V) in Bebas18
-            GFX->setFont(&BebasNeue40pt7b);
-            GFX->drawString(line1, X0 + UI_W / 2, by + 4);
-            GFX->setFont(&BebasNeue24pt7b);
-            GFX->drawString(line2, X0 + UI_W / 2, by + 44);
-            GFX->setFont(&BebasNeue18pt7b);
-            GFX->drawString(line3, X0 + UI_W / 2, by + 68);
+            // LOW BATTERY / LIMP: big line1, medium line2, small line3 (pct/V)
+            drawBannerLine(line1, &BebasNeue40pt7b, cx, by + 4);
+            drawBannerLine(line2, &BebasNeue24pt7b, cx, by + 44);
+            drawBannerLine(line3, &BebasNeue18pt7b, cx, by + 68);
         } else if (confirmModal) {
-            // BRIDGE / TRIP-RESET / WIFI CONFIRM: WHITE text with a black
-            // drop-shadow — black-on-accent was hard to read on the purple.
-            int cx = X0 + UI_W / 2;
-            GFX->setFont(&BebasNeue24pt7b);
-            GFX->setTextColor(COL_BG);   GFX->drawString(line1, cx + 1, by + 7);
-            GFX->setTextColor(COL_WHITE); GFX->drawString(line1, cx, by + 6);
-            GFX->setFont(&BebasNeue18pt7b);
-            GFX->setTextColor(COL_BG);   GFX->drawString(line2, cx + 1, by + 35);
-            GFX->setTextColor(COL_WHITE); GFX->drawString(line2, cx, by + 34);
+            // BRIDGE / TRIP-RESET / WIFI CONFIRM
+            drawBannerLine(line1, &BebasNeue24pt7b, cx, by + 6);
+            drawBannerLine(line2, &BebasNeue18pt7b, cx, by + 34);
         } else {
-            // FAULT / LINK LOST / HOT: line1 big, line2 medium
-            GFX->setFont(&BebasNeue40pt7b);
-            GFX->drawString(line1, X0 + UI_W / 2, by + 4);
-            GFX->setFont(&BebasNeue24pt7b);
-            GFX->drawString(line2, X0 + UI_W / 2, by + 40);
+            // FAULT / LINK LOST / HOT / VOLT SAG / TURN HOME
+            drawBannerLine(line1, &BebasNeue40pt7b, cx, by + 4);
+            drawBannerLine(line2, &BebasNeue24pt7b, cx, by + 40);
         }
         lastText = textKey;
         markDirty(by, bh);

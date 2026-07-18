@@ -52,7 +52,9 @@ float gVescWhLeft = 0;          // Wh remaining per the ESC battery config
 float gVescOdoKm = 0;           // ESC persistent odometer
 char  gVescHwName[17] = {0};    // ESC hardware name from the FW handshake
 // --- adaptive battery calibration (learned on real rides; NVS-persisted) ---
-float gPackROhm = 0.11f;        // seed = ride r0074 regression (pre-rewire); self-corrects
+float gPackROhm = 0.045f;       // seed = a healthy 10s6p (cells ~0.037 + wiring); self-corrects
+                                // from real current steps, so a specific pack's R is learned,
+                                // never baked in. (Was 0.11 = an old pre-rewire 18650 pack.)
 float gTypicalRideAmps = 15.0f; // typical battery draw while rolling
 float gLearnedPackWh = 0;       // measured deliverable pack Wh (0 = not learned yet)
 float gLearnedWhPerKm = 0;      // cross-ride Wh/km EMA (0 = not learned yet)

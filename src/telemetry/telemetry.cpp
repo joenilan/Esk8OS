@@ -360,8 +360,8 @@ static int liionSocFromCellV(float v) {
 
 // Pack internal resistance used to undo voltage sag (V_open = V + I*R) lives in
 // gPackROhm — LEARNED online from current steps (see pollVescData) and persisted,
-// so it tracks wiring changes and pack aging. NVS seed history: 0.11 ohm came
-// from regressing ride r0074 (pre-rewire); healthy 10s6p is ~0.04-0.05.
+// so it tracks wiring changes and pack aging. Seed is a healthy 10s6p ~0.045 ohm
+// (cells ~0.037 + wiring); a real pack's R replaces it after the first ride.
 // (gSocFilt / gSocAtBaseline are declared above the range section, which needs
 // them for pack-energy learning. gSocFilt: EMA across polls (~10 Hz), seeded on
 // the first real reading so it doesn't ramp up from zero.)
@@ -681,7 +681,7 @@ void telemetryPrintCal(Print& out) {
     float cv = useMph ? 0.621371f : 1.0f;
     const char* u = useMph ? "mi" : "km";
     float nom = configuredNominalPackWh();
-    out.printf("pack R %.0f mohm (seed 110) | typical draw %.1f A\n",
+    out.printf("pack R %.0f mohm (seed 45) | typical draw %.1f A\n",
         gPackROhm * 1000.0f, gTypicalRideAmps);
     if (gLearnedPackWh > 1.0f)
         out.printf("pack energy LEARNED %.0f Wh (label %.0f Wh -> %.0f%% healthy)\n",
@@ -705,7 +705,7 @@ void telemetryPrintCal(Print& out) {
 }
 
 void telemetryResetCal() {
-    gPackROhm = 0.11f;
+    gPackROhm = 0.045f;
     gTypicalRideAmps = 15.0f;
     gLearnedPackWh = 0;
     gLearnedWhPerKm = 0;
