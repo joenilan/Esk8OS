@@ -24,9 +24,12 @@ namespace Transports {
 static const int BMS_MAX_CELLS = 16;
 static const int BMS_MAX_TEMPS = 8;
 
-// Everything ESK8OS knows about the pack from the BMS. Filled by the poll task,
-// read by the console / display / companion BLE. Single-writer (the task), so
-// readers see at worst a one-cycle-stale field, never a corrupt struct.
+// Everything ESK8OS knows about the pack from the BMS. Filled by the poll task
+// (core 0), read by the console / display / companion BLE (core 1). The task
+// builds a local and publishes it as one unit; readers MUST go through
+// getBmsData() so they copy it atomically and never see a torn mix of old and
+// new fields (a bare read of the shared struct can tear — the whole point of
+// per-cell data is catching one lagging cell, and a torn read could hide it).
 struct BmsData {
     bool     linkOk   = false;   // BMS answered within the staleness window
     uint32_t lastOkMs = 0;
@@ -44,6 +47,11 @@ struct BmsData {
 
     // 0x95 — the payload that matters. Per-cell millivolts.
     uint16_t cellmV[BMS_MAX_CELLS] = {0};
+    // When each cell's mV was last actually refreshed. A dropped 0x95 frame
+    // leaves that cell's old mV in place; comparing this against the pack's
+    // lastOkMs tells a reader the value is stale so it can show "?" instead of
+    // a lie. cellFresh() encapsulates the check.
+    uint32_t cellSeenMs[BMS_MAX_CELLS] = {0};
 
     // 0x91 — extremes, reported directly by the BMS (not just derived here).
     uint16_t minCellmV = 0, maxCellmV = 0;
@@ -67,6 +75,20 @@ struct BmsData {
 };
 
 extern BmsData gBms;
+
+// A cell's mV is fresh if it was refreshed within this window of the pack's last
+// good poll. Wider than one 500 ms cycle so a single dropped frame doesn't flap
+// the display, tight enough to catch a cell that has genuinely stopped reporting.
+static const uint32_t BMS_CELL_STALE_MS = 2000;
+inline bool cellFresh(const BmsData& b, int cell) {
+    return b.linkOk && b.cellSeenMs[cell] != 0 &&
+           (b.lastOkMs - b.cellSeenMs[cell]) < BMS_CELL_STALE_MS;
+}
+
+// Atomic snapshot of the pack state. The ONLY supported way to read the BMS from
+// another task — copies the published struct under a lock so the reader gets a
+// coherent frame. Returns false (and a zeroed *out) on a build without the BMS.
+bool getBmsData(BmsData* out);
 
 // Starts the BMS UART and its poll task. A no-op (leaving gBms.linkOk false)
 // unless built with -DESK8OS_BMS_DALY.

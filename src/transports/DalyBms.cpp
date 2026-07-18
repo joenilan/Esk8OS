@@ -1,5 +1,7 @@
 #include "transports/DalyBms.h"
 
+extern bool gDemoMode;   // Settings.cpp (global scope) — drives the bench simulation
+
 namespace Esk8OS {
 namespace Transports {
 
@@ -7,6 +9,21 @@ namespace Transports {
 // simply show "link down" on a build without the BMS. The poll task below is the
 // only part gated by the flag.
 BmsData gBms;
+
+// Guards the publish of gBms (poll task, core 0) against reads on the UI/BLE core.
+// Created in beginDalyBms; stays null on a non-BMS build, where gBms never changes
+// and an unlocked copy is safe. (F-2)
+static SemaphoreHandle_t gBmsMutex = nullptr;
+
+bool getBmsData(BmsData* out) {
+    if (gBmsMutex && xSemaphoreTake(gBmsMutex, portMAX_DELAY) == pdTRUE) {
+        *out = gBms;
+        xSemaphoreGive(gBmsMutex);
+    } else {
+        *out = gBms;   // pre-begin, or non-BMS build: no concurrent writer
+    }
+    return out->linkOk;
+}
 
 #if ESK8OS_BMS_DALY
 
@@ -156,6 +173,8 @@ static void readCellVoltages(BmsData& b) {
             const int cell = base + i;
             if (cell >= BMS_MAX_CELLS || cell >= cells) break;
             b.cellmV[cell] = be16(&f[5 + i * 2]);
+            b.cellSeenMs[cell] = millis();   // stamp freshness so a later dropped
+                                             // frame leaves this cell visibly stale (F-3)
         }
     }
 }
@@ -197,15 +216,65 @@ static void readFaults(BmsData& b) {
     b.hasFault = any;
 }
 
+// ---- bench simulation -----------------------------------------------------
+// Synthetic pack so the whole BMS surface (display page, BLE, app) animates on
+// the bench with no Daly wired — the same role simulateTelemetry() plays for the
+// VESC. A 10S pack with ONE deliberately weak cell (cell 7, ~70 mV low) so the
+// per-cell imbalance view — the reason this feature exists — is visible in demo.
+static void simulateBms(BmsData& b) {
+    const uint32_t now = millis();
+    const float phase = (now % 60000) / 60000.0f;          // 0..1 over 60 s
+    const float wave  = sinf(phase * 2.0f * PI);           // -1..1
+
+    b.cellCount = 10;
+    b.tempCount = 2;
+    b.soc = 70.0f + 15.0f * wave;                          // breathe 55..85%
+
+    const uint16_t nominal = (uint16_t)(3600 + (b.soc - 55.0f) / 30.0f * 400.0f);  // ~3600..4000 mV
+    uint32_t sum = 0;
+    for (int c = 0; c < b.cellCount; c++) {
+        int16_t spread = (int16_t)((c * 7) % 15) - 7;       // deterministic +/-7 mV
+        uint16_t mv = (uint16_t)(nominal + spread);
+        if (c == 6) mv -= 70;                               // the weak cell (1-based #7)
+        b.cellmV[c]     = mv;
+        b.cellSeenMs[c] = now;                              // demo cells always fresh
+        sum += mv;
+    }
+    b.packVoltage = sum / 1000.0f;
+
+    uint16_t mn = 0xFFFF, mx = 0; uint8_t mnNo = 1, mxNo = 1;
+    for (int c = 0; c < b.cellCount; c++) {
+        if (b.cellmV[c] < mn) { mn = b.cellmV[c]; mnNo = (uint8_t)(c + 1); }
+        if (b.cellmV[c] > mx) { mx = b.cellmV[c]; mxNo = (uint8_t)(c + 1); }
+    }
+    b.minCellmV = mn; b.maxCellmV = mx; b.minCellNo = mnNo; b.maxCellNo = mxNo;
+    b.cellDeltamV = (uint16_t)(mx - mn);
+
+    b.current     = -(10.0f + 8.0f * wave);                 // discharge (negative per decode)
+    b.remainingAh = 10.0f * b.soc / 100.0f;
+    b.cycles      = 42;
+    b.temps[0] = (int8_t)(26 + (int)(4 * wave));
+    b.temps[1] = (int8_t)(28 + (int)(3 * wave));
+    b.tempMax  = max(b.temps[0], b.temps[1]);
+    b.tempMin  = min(b.temps[0], b.temps[1]);
+    b.chargeMos = true; b.dischargeMos = true;
+    b.hasFault = false;
+    for (int i = 0; i < 7; i++) b.faultBytes[i] = 0;
+    b.linkOk = true;
+    b.lastOkMs = now;
+}
+
 // ---- poll task ------------------------------------------------------------
 
 static void bmsPollTask(void*) {
-    // Local scratch so a half-finished poll never publishes a torn mix of old
-    // and new. Copy into gBms only after a cycle whose pack read succeeded.
+    // Local scratch so a half-finished poll never publishes a torn mix of old and
+    // new; the finished frame is swapped into gBms under gBmsMutex (F-2).
     for (;;) {
         BmsData b = gBms;   // carry forward last topology (cell/temp counts)
 
-        if (readPack(b)) {
+        if (gDemoMode) {
+            simulateBms(b);
+        } else if (readPack(b)) {
             readStatus(b);       // counts first — the cell/temp reads need them
             readMinMaxV(b);
             readMinMaxT(b);
@@ -220,12 +289,16 @@ static void bmsPollTask(void*) {
             b.linkOk = false;
         }
 
-        gBms = b;
+        if (gBmsMutex && xSemaphoreTake(gBmsMutex, portMAX_DELAY) == pdTRUE) {
+            gBms = b;
+            xSemaphoreGive(gBmsMutex);
+        }
         vTaskDelay(pdMS_TO_TICKS(500));   // 2 Hz; cell voltages do not move fast
     }
 }
 
 void beginDalyBms() {
+    gBmsMutex = xSemaphoreCreateMutex();
     static HardwareSerial bmsSerial(2);   // UART2, its own pins, off the VESC bus
     sPort = &bmsSerial;
     sPort->begin(BMS_BAUD, SERIAL_8N1, BMS_RX_PIN, BMS_TX_PIN);

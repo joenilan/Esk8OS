@@ -686,12 +686,14 @@ static void cmdWheel(const char* arg) {
 
 static void cmdBms() {
     using namespace Esk8OS::Transports;
-    const BmsData& b = gBms;
 
 #if !ESK8OS_BMS_DALY
     consoleOut().println(F("BMS support not built in (build env tdisplay_s3_bms)"));
     return;
 #endif
+
+    BmsData b;
+    getBmsData(&b);   // atomic snapshot (F-2)
 
     if (!b.linkOk) {
         consoleOut().println(F("BMS link down (no Daly frame yet - check UART wiring 43/44, dongle removed)"));
@@ -709,9 +711,11 @@ static void cmdBms() {
     for (int c = 0; c < cells; c++) {
         const bool isMin = (c + 1) == b.minCellNo;
         const bool isMax = (c + 1) == b.maxCellNo;
-        consoleOut().printf("  cell %2d  %4u mV %s%s\n", c + 1, (unsigned)b.cellmV[c],
+        const bool stale = !cellFresh(b, c);
+        consoleOut().printf("  cell %2d  %4u mV %s%s%s\n", c + 1, (unsigned)b.cellmV[c],
                             b.balancing[c] ? "bal " : "",
-                            isMin ? "<-min" : (isMax ? "<-max" : ""));
+                            isMin ? "<-min" : (isMax ? "<-max" : ""),
+                            stale ? "  (stale)" : "");
     }
     consoleOut().printf("delta %u mV  (min %u / max %u)\n",
                         (unsigned)b.cellDeltamV, (unsigned)b.minCellmV, (unsigned)b.maxCellmV);
