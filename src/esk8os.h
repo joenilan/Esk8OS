@@ -39,7 +39,12 @@ extern int X0;                     // X offset to center the UI on wider screens
 // ---- pages / top-level mode -------------------------------------------------
 enum PageId {
     PAGE_HUD = 0, PAGE_DASH, PAGE_POWER, PAGE_TRIP,
-    PAGE_SETTINGS, PAGE_SYSTEM, PAGE_GRAPHS, PAGE_LOGS, PAGE_COUNT
+    PAGE_SETTINGS, PAGE_SYSTEM, PAGE_GRAPHS, PAGE_LOGS,
+#if ESK8OS_BMS_DALY
+    PAGE_BMS,          // per-cell Daly pack view — BMS builds only. Appended so
+                       // the app's absolute PAGE_SET indices (0..7) stay stable.
+#endif
+    PAGE_COUNT
 };
 enum SystemMode {
     MODE_DASHBOARD,

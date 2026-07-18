@@ -3,6 +3,7 @@
 #include "UiRenderer.h"
 #include "telemetry/telemetry.h"     // getHistorySample() for the graph pages
 #include "logging/sessionlog.h"    // board-session CSV status for the LOGS page warning
+#include "transports/DalyBms.h"    // getBmsData() for the BMS page (BMS builds only)
 
 #if ESK8OS_FULL_UI
 #include "BebasNeue18.h"   // condensed small labels
@@ -321,6 +322,19 @@ static void drawStaticPower() {
     drawRowLabel("MAX RIDE", 178);
     drawRowLabel("MIN VOLT", 194);
 }
+
+#if ESK8OS_BMS_DALY
+// ── BMS PAGE static chrome (BMS builds only): pack rollup + per-cell grid ──
+// The per-cell voltages the VESC can't see. The grid + status line are fully
+// dynamic (updateBms); this lays down the card frames and the fixed labels.
+static void drawStaticBms() {
+    drawCard(4, 22, 162, 58, "PACK");
+    drawRowLabel("VOLTAGE", 40);
+    drawRowLabel("CURRENT", 56);
+    drawRowLabel("CHARGE",  72);
+    drawCard(4, 84, 162, 150, "CELLS");
+}
+#endif
 
 // ── PAGE 2: TRIP static chrome ──
 static void drawStaticTrip() {
@@ -1008,6 +1022,9 @@ void drawStaticFrame() {
     else if (currentPage == PAGE_SYSTEM)   drawStaticSystem();
     else if (currentPage == PAGE_GRAPHS)   drawStaticGraphs();
     else if (currentPage == PAGE_LOGS)     drawStaticLogs();
+#if ESK8OS_BMS_DALY
+    else if (currentPage == PAGE_BMS)      drawStaticBms();
+#endif
 
     // ── BATTERY CELLS OUTLINE (common, y=276..288) ──
     // Hidden on the Big HUD (it has its own larger cell row) and on SETTINGS
@@ -1315,6 +1332,86 @@ static void updatePower() {
     markDirty(22, 186);
 }
 
+#if ESK8OS_BMS_DALY
+// ==========================================
+// UPDATE: BMS page (per-cell Daly pack)
+// ==========================================
+// One cell's color: stale wins (grey — don't trust an old mV), then the weak
+// (min) cell red so a lagging cell jumps out, balancing yellow, the top cell
+// accent, everything else green.
+static uint16_t bmsCellColor(bool isMin, bool isMax, bool bal, bool stale) {
+    if (stale) return COL_DIM;
+    if (isMin) return COL_RED;
+    if (bal)   return COL_YELLOW;
+    if (isMax) return COL_ACCENT;
+    return COL_GREEN;
+}
+
+static void updateBms() {
+    static unsigned long lastMs = 0;
+    if (!gRedrawAll && millis() - lastMs < 500) return;   // the pack is a 2 Hz source
+    lastMs = millis();
+
+    Esk8OS::Transports::BmsData b;
+    Esk8OS::Transports::getBmsData(&b);
+
+    // Pack rollup.
+    if (!b.linkOk) {
+        drawVal(40, "-- V", COL_DIM);
+        drawVal(56, "-- A", COL_DIM);
+        drawVal(72, "--",   COL_DIM);
+    } else {
+        drawVal(40, String(b.packVoltage, 1) + " V", COL_WHITE);
+        drawVal(56, String(b.current, 1) + " A", b.current > 0.5f ? COL_GREEN : COL_WHITE);
+        String mos = (b.chargeMos && b.dischargeMos) ? " MOS+" : " MOS-";
+        drawVal(72, String((int)lroundf(b.soc)) + "%" + mos, b.hasFault ? COL_RED : COL_WHITE);
+    }
+
+    // Cells card interior (below the header underline at y=98): clear + redraw.
+    GFX->fillRect(X0 + 6, 100, 154, 128, COL_BG);
+    GFX->setFont(&fonts::Font0);
+    GFX->setTextDatum(TL_DATUM);
+
+    if (!b.linkOk) {
+        GFX->setTextDatum(MC_DATUM);
+        GFX->setTextColor(COL_DIM);
+        GFX->drawString("BMS LINK DOWN", X0 + UI_W / 2, 150);
+        GFX->drawString("check UART wiring", X0 + UI_W / 2, 164);
+        markDirty(22, 234);
+        return;
+    }
+
+    const int cells = b.cellCount;
+    const int cols  = 2;
+    const int rows  = (cells + cols - 1) / cols;
+    const int gridY0 = 102;
+    const int rowH  = rows > 0 ? min(18, (206 - gridY0) / rows) : 18;
+    const int colX[2] = { X0 + 12, X0 + 90 };
+
+    for (int c = 0; c < cells && c < Esk8OS::Transports::BMS_MAX_CELLS; c++) {
+        const int y = gridY0 + (c / cols) * rowH;
+        const bool isMin = (c + 1) == b.minCellNo;
+        const bool isMax = (c + 1) == b.maxCellNo;
+        const bool stale = !Esk8OS::Transports::cellFresh(b, c);
+        GFX->setTextColor(bmsCellColor(isMin, isMax, b.balancing[c], stale));
+        char row_s[16];
+        if (stale) snprintf(row_s, sizeof(row_s), "%2d   ??", c + 1);
+        else       snprintf(row_s, sizeof(row_s), "%2d %4u", c + 1, (unsigned)b.cellmV[c]);
+        GFX->drawString(row_s, colX[c % cols], y);
+    }
+
+    // Imbalance + temp range. Delta is the number to watch; red past ~100 mV.
+    char st[28];
+    snprintf(st, sizeof(st), "delta %u mV   %d-%dC",
+             (unsigned)b.cellDeltamV, b.tempMin, b.tempMax);
+    GFX->setTextDatum(TL_DATUM);
+    GFX->setTextColor((b.hasFault || b.cellDeltamV > 100) ? COL_RED : COL_DIM);
+    GFX->drawString(st, X0 + 12, 216);
+
+    markDirty(22, 234);
+}
+#endif
+
 // ==========================================
 // UPDATE: Page 2 (TRIP)
 // ==========================================
@@ -1428,6 +1525,10 @@ void updateCurrentPageContent() {
         updateGraphs();
     } else if (currentPage == PAGE_LOGS) {
         updateLogs();
+#if ESK8OS_BMS_DALY
+    } else if (currentPage == PAGE_BMS) {
+        updateBms();
+#endif
     }
 }
 
