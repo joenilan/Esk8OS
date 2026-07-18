@@ -187,6 +187,13 @@ extern float RANGE_DEFAULT_WH_PER_MILE;
 extern int   BATTERY_CELLS_COUNT;
 extern float BATTERY_MAX_V;
 extern float BATTERY_MIN_V;
+// The supported series-cell range. ONE definition, shared by every layer that
+// clamps or validates a cell count (NVS load, BLE settings write, and the VESC
+// base-tier adoption) so they can never disagree — see Settings::applyBaseTier
+// (F-8). Widen these (and re-test the SoC/sag/range chain) to support bigger
+// packs; today the whole battery-math stack is validated for 6..14S.
+static const int BATTERY_CELLS_MIN = 6;
+static const int BATTERY_CELLS_MAX = 14;
 void recalcBatteryBounds();
 
 // ---- wheel/gearing profiles (display speed/distance math only; NOT VESC) -----

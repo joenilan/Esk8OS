@@ -143,7 +143,7 @@ void begin() {
     gHudFace       = constrain(prefs.getInt("hudFace", HUD_FACE_SPEED), 0, HUD_FACE_COUNT - 1);
     gBatteryFocus  = constrain(prefs.getInt("batFocus", BATTERY_FOCUS_PERCENT), 0, BATTERY_FOCUS_COUNT - 1);
 
-    BATTERY_CELLS_COUNT = constrain(prefs.getInt("cells", BATTERY_CELLS_COUNT), 6, 14);
+    BATTERY_CELLS_COUNT = constrain(prefs.getInt("cells", BATTERY_CELLS_COUNT), BATTERY_CELLS_MIN, BATTERY_CELLS_MAX);
     BATTERY_EFFECTIVE_CAPACITY_AH = constrain(prefFloat("packAh", BATTERY_EFFECTIVE_CAPACITY_AH), 4.0f, 40.0f);
     BATTERY_STOP_CELL_V = constrain(prefFloat("stopCell", BATTERY_STOP_CELL_V), 3.00f, 3.60f);
     BATTERY_HOME_CELL_V = constrain(prefFloat("homeCell", BATTERY_HOME_CELL_V), BATTERY_STOP_CELL_V, BATTERY_FULL_CELL_V);
@@ -192,13 +192,23 @@ void begin() {
 // live in the profile functions above; these are the stored-global ones.
 static void applyBaseTier() {
     if (!gBase.valid) return;
-    if (!prefs.isKey("cells") && gBase.cells >= 6 && gBase.cells <= 14)
+    // Only adopt the ESC's pack GEOMETRY when the cell count is inside the range
+    // the rest of the battery math supports (the same 6..14 the NVS/BLE clamps
+    // use). Outside it, keep the defaults wholesale: the mcconf parser accepts a
+    // wider 3..24 so the drivetrain values (poles/gear/wheel) still apply for an
+    // exotic pack, but a HALF-adopted battery geometry — per-cell floors derived
+    // from the true cell count while BATTERY_CELLS_COUNT (the SoC/sag divisor)
+    // stays pinned at the default 10 — would read per-cell voltage badly wrong.
+    // So gate every cell-derived value on the SAME condition, never just some. (F-8)
+    const bool cellsUsable = gBase.cells >= BATTERY_CELLS_MIN &&
+                             gBase.cells <= BATTERY_CELLS_MAX;
+    if (!prefs.isKey("cells") && cellsUsable)
         BATTERY_CELLS_COUNT = gBase.cells;
     if (!prefs.isKey("packAh"))
         BATTERY_EFFECTIVE_CAPACITY_AH = constrain(gBase.packAh, 4.0f, 40.0f);
-    if (!prefs.isKey("stopCell") && gBase.cells > 0)
+    if (!prefs.isKey("stopCell") && cellsUsable)
         BATTERY_STOP_CELL_V = constrain(gBase.cutEndV / gBase.cells, 3.00f, 3.60f);
-    if (!prefs.isKey("homeCell") && gBase.cells > 0)
+    if (!prefs.isKey("homeCell") && cellsUsable)
         BATTERY_HOME_CELL_V = constrain(gBase.cutStartV / gBase.cells,
                                         BATTERY_STOP_CELL_V, BATTERY_FULL_CELL_V);
     recalcBatteryBounds();

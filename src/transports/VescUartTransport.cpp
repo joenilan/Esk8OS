@@ -17,7 +17,7 @@ namespace Transports {
 static RawVescData gRawData;
 static bool gHasNewData = false;
 static SemaphoreHandle_t gDataMutex = NULL;
-static bool gPollPaused = false;
+static volatile bool gPollPaused = false;   // volatile: written by the UI task, read by the poll task
 static TaskHandle_t gVescTaskHandle = NULL;
 
 // First CAN ID tried when hunting for the second motor's VESC: the id learned
@@ -133,32 +133,39 @@ static float beF16(const uint8_t* p, float scale) {
     return (float)v / scale;
 }
 
-// payload = mcconf reply WITHOUT the leading command-id byte.
+// payload = mcconf reply WITHOUT the leading command-id byte. Parses into a local
+// and publishes it under gDataMutex as one unit, so a UI-task reader
+// (getVescBaseConfig, on core 1) can never see a half-filled config. (F-4)
 static void parseMcconfBase(const uint8_t* payload, int len) {
-    gVescBase = {};
-    if (len < 456) return;
-    if (beU32(payload) != MCCONF_SIG_6_05) return;   // unknown layout: refuse, don't guess
-    gVescBase.cutStartV      = beF16(payload + 54, 10.0f);
-    gVescBase.cutEndV        = beF16(payload + 56, 10.0f);
-    gVescBase.motorAmpMax    = beF32Auto(payload + 8);
-    gVescBase.battAmpMax     = beF32Auto(payload + 16);
-    gVescBase.battAmpRegen   = beF32Auto(payload + 20);
-    gVescBase.motorPoles     = payload[441];
-    gVescBase.gearRatio      = beF32Auto(payload + 442);
-    gVescBase.wheelDiameterM = beF32Auto(payload + 446);
-    gVescBase.cells          = payload[451];
-    gVescBase.packAh         = beF32Auto(payload + 452);
+    VescBaseConfig vb = {};
+    if (len >= 456 && beU32(payload) == MCCONF_SIG_6_05) {   // unknown layout: refuse, don't guess
+        vb.cutStartV      = beF16(payload + 54, 10.0f);
+        vb.cutEndV        = beF16(payload + 56, 10.0f);
+        vb.motorAmpMax    = beF32Auto(payload + 8);
+        vb.battAmpMax     = beF32Auto(payload + 16);
+        vb.battAmpRegen   = beF32Auto(payload + 20);
+        vb.motorPoles     = payload[441];
+        vb.gearRatio      = beF32Auto(payload + 442);
+        vb.wheelDiameterM = beF32Auto(payload + 446);
+        vb.cells          = payload[451];
+        vb.packAh         = beF32Auto(payload + 452);
 
-    // Sanity gate (handoff step 4): reject implausible values wholesale — a
-    // partially-plausible parse is worse than no parse.
-    bool sane = gVescBase.cells >= 3 && gVescBase.cells <= 24 &&
-                gVescBase.motorPoles >= 2 && gVescBase.motorPoles <= 60 &&
-                gVescBase.wheelDiameterM > 0.05f && gVescBase.wheelDiameterM < 1.5f &&
-                gVescBase.gearRatio > 0.5f && gVescBase.gearRatio < 30.0f &&
-                gVescBase.packAh > 1.0f && gVescBase.packAh < 200.0f &&
-                gVescBase.cutEndV > 2.0f * gVescBase.cells &&
-                gVescBase.cutStartV >= gVescBase.cutEndV;
-    gVescBase.valid = sane;
+        // Sanity gate (handoff step 4): reject implausible values wholesale — a
+        // partially-plausible parse is worse than no parse.
+        vb.valid = vb.cells >= 3 && vb.cells <= 24 &&
+                   vb.motorPoles >= 2 && vb.motorPoles <= 60 &&
+                   vb.wheelDiameterM > 0.05f && vb.wheelDiameterM < 1.5f &&
+                   vb.gearRatio > 0.5f && vb.gearRatio < 30.0f &&
+                   vb.packAh > 1.0f && vb.packAh < 200.0f &&
+                   vb.cutEndV > 2.0f * vb.cells &&
+                   vb.cutStartV >= vb.cutEndV;
+    }
+    if (gDataMutex && xSemaphoreTake(gDataMutex, portMAX_DELAY) == pdTRUE) {
+        gVescBase = vb;
+        xSemaphoreGive(gDataMutex);
+    } else {
+        gVescBase = vb;   // pre-begin only; the mutex exists by the time the task runs
+    }
 }
 
 static void saveMcconfFile() {
@@ -195,8 +202,13 @@ static void pollStats() {
     cycle = 0;
     VescStats s;
     if (gProto.getStats(s)) {
-        gStats = s;
-        gStatsHave = true;
+        // Publish the multi-field struct + its have-flag atomically, so
+        // getVescRideStats (core 1) can't read a torn mix of old/new. (F-4)
+        if (gDataMutex && xSemaphoreTake(gDataMutex, portMAX_DELAY) == pdTRUE) {
+            gStats = s;
+            gStatsHave = true;
+            xSemaphoreGive(gDataMutex);
+        }
         gStatsFails = 0;
     } else {
         gStatsFails++;
@@ -410,7 +422,11 @@ static void vescPollTask(void* pvParameters) {
     for (;;) {
 #if EVEE_LINK_ENABLED
         // Throttle first, always. It is the only thing here with a deadline.
-        const bool linkArmed = RemoteLink::tick(gProto);
+        // BUT while the poll is paused, VESC-Tool bridge mode owns Serial1 — the
+        // throttle loop must NOT also write to it, or two writers interleave bytes
+        // and corrupt each other's frames (the very thing this task's sole-owner
+        // design prevents). Skip the whole control tick while paused. (F-7)
+        const bool linkArmed = gPollPaused ? false : RemoteLink::tick(gProto);
 
         const bool pollThisTick = !linkArmed && (++tickN % kPollEveryNTicks == 0);
 #else
@@ -521,9 +537,13 @@ bool peekVescData(RawVescData* outData) {
 bool getVescBaseConfig(VescBaseConfig* out) {
     *out = {};
 #ifndef WOKWI_SIMULATION
-    if (!gVescBase.valid) return false;
-    *out = gVescBase;
-    return true;
+    if (gDataMutex == NULL) return false;
+    bool ok = false;
+    if (xSemaphoreTake(gDataMutex, portMAX_DELAY) == pdTRUE) {   // coherent copy (F-4)
+        if (gVescBase.valid) { *out = gVescBase; ok = true; }
+        xSemaphoreGive(gDataMutex);
+    }
+    return ok;
 #else
     return false;
 #endif
@@ -556,19 +576,27 @@ bool fetchVescTerminal(const char** text) {
 bool getVescRideStats(VescRideStats* out) {
     *out = {};
 #ifndef WOKWI_SIMULATION
-    if (!gStatsHave) return false;
+    if (gDataMutex == NULL) return false;
+    // Snapshot under the lock, convert outside it (minimal hold). (F-4)
+    VescStats s;
+    bool have = false;
+    if (xSemaphoreTake(gDataMutex, portMAX_DELAY) == pdTRUE) {
+        if (gStatsHave) { s = gStats; have = true; }
+        xSemaphoreGive(gDataMutex);
+    }
+    if (!have) return false;
     out->valid = true;
-    out->speedAvgKmh   = gStats.speedAvg * 3.6f;
-    out->speedMaxKmh   = gStats.speedMax * 3.6f;
-    out->powerAvgW     = gStats.powerAvg;
-    out->powerMaxW     = gStats.powerMax;
-    out->currentAvgA   = gStats.currentAvg;
-    out->currentMaxA   = gStats.currentMax;
-    out->tempMosAvgC   = gStats.tempMosAvg;
-    out->tempMosMaxC   = gStats.tempMosMax;
-    out->tempMotorAvgC = gStats.tempMotorAvg;
-    out->tempMotorMaxC = gStats.tempMotorMax;
-    out->rideTimeS     = gStats.countTime;
+    out->speedAvgKmh   = s.speedAvg * 3.6f;
+    out->speedMaxKmh   = s.speedMax * 3.6f;
+    out->powerAvgW     = s.powerAvg;
+    out->powerMaxW     = s.powerMax;
+    out->currentAvgA   = s.currentAvg;
+    out->currentMaxA   = s.currentMax;
+    out->tempMosAvgC   = s.tempMosAvg;
+    out->tempMosMaxC   = s.tempMosMax;
+    out->tempMotorAvgC = s.tempMotorAvg;
+    out->tempMotorMaxC = s.tempMotorMax;
+    out->rideTimeS     = s.countTime;
     return true;
 #else
     return false;

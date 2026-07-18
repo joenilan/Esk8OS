@@ -46,9 +46,14 @@ static const uint8_t kRemoteMac[6] = EVEE_REMOTE_MAC;
 
 // ---------------------------------------------------------------------------
 // Link state. Written by the ESP-NOW callback (WiFi task, core 0), read by
-// tick() (vescPollTask, core 0). Scalars only; a torn read costs at most one
-// stale tick, which the failsafe timer covers.
+// tick() (vescPollTask, core 0). onRecv writes all four control fields together;
+// tick() takes a coherent snapshot of the same four under rxMux, so a poll that
+// lands mid-update can never pair a NEW throttle with OLD flags (which would act
+// on a fresh KILL/FAULT one tick late). The spinlock disables preemption on the
+// core for the few-instruction copy, so the callback and the reader can't
+// interleave. (F-1)
 // ---------------------------------------------------------------------------
+static portMUX_TYPE      rxMux       = portMUX_INITIALIZER_UNLOCKED;
 static volatile int16_t  rxThrottle  = 0;
 static volatile uint8_t  rxFlags     = 0;
 static volatile uint8_t  rxButtons   = 0;
@@ -187,11 +192,14 @@ static void onRecv(const uint8_t* mac, const uint8_t* data, int len) {
     EveeControl c;
     memcpy(&c, data, sizeof(c));
 
+    // Publish the whole control packet as one unit (F-1).
+    portENTER_CRITICAL(&rxMux);
     rxThrottle = eveeClampThrottle(c.throttle);   // never trust the sender's range
     rxFlags    = c.flags;
     rxButtons  = c.buttons;
     rxLastMs   = millis();
     if (restarted) rxRestarted = true;
+    portEXIT_CRITICAL(&rxMux);
 }
 
 // ---------------------------------------------------------------------------
@@ -343,18 +351,32 @@ static void sendStatus() {
 
 // ---------------------------------------------------------------------------
 bool tick(Transports::VescProtocol& proto) {
-    const uint32_t now   = millis();
-    const bool linkUp    = rxLastMs != 0 && (now - rxLastMs) < EVEE_FAILSAFE_MS;
-    const int16_t thr    = rxThrottle;
-    const uint8_t flags  = rxFlags;
+    const uint32_t now = millis();
+
+    // One coherent snapshot of everything onRecv publishes, so throttle/flags/
+    // buttons/timestamp are all from the SAME packet (F-1).
+    int16_t  thr;
+    uint8_t  flags;
+    uint8_t  buttons;
+    uint32_t lastMs;
+    bool     restarted;
+    portENTER_CRITICAL(&rxMux);
+    thr       = rxThrottle;
+    flags     = rxFlags;
+    buttons   = rxButtons;
+    lastMs    = rxLastMs;
+    restarted = rxRestarted;
+    rxRestarted = false;
+    portEXIT_CRITICAL(&rxMux);
+
+    const bool linkUp = lastMs != 0 && (now - lastMs) < EVEE_FAILSAFE_MS;
 
     // Buttons only count while the link is actually up — a stale mask from a
     // remote that vanished must not keep firing page changes.
-    if (linkUp) handleButtons(rxButtons, now);
+    if (linkUp) handleButtons(buttons, now);
     else        gLastButtons = 0;
 
-    if (rxRestarted) {
-        rxRestarted = false;
+    if (restarted) {
         if (gState == EVEE_STATE_ARMED) setState(EVEE_STATE_DISARMED, "remote rebooted");
     }
 

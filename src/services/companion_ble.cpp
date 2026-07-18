@@ -250,7 +250,7 @@ static void applySettings(const char* json) {
         repaint = true;
     }
     if (doc["bat_s"].is<int>()) {
-        BATTERY_CELLS_COUNT = constrain((int)doc["bat_s"], 6, 14);
+        BATTERY_CELLS_COUNT = constrain((int)doc["bat_s"], BATTERY_CELLS_MIN, BATTERY_CELLS_MAX);
         prefs.putInt("cells", BATTERY_CELLS_COUNT);
         recalcBatteryBounds();
         currentVoltage = constrain(currentVoltage, BATTERY_MIN_V, BATTERY_MAX_V);
