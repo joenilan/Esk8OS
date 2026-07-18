@@ -15,6 +15,7 @@
 #include "ui/UiRenderer.h"
 #include "app/App.h"
 #include "telemetry/telemetry.h"
+#include "transports/DalyBms.h"
 #include "logging/sessionlog.h"
 #include "config/Settings.h"
 #include "board/BoardLilyGoTDisplayS3.h"
@@ -32,12 +33,18 @@ static const char* CH_SETTINGS   = "5043697A-0002-4682-93CB-33BB0A149F7E"; // RE
 static const char* CH_COMMAND    = "5043697A-0003-4682-93CB-33BB0A149F7E"; // WRITE
 static const char* CH_SESSION    = "5043697A-0004-4682-93CB-33BB0A149F7E"; // NOTIFY (1 Hz stats)
 static const char* CH_BASECONF   = "5043697A-0005-4682-93CB-33BB0A149F7E"; // READ (VESC base + provenance)
+#if ESK8OS_BMS_DALY
+static const char* CH_BMS        = "5043697A-0006-4682-93CB-33BB0A149F7E"; // NOTIFY (1 Hz Daly pack + per-cell)
+#endif
 
 static const float KM2MI = 0.621371f;
 
 static NimBLEServer*         g_server = nullptr;
 static NimBLECharacteristic* g_tel    = nullptr;
 static NimBLECharacteristic* g_ses    = nullptr;
+#if ESK8OS_BMS_DALY
+static NimBLECharacteristic* g_bms    = nullptr;
+#endif
 
 // Payloads handed from the BLE task to the UI loop (see THREADING note in .h).
 static portMUX_TYPE  g_mux        = portMUX_INITIALIZER_UNLOCKED;
@@ -233,6 +240,50 @@ class BaseConfCallbacks : public NimBLECharacteristicCallbacks {
         c->setValue((uint8_t*)buf, strlen(buf));
     }
 };
+
+#if ESK8OS_BMS_DALY
+// ---- BMS characteristic (0006, notify) -------------------------------------
+// The Daly pack re-exposed for the app: a pack rollup plus the per-cell detail
+// the VESC can't give. Per-cell staleness (F-3) rides along as a bitmask ("st")
+// so the app can grey a cell that stopped reporting instead of trusting an old
+// mV; balancing is a bitmask too. Compact keys — a 16S pack must clear the
+// 509-byte notify ceiling (10S measures ~300 B). Cell mV are millivolts (ints).
+static void buildBmsJson(char* out, size_t cap) {
+    using namespace Esk8OS::Transports;
+    BmsData b;
+    getBmsData(&b);                       // atomic snapshot (F-2)
+
+    JsonDocument doc;
+    doc["link"] = b.linkOk;
+    if (b.linkOk) {
+        doc["pv"]  = r2(b.packVoltage);
+        doc["cur"] = r1(b.current);       // + charge, - discharge
+        doc["soc"] = (int)lroundf(b.soc);
+        doc["rah"] = r2(b.remainingAh);
+        doc["cyc"] = b.cycles;
+        doc["n"]   = b.cellCount;
+        JsonArray cv = doc["cv"].to<JsonArray>();
+        uint32_t bal = 0, stale = 0;
+        for (int c = 0; c < b.cellCount && c < BMS_MAX_CELLS; c++) {
+            cv.add(b.cellmV[c]);
+            if (b.balancing[c])   bal   |= (1u << c);
+            if (!cellFresh(b, c)) stale |= (1u << c);
+        }
+        doc["bal"] = bal;
+        doc["st"]  = stale;
+        doc["mn"]  = b.minCellmV; doc["mnc"] = b.minCellNo;
+        doc["mx"]  = b.maxCellmV; doc["mxc"] = b.maxCellNo;
+        doc["dv"]  = b.cellDeltamV;
+        JsonArray t = doc["t"].to<JsonArray>();
+        for (int i = 0; i < b.tempCount && i < BMS_MAX_TEMPS; i++) t.add(b.temps[i]);
+        doc["tmn"]  = b.tempMin; doc["tmx"] = b.tempMax;
+        doc["cmos"] = b.chargeMos;
+        doc["dmos"] = b.dischargeMos;
+        doc["flt"]  = b.hasFault;
+    }
+    serializeJson(doc, out, cap);
+}
+#endif
 
 // Rebuild the advert (name + vtype/pair-code) and restart it so a live change
 // from the app shows up in the scan list without a reboot. Defined below.
@@ -553,6 +604,10 @@ void companionBleBegin() {
     NimBLECharacteristic* base = svc->createCharacteristic(
         CH_BASECONF, NIMBLE_PROPERTY::READ);
     base->setCallbacks(new BaseConfCallbacks());
+
+#if ESK8OS_BMS_DALY
+    g_bms = svc->createCharacteristic(CH_BMS, NIMBLE_PROPERTY::NOTIFY);
+#endif
     svc->start();
 
     // Build the VESC-Tool NUS service onto the SAME server now, so the whole GATT
@@ -689,6 +744,22 @@ void companionBleTick() {
     }
     g_ses->setValue((uint8_t*)buf, n);
     g_ses->notify();
+
+#if ESK8OS_BMS_DALY
+    // ---- 1 Hz BMS: Daly pack rollup + per-cell (gated on the session cadence
+    // above, which already fires at 1 Hz). Its own characteristic so the big
+    // per-cell array never crowds the core/session notifies. ----
+    if (g_bms && g_server->getConnectedCount() > 0) {
+        buildBmsJson(buf, sizeof(buf));
+        size_t bn = strlen(buf);
+        if (bn > 400 && !sesWarned) {   // reuse the session warn latch — same 509 ceiling
+            sesWarned = true;
+            Serial.printf("[ble] BMS telemetry JSON %u bytes — nearing the notify limit\n", (unsigned)bn);
+        }
+        g_bms->setValue((uint8_t*)buf, bn);
+        g_bms->notify();
+    }
+#endif
 }
 
 // Serial-console access to the same settings machinery the app uses.

@@ -18,6 +18,7 @@ The Android app acts as a read/write client to this custom service.
 | **Command** | `5043697A-0003-4682-93CB-33BB0A149F7E` | `WRITE` | Triggers for actions (Trip Reset, Change Page) |
 | **Session** | `5043697A-0004-4682-93CB-33BB0A149F7E` | `NOTIFY` | 1 Hz trip/session statistics (fw 0.9.4+) |
 | **BaseConfig** | `5043697A-0005-4682-93CB-33BB0A149F7E` | `READ` | VESC-read base config + per-value provenance (fw 0.10.1+) |
+| **BMS** | `5043697A-0006-4682-93CB-33BB0A149F7E` | `NOTIFY` | 1 Hz Daly BMS pack + per-cell (BMS builds only) |
 
 ---
 
@@ -45,6 +46,54 @@ NOT that; a delete mechanism is future work — today the app just displays).
   Keys map to the settings fields `bat_s`/`packAh`/`homeCell`/`stopCell`/
   `whmi`/`wheel`. Older firmware lacks the characteristic entirely — treat as
   `valid:false`.
+
+## 2c. BMS (Characteristic `0006`, BMS builds only)
+
+The Daly smart BMS, re-exposed. ESK8OS becomes the BMS master (the Daly BLE
+dongle is pulled and the ESP32 sits on that UART), so the app gets **per-cell
+voltages** — the one thing the VESC can't provide, and the whole reason to read
+the BMS: a single lagging cell is how a DIY pack strands you or catches fire, and
+it's invisible from the pack terminals.
+
+Present only on firmware built with `-DESK8OS_BMS_DALY`. **Absent = the board has
+no BMS integration** — the app should hide its pack view, exactly like any other
+capability-gated surface. Notifies at **1 Hz** (cell voltages move slowly). When
+no Daly has answered yet, `link:false` and no other fields are sent.
+
+```json
+{
+  "link": true,        // BMS answered within the staleness window
+  "pv": 39.62,         // pack voltage (V)
+  "cur": -12.4,        // pack current (A): + = charging, - = discharging
+  "soc": 78,           // state of charge (%)
+  "rah": 7.84,         // remaining capacity (Ah)
+  "cyc": 42,           // charge cycles
+  "n": 10,             // cell count (pack topology, from the BMS)
+  "cv": [3962,3968,3961,3970,3966,3959,3892,3964,3967,3960],  // per-cell mV, index 0 = cell 1
+  "bal": 0,            // balancing bitmask: bit c set = cell (c+1) actively bleeding
+  "st": 0,             // STALE bitmask: bit c set = cell (c+1)'s mV is old (dropped frame) — show "?"
+  "mn": 3892, "mnc": 7,// lowest cell mV + its 1-based number
+  "mx": 3970, "mxc": 4,// highest cell mV + its 1-based number
+  "dv": 78,            // pack imbalance = max - min (mV); the number to watch
+  "t": [26,28],        // temperature sensors (°C)
+  "tmn": 26, "tmx": 28,// min/max temperature (°C)
+  "cmos": true,        // charge MOSFET engaged
+  "dmos": true,        // discharge MOSFET engaged
+  "flt": false         // any BMS protection/alarm flag active
+}
+```
+
+- **Per-cell staleness (`st`):** each cell's mV is stamped when its frame
+  arrives; if a `0x95` frame drops, that cell keeps its old value but its bit in
+  `st` is set. The app must render a stale cell as unknown ("?"), never as a
+  live reading — a masked stale value defeats the entire point of per-cell data.
+- **`cv` order:** index 0 is cell 1; `mnc`/`mxc` are **1-based** cell numbers to
+  match how the pack is labeled physically.
+- **`dv` (delta):** the single best imbalance indicator. A healthy pack sits in
+  the low tens of mV under load; a delta that climbs with load points at a weak
+  cell well before the pack-level voltage shows anything.
+- **`cur` sign:** matches the Daly convention — positive charging, negative
+  discharging. (Confirm on the physical pack; Daly firmware variants differ.)
 
 ## 3. Telemetry (Characteristics `0001` + `0004`)
 Since fw 0.9.4 telemetry is split across two notify characteristics so neither
