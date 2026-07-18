@@ -464,6 +464,16 @@ void dashboardLoop() {
     webServiceTick();
 
     int alert = alertState();
+    // The passive alert banner (fault / link-lost / hot / low-batt / range) sits
+    // mid-screen and also freezes page redraws (see the alert==0 gate below). On
+    // the SETTINGS page that buries the config menu — and a board with no VESC
+    // sits on LINK LOST forever, locking the rider out of the very menu that
+    // toggles demo mode. Suppress PASSIVE alerts on SETTINGS so config is always
+    // reachable; keep the rider-initiated confirm modals (bridge/trip/wifi =
+    // states 5/6/10), which are prompts the rider asked for.
+    if (currentPage == PAGE_SETTINGS && alert != 5 && alert != 6 && alert != 10) {
+        alert = 0;
+    }
     bool toastUp = (long)(gToastUntil - millis()) > 0;
 
     // -- Dynamic Low Power Mode --
