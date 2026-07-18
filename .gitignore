@@ -40,3 +40,5 @@ scripts/_s*.txt
 /image.png
 /Esk8OS Evee research report*.md
 session_archive/
+# local design scratch (evee-identity.html etc — un-ignore to track it)
+/design/
