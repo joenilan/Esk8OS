@@ -156,12 +156,18 @@ def main() -> int:
     sftp.close()
 
     # 5. Rebuild the Astro site: nginx serves apps/dist, and `astro build` is what
-    #    copies public/downloads (where we just uploaded) into dist.
+    #    copies public/downloads (where we just uploaded) into dist. A failed
+    #    build leaves the old dist live — fail loudly instead of printing [done].
     print("[site] rebuilding apps.zombie.digital ...")
     i, o, e = c.exec_command(
-        "bash -lc 'cd /mnt/data/sites/apps && yarn build' 2>&1 | tail -5")
+        "bash -lc 'cd /mnt/data/sites/apps && yarn build'; echo EXIT:$?")
     build_out = o.read().decode(errors="replace")
     print(build_out.encode(sys.stdout.encoding or "utf-8", "replace").decode(sys.stdout.encoding or "utf-8"))
+    if "EXIT:0" not in build_out:
+        print("[site] FAILED: apps.zombie.digital build did not succeed — "
+              "the freshly uploaded files are NOT in the live dist yet. "
+              "SSH in and run the build manually.")
+        return 1
     c.close()
     print(f"[done] https://apps.zombie.digital/downloads/{SLUG}/latest.json")
     return 0
