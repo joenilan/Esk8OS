@@ -30,7 +30,8 @@ VESC UART was disconnected/not responding, `waitForBootReady()` used to block
 forever waiting for `UART.getVescValues()`. The serial console only starts after
 `setup()` finishes, so `sys`/`cfg` appeared dead even though USB and flashing
 still worked. Current firmware times out the VESC boot wait after about 3.5 s,
-shows `NO VESC - BLE READY`, and continues to the console.
+shows `DRIVE OFF - BLE READY`, and continues to the console. A BMS build can
+then keep showing fresh pack data even though drive-only fields remain masked.
 
 Recovery checklist:
 
@@ -79,7 +80,8 @@ Type `help` (or `?`) for the in-firmware list. `[...]` = optional argument.
 | Command | Output |
 | :--- | :--- |
 | `help`, `?` | List all commands. |
-| `stat`, `tel` | Live telemetry: speed, battery %, volts, VESC link/fault, power + peak, battery/motor amps, duty, motor/ESC/battery temps, energy used/regen, loaded-cell sag evidence. |
+| `stat`, `tel` | Source-aware status: stable primary battery voltage/SOC/range plus raw VESC-vs-Daly cross-checks. With Daly present, its raw counter is explicitly labeled separately until ride-validated. Drive-only fields stay unavailable without the VESC. |
+| `bms` | Daly link, pack, cells, temperatures, MOS states, raw fault bytes, per-group freshness mask, classified alarm level, and the read-only discharge-overcurrent thresholds/delays from registers `0x145..0x149` (BMS builds only). |
 | `diag` | Remote/PPM throttle (−1…+1, accel/brake) + signal-present, VESC firmware version, slave-motor (CAN) online, current/last fault, per-motor current + temps. |
 | `trip` | Trip distance, moving-time (`tmov`), odometer, session avg/max speed, range estimate (learned vs default). |
 | `sys` | Firmware version, uptime, reset reason, FPS, free heap (+ min), free/total PSRAM. |
@@ -135,16 +137,28 @@ avg 0.0 mph | max 0.0 mph | home 15.7 mi (rem 14.2) | limp 21.6 mi (rem 19.6) [d
   and survive a reboot. Trip distance + `tmov` persist on stop / every 60 s while
   riding (see the trip model), but **not** while demo mode is on (demo
   intentionally skips the odo/trip save).
-- **No VESC connected:** live telemetry is marked unavailable and masked instead
-  of showing stale pack voltage or current. Use `demo on` to exercise the
-  telemetry pipeline on the bench.
+- **No VESC connected:** speed, power, duty, motor/ESC temperatures, and other
+  drive-only telemetry are marked unavailable instead of showing convincing
+  zeros. On a BMS build, fresh Daly voltage, its physically validated
+  coulomb-counter SOC/remaining Ah, pack temperature, cell minimum/delta, and a
+  read-only range estimate remain available. If Daly SOC is unavailable,
+  voltage-derived SOC is a provisional fallback. The 2026-07-30 joint ride
+  verified Daly current as negative discharge / positive charge; it is
+  normalized for the battery view only when VESC telemetry is absent. VESC
+  remains authoritative for drivetrain safety, power, and energy integration.
+  A non-BMS build retains the original VESC-only behavior. Use `demo on` to
+  exercise the complete drive telemetry pipeline on the bench.
 
 ## v0.10.2 additions — scripting, AI tooling, ESC passthrough
 
 - `ping` — liveness + firmware version + uptime, for scripted handshakes.
-- `json` — the full state (live telemetry + settings + VESC base config with
-  per-value provenance) as one machine-readable JSON line. Parse this instead
-  of scraping the human-readable commands.
+- `json` — the full state as one machine-readable JSON line. The `live` object
+  retains VESC/drivetrain validity; the separate `battery` object reports
+  `live`, source (`none|vesc|daly|fused|demo`), independently valid fields,
+  range, cell evidence, Daly freshness mask, alarm classification,
+  `soc_provisional`, and the separate raw `daly_soc`. Settings and VESC base
+  config still include per-value provenance. Parse this instead of scraping the
+  human-readable commands.
 - `set <key> <value>` — write any app-writable setting (companion spec §4
   keys: `mph`, `theme`, `bat_s`, `packAh`, `homeCell`, `stopCell`, `whmi`,
   `wheelmm`, `hud`, `rider`, `name`, …). Rides the SAME code path as the BLE

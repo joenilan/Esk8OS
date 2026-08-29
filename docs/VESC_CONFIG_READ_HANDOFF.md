@@ -75,9 +75,12 @@ shifts between VESC firmware versions. Signature-matching is mandatory. Referenc
 - VESC FW **6.5**, dual VESC (master + slave over CAN) — seen on app DIAG page, pack on.
 - Trip/odo correct: **trip 14.65 mi, odo 39.49 mi** — verified via `trip`/`odo` serial
   AND an instrumented footer probe reading `totalKm=63.5489`.
-- ESP32-LEARNED calibration (these are estimates, NOT VESC config): pack R 91 mΩ,
-  typical draw 18.9 A, learned pack energy 455 Wh (label 610 → "75% healthy"),
-  consumption 24.6 Wh/mi. Source: `cal` command (`telemetry.cpp`).
+- Historical ESP32 calibration snapshot (estimates, NOT VESC config): pack R
+  91 mΩ, typical draw 18.9 A, legacy pack-energy value 455 Wh, consumption
+  24.6 Wh/mi. Source: `cal` command (`telemetry.cpp`). The old `"75% healthy"`
+  interpretation was invalid: pre-storage-schema-v3 firmware learned capacity
+  from loaded voltage-derived SOC. Current firmware discards that legacy
+  `packWhL` value and never describes the replacement range model as health.
 
 ## UNVERIFIED / rider-reported — DO NOT treat as fact
 - Rider recalls VESC Tool set to **3.4 / 3.1 V/cell** cutoff, cuts at ~31 V, "slows at

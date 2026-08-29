@@ -50,6 +50,13 @@ build_flags =
     -D SMOOTH_FONT=1
 ```
 
+## 2b. Flash Environments, Partitions & NVS
+
+* BMS builds are a separate env: `tdisplay_s3_bms` (extends `tdisplay_s3_debug_usb`, adds `-DESK8OS_BMS_DALY=1`). The plain `tdisplay_s3_debug_usb` build shows "BMS support not built in" on the console. Use `tdisplay_s3_bms` when the rider needs serial AND live Daly data.
+* 16 MB boards use the repo's `partitions_16mb_bigdata.csv` (`board_build.partitions` in `platformio.ini`): 4 MB OTA slots + 8.29 MB LittleFS for session logs. Stock `default_16MB.csv` only gave logs 3.375 MB (~6 BMS-era commutes; sessions rotate at ~0.5 MB/commute).
+* **Never run `erase_flash` when swapping to/from this table.** NVS at 0x9000 holds the odometer (381.45 mi as of 2026-08-29), settings, and learned calibration; a plain `pio run -t upload` preserves it. LittleFS moves to 0x810000 and formats fresh on first boot — run `scripts/archive_sessions.py` first.
+* Session-log retention is byte-budgeted (prune below ~700 KB free, stub-first, then oldest; count cap 48 is only a directory bound). Charging/balancing while parked logs at 10 s cadence, not 1 s. Parked power-downs log a `powerdown` event; a mid-ride collapse still logs `vcollapse` + an ESC fault-log snapshot.
+
 ## 3. C++ Initialization Requirements
 If you get a "black screen" but the code seems to be running, it's a power issue.
 
@@ -86,7 +93,7 @@ The board will now appear as a USB Serial device and accept a new flash.
 ## 5. COM Port Present But Serial Console Silent
 If Windows shows the LilyGO as `USB Serial Device (COMx)` and esptool can identify/flash it, the ESP32 USB interface is probably not dead even if `sys`/`cfg` get no response.
 
-Known root cause: older boot code blocked forever in `waitForBootReady()` when persisted `demo OFF` and no VESC UART response was available. Because `consolePoll()` only runs after `setup()` finishes, the board looked like serial was dead. This was fixed by adding a VESC boot-wait timeout in `src/ui/ui.cpp`; after about 3.5 seconds it continues with `NO VESC - BLE READY` and the console works.
+Known root cause: older boot code blocked forever in `waitForBootReady()` when persisted `demo OFF` and no VESC UART response was available. Because `consolePoll()` only runs after `setup()` finishes, the board looked like serial was dead. This was fixed by adding a VESC boot-wait timeout in `src/ui/ui.cpp`; after about 3.5 seconds it continues with `DRIVE OFF - BLE READY` and the console works. On BMS builds, the parked display can still show fresh Daly pack data while drive-only fields remain unavailable.
 
 Debug sequence:
 1. Check ports with PowerShell: `[System.IO.Ports.SerialPort]::GetPortNames()`.
@@ -127,3 +134,30 @@ Bridge mode is a first-step TCP proof for desktop VESC Tool. Phone/mobile VESC T
 `DEMO_MODE` in `src/main.cpp` makes the physical board use simulated telemetry for bench testing. Set it to `false` when testing live dashboard telemetry from the FSESC.
 
 Wheel/gearing profiles are local display settings only. They affect the display's own speed and distance math and are saved in NVS, but they do not write VESC motor/app configuration. Use bridge mode plus official VESC Tool for actual FSESC config changes.
+
+## 9. Codex Security
+
+The global `codex-security` CLI and official agent skills are available. Use them when a security review is requested or a change affects a meaningful security boundary; they are not a replacement for normal builds, tests, or hardware validation.
+
+Important firmware security surfaces include:
+* Companion BLE write commands, settings, and authorization
+* Daly BLE notifications, request/response parsing, and central/client state
+* WiFi bridge, web/export, OTA, and update paths
+* VESC passthrough and configuration writes
+* Serial commands, LittleFS access, session logs, and imported or remotely supplied data
+* Credentials, pairing material, and persisted configuration
+
+Start with `info`, `login status`, and a dry run. Prefer a narrow path, working-tree, or diff scan with an explicit cost limit and output outside the repository. Review both findings and coverage, validate findings before editing, preserve all unrelated dirty work, and never change ride or battery safety behavior merely to satisfy a scanner. Hooks, CI gates, automatic patches, and broad paid scans require explicit user approval.
+
+As of 2026-07-29, version 0.1.1 has a known `scan-manifest.json` sealing failure. Read `docs/codex_security.md` and check whether the upstream defect is fixed before spending additional scan budget.
+
+## 10. Website (evee.zombie.digital) — deployment
+
+`site/evee/` in this repo is the source for **https://evee.zombie.digital/** (the EVEE/ESK8OS landing page + manual). It is static hosting on the zombiebox Pi (`/mnt/data/sites/evee/public`, served by the zombie-sites nginx container, public via Cloudflare tunnel). No build step — files go live on upload.
+
+* **Deploy HTML/CSS/JS:** `python scripts/deploy_site.py`
+* **Deploy images too:** `python scripts/deploy_site.py --img` (only when screenshots/art actually changed — `img/` files are large and Cloudflare-cached)
+* Uses the repo's `.env.raspi` credentials over SFTP (paramiko — `pip install paramiko` if missing).
+* **Cache rule:** Cloudflare caches CSS/JS hard — when `evee.css`/`evee.js` (or images) change, bump the `?v=N` query strings in `index.html`/`manual.html` references in the same change, then deploy.
+* **Verify after deploy:** load https://evee.zombie.digital/ (and /manual.html if touched). OG images are `?v=` versioned too.
+* Deploy whenever user-facing site content changes (new HUD previews, manual sections, battery-math claims). Preview PNGs come from the repo's preview-generation scripts — regenerate, then deploy with `--img`.

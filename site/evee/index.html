@@ -10,13 +10,13 @@
 <meta property="og:title" content="EVEE — open telemetry for personal electric vehicles">
 <meta property="og:description" content="On-vehicle dashboards, honest battery math, ride logging, and OTA updates. ESK8OS is the electric-skateboard edition.">
 <meta property="og:url" content="https://evee.zombie.digital/">
-<meta property="og:image" content="https://evee.zombie.digital/img/preview_hud_speed.png?v=2">
+<meta property="og:image" content="https://evee.zombie.digital/img/preview_hud_speed.png?v=3">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1216'/%3E%3Cpath d='M10 7h13v4h-8v3h7v4h-7v3h8v4H10z' fill='%23b950d7'/%3E%3Crect x='6' y='7' width='2.5' height='18' rx='1' fill='%234fd8eb'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="preload" as="image" href="img/preview_hud_speed.png?v=2">
+<link rel="preload" as="image" href="img/preview_hud_speed.png?v=3">
 <link rel="stylesheet" href="evee.css?v=7">
 </head>
 <body>
@@ -59,15 +59,15 @@
     <div class="hero-device">
       <div class="device">
         <div class="device-stack" id="hud-stack">
-          <img class="device-screen active" src="img/preview_hud_speed.png?v=2" width="510" height="960"
+          <img class="device-screen active" src="img/preview_hud_speed.png?v=3" width="510" height="960"
                alt="ESK8OS speed HUD: 27 MPH, battery cells at 78%, watts, volts, range and temperature tiles">
-          <img class="device-screen" src="img/preview_hud_battery_pct.png?v=2" width="510" height="960" loading="lazy"
+          <img class="device-screen" src="img/preview_hud_battery_pct.png?v=3" width="510" height="960" loading="lazy"
                alt="Battery HUD: full-screen cell gauge with 78% hero readout">
-          <img class="device-screen" src="img/preview_hud_battery_volts.png?v=2" width="510" height="960" loading="lazy"
+          <img class="device-screen" src="img/preview_hud_battery_volts.png?v=3" width="510" height="960" loading="lazy"
                alt="Voltage HUD: full-screen cell gauge with 39.8 V hero readout">
-          <img class="device-screen" src="img/preview_hud_watts.png?v=2" width="510" height="960" loading="lazy"
+          <img class="device-screen" src="img/preview_hud_watts.png?v=3" width="510" height="960" loading="lazy"
                alt="Power HUD: full-screen watts gauge with 540 W hero readout">
-          <img class="device-screen" src="img/preview_hud_safety.png?v=2" width="510" height="960" loading="lazy"
+          <img class="device-screen" src="img/preview_hud_safety.png?v=3" width="510" height="960" loading="lazy"
                alt="Safety HUD: loaded cell voltage 3.86 V, PACK OK state, min voltage, sag and limp-range tiles">
         </div>
         <button class="device-btn b1" id="hud-btn" type="button"
@@ -90,28 +90,32 @@
   <!-- ── Screens ──────────────────────────────────────────────────────── -->
   <section id="screens" class="wrap section">
     <p class="eyebrow">On-board pages</p>
-    <h2>Eight pages. Two buttons.</h2>
+    <h2>Nine pages. Two buttons.</h2>
     <p class="lede narrow">
       Tap left or right to move through the pages — the dots at the bottom
       of the screen are the map. Every screen below is rendered by the
       firmware's own layout engine at the panel's real 170×320 pixels.
+      (Stock builds run eight pages; the ninth is the Daly pack page on
+      BMS builds.)
     </p>
     <div class="screens">
-      <figure><span class="shot"><img src="img/preview_dash.png?v=2" alt="Dash page: hero speed, volts and watts panel, temperatures, range estimate" loading="lazy"></span>
+      <figure><span class="shot"><img src="img/preview_dash.png?v=3" alt="Dash page: hero speed, volts and watts panel, temperatures, range estimate" loading="lazy"></span>
         <figcaption><span class="cap-name">Dash</span><span class="cap-sub">speed · temps · range</span></figcaption></figure>
-      <figure><span class="shot"><img src="img/preview_power.png?v=2" alt="Power page: motor and battery amps, duty cycle, energy used and regenerated" loading="lazy"></span>
-        <figcaption><span class="cap-name">Power</span><span class="cap-sub">amps · duty · regen</span></figcaption></figure>
-      <figure><span class="shot"><img src="img/preview_trip.png?v=2" alt="Trip page: ride time, distance, average and max speed, efficiency, odometer" loading="lazy"></span>
+      <figure><span class="shot"><img src="img/preview_power.png?v=3" alt="Power page: motor and battery amps, per-motor M1/M2 split, duty cycle, energy used and regenerated, session peak watts and amps" loading="lazy"></span>
+        <figcaption><span class="cap-name">Power</span><span class="cap-sub">amps · M1/M2 · regen</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/preview_bms.png?v=3" alt="Daly BMS pack page: pack voltage, current and SOC, per-cell millivolts with the lagging cell in red, imbalance delta, temperatures, remaining amp-hours and the pack's own overcurrent limits" loading="lazy"></span>
+        <figcaption><span class="cap-name">Pack</span><span class="cap-sub">Daly BMS build</span></figcaption></figure>
+      <figure><span class="shot"><img src="img/preview_trip.png?v=3" alt="Trip page: ride time, distance, average and max speed, efficiency, odometer" loading="lazy"></span>
         <figcaption><span class="cap-name">Trip</span><span class="cap-sub">distance · efficiency</span></figcaption></figure>
-      <figure><span class="shot"><img src="img/preview_graphs.png?v=2" alt="Graphs page: three-minute line graphs of speed, watts, volts and motor temperature" loading="lazy"></span>
+      <figure><span class="shot"><img src="img/preview_graphs.png?v=3" alt="Graphs page: three-minute line graphs of speed, watts, volts and motor temperature" loading="lazy"></span>
         <figcaption><span class="cap-name">Graphs</span><span class="cap-sub">3-minute history</span></figcaption></figure>
-      <figure><span class="shot"><img src="img/preview_logs.png?v=2" alt="Logs page: saved ride summaries with distance, max speed and energy per ride" loading="lazy"></span>
+      <figure><span class="shot"><img src="img/preview_logs.png?v=3" alt="Logs page: saved ride summaries with distance, max speed and energy per ride" loading="lazy"></span>
         <figcaption><span class="cap-name">Logs</span><span class="cap-sub">saved rides</span></figcaption></figure>
-      <figure><span class="shot"><img src="img/preview_settings.png?v=2" alt="Settings page: wheel profile, display, theme and battery configuration" loading="lazy"></span>
+      <figure><span class="shot"><img src="img/preview_settings.png?v=3" alt="Settings page: wheel profile, display, theme and battery configuration" loading="lazy"></span>
         <figcaption><span class="cap-name">Settings</span><span class="cap-sub">no app required</span></figcaption></figure>
-      <figure><span class="shot"><img src="img/preview_bridge.png?v=2" alt="Bridge mode: VESC Tool passthrough over WiFi TCP and BLE with connection status" loading="lazy"></span>
+      <figure><span class="shot"><img src="img/preview_bridge.png?v=3" alt="Bridge mode: VESC Tool passthrough over WiFi TCP and BLE with connection status" loading="lazy"></span>
         <figcaption><span class="cap-name">Bridge</span><span class="cap-sub">VESC Tool passthrough</span></figcaption></figure>
-      <figure><span class="shot"><img src="img/preview_splash.png?v=2" alt="Boot splash: ESK8OS wordmark, button legend and VESC connection progress" loading="lazy"></span>
+      <figure><span class="shot"><img src="img/preview_splash.png?v=3" alt="Boot splash: ESK8OS wordmark, button legend and VESC connection progress" loading="lazy"></span>
         <figcaption><span class="cap-name">Boot</span><span class="cap-sub">2-second cold start</span></figcaption></figure>
     </div>
   </section>
@@ -119,7 +123,7 @@
   <!-- ── Safety face ──────────────────────────────────────────────────── -->
   <section id="safety" class="wrap section split">
     <div class="split-copy">
-      <p class="eyebrow">New in v0.9.4</p>
+      <p class="eyebrow">Safety face</p>
       <h2>A face that watches the pack.</h2>
       <p class="lede">
         Range meters read the battery at rest. The safety face reads it
@@ -136,7 +140,7 @@
       </ul>
     </div>
     <figure class="split-shot">
-      <span class="shot"><img src="img/preview_hud_safety.png?v=2" width="510" height="960" loading="lazy"
+      <span class="shot"><img src="img/preview_hud_safety.png?v=3" width="510" height="960" loading="lazy"
            alt="Safety HUD face: 3.86 volts per cell in green, PACK OK, battery cells, MIN V, SAG, LIMP and LOW tiles"></span>
       <figcaption>Safety face — cell voltage under load</figcaption>
     </figure>
@@ -156,7 +160,7 @@
       <p class="fine">Stored on-device in flash — your theme survives updates.</p>
     </div>
     <figure class="split-shot">
-      <span class="shot"><img id="theme-shot" src="img/theme_cam.png?v=2" width="510" height="960" loading="lazy"
+      <span class="shot"><img id="theme-shot" src="img/theme_cam.png?v=3" width="510" height="960" loading="lazy"
            alt="Speed HUD rendered in the selected firmware theme"></span>
       <figcaption id="theme-shot-cap">cam — shipping default</figcaption>
     </figure>
@@ -173,11 +177,13 @@
           <span class="pill ok">Available</span>
         </header>
         <p>The electric-skateboard edition. Reads dual VESCs over UART and
-        CAN, drives four HUD faces and eight telemetry pages, learns your
+        CAN, watches every cell of a Daly smart BMS over Bluetooth, drives
+        four HUD faces and up to nine telemetry pages, learns your
         real Wh/mi, and warns you before the battery lies to you.</p>
         <ul class="spec mono">
           <li>LilyGo T-Display-S3 · ESP32-S3 OLED · headless</li>
           <li>Li-ion SoC curve + sag compensation</li>
+          <li>Daly BMS per-cell telemetry (BMS builds)</li>
           <li>Session CSV logs · WiFi export · OTA</li>
         </ul>
       </article>
@@ -305,6 +311,6 @@
   </div>
 </footer>
 
-<script src="evee.js?v=7" defer></script>
+<script src="evee.js?v=8" defer></script>
 </body>
 </html>

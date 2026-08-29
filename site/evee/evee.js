@@ -31,7 +31,7 @@ function applyTheme(name) {
   for (const [k, v] of Object.entries(map)) root.style.setProperty(k, v);
   root.classList.toggle("light", t.light);
   document.querySelector('meta[name="theme-color"]').content = t.page;
-  if (themeShot) themeShot.src = `img/theme_${name}.png?v=2`;
+  if (themeShot) themeShot.src = `img/theme_${name}.png?v=3`;
   if (themeShotCap) themeShotCap.textContent = `${name} — ${t.cap}`;
   if (chipsBox)
     for (const b of chipsBox.querySelectorAll("button"))

@@ -65,8 +65,9 @@
     <div class="cards">
       <div class="card">
         <div class="card-head"><h3>Full display</h3><span class="pill">LilyGo T-Display-S3</span></div>
-        <p>1.9" color dashboard with two buttons: eight pages, four HUD faces,
-        eight themes, on-board settings. The flagship build.</p>
+        <p>1.9" color dashboard with two buttons: eight pages (nine on BMS
+        builds — a live Daly pack view), four HUD faces, eight themes,
+        on-board settings. The flagship build.</p>
       </div>
       <div class="card">
         <div class="card-head"><h3>Mini display</h3><span class="pill">ESP32-S3 + 0.91" OLED</span></div>
@@ -198,10 +199,18 @@
     <div class="feature-list">
       <div><h3>Honest battery math</h3><p>Sag-compensated charge, learned pack
         resistance and real deliverable energy — range that predicts the
-        loaded cutoff, not the resting one.</p></div>
+        loaded cutoff, not the resting one. With the optional Daly BMS
+        build, the board also watches every cell over Bluetooth: per-cell
+        millivolts, imbalance delta, pack temps, MOS state, and the pack's
+        own overcurrent limits — the lagging cell that strands you lights
+        up red before the pack terminals ever show a problem.</p></div>
       <div><h3>Black-box logging</h3><p>One CSV per session on the board:
-        volts, amps, temps, faults, per-motor split — with link-loss and
-        voltage-collapse events flushed the moment they happen.</p></div>
+        volts, amps, temps, faults, per-motor split, and BMS pack +
+        per-cell detail — with link-loss, voltage-collapse and pack-cut
+        events flushed the moment they happen (a parked power-down is
+        logged as its own event, distinct from a riding disconnect).
+        Retention is byte-budgeted: the newest rides are always kept and
+        bench boots can never rotate real ride data away.</p></div>
       <div><h3>Ride recording</h3><p>The app maps every ride with the board as
         the source of truth for speed and distance, GPS as the fallback, and
         full playback with per-second telemetry.</p></div>
@@ -242,6 +251,7 @@
     </p>
     <div class="spec-rows">
       <div class="spec"><span class="mono">stat · diag</span><span>live telemetry · VESC link diagnostics down to the wire counters</span></div>
+      <div class="spec"><span class="mono">bms</span><span>Daly pack: per-cell mV, temps, MOS state, faults, O/C limits (BMS builds)</span></div>
       <div class="spec"><span class="mono">cfg</span><span>every setting with its source — your override, VESC-read, or default</span></div>
       <div class="spec"><span class="mono">vstat</span><span>the ESC's own accumulated ride stats (FW6+)</span></div>
       <div class="spec"><span class="mono">trip · odo · cal</span><span>trip, lifetime odometer, learned battery calibration</span></div>
@@ -269,6 +279,6 @@
   </div>
 </footer>
 
-<script src="evee.js?v=7" defer></script>
+<script src="evee.js?v=8" defer></script>
 </body>
 </html>

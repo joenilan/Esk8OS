@@ -31,12 +31,15 @@ fault can never become a ride fault.
   `cfg` console command and the app show the provenance of every value.
 - **Dual VESC over CAN** — the second ESC is auto-detected; per-motor currents
   and temps, aggregated power and energy.
-- **Honest battery math** — sag-compensated charge, learned pack resistance,
-  learned deliverable energy and consumption; range that predicts the *loaded*
-  cutoff, not the resting one.
+- **Honest battery math** — sag-compensated charge, learned pack resistance and
+  consumption, qualified pack-energy modeling, and range that predicts the
+  *loaded* cutoff rather than presenting a voltage guess as battery health.
 - **Black-box ride logs** — 1 Hz CSV per session on flash (volts, amps, temps,
-  faults, per-motor split) with link-loss and voltage-collapse events flushed
-  the instant they happen. Bench boots can never rotate real ride data away.
+  faults, per-motor split, BMS pack + per-cell detail) with link-loss and
+  voltage-collapse events flushed the instant they happen. Retention is
+  byte-budgeted: the newest rides are kept while ~700 KB stays free, and bench
+  boots can never rotate real ride data away. Parked power-downs are logged as
+  `powerdown`, distinct from a riding pack disconnect (`vcollapse`).
 - **Companion app** — BLE telemetry at 5 Hz, GPS ride recording with the board
   as the source of truth, settings with base-vs-override visibility, remote
   face/page control for buttonless boards.
@@ -86,8 +89,9 @@ pio run -e esp32s3_headless_usb -t upload      # generic S3, headless
 The OLED env defaults to SSD1306 I²C at `0x3C`, SDA `GPIO8`, SCL `GPIO9`
 (override with `-DOLED_SDA=…`, `-DOLED_SCL=…`, `-DOLED_ADDR=…`). Generic S3
 builds drive an RGB status LED on `GPIO48` (`-DESK8OS_STATUS_RGB_PIN` to move
-it): green = live telemetry, purple = demo, orange = no VESC, yellow/red =
-warnings, cyan = WiFi/bridge.
+it): green = live VESC telemetry, purple = demo, orange = neither VESC nor BMS,
+cyan = healthy BMS-only monitoring (or WiFi/bridge), yellow = a verified Daly
+Level-1 warning, and red = a critical/unknown alert.
 
 Wokwi note: the simulator substitutes an SPI ILI9341; rebuild
 `wokwi-simulator` and restart the sim to see changes — it loads the binary.

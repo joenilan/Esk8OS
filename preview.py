@@ -38,9 +38,9 @@ SCALE = 3  # upscale factor for the saved PNG (nearest-neighbour, crisp pixels)
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # --- pages (mirror the firmware PageId enum) --------------------------------
-HUD, DASH, POWER, TRIP, SETTINGS, SYSTEM, GRAPHS, LOGS = range(8)
-PAGE_COUNT = 8
-PAGE_NAMES = ["hud", "dash", "power", "trip", "settings", "system", "graphs", "logs"]
+HUD, DASH, POWER, TRIP, SETTINGS, SYSTEM, GRAPHS, LOGS, BMS = range(9)
+PAGE_COUNT = 9
+PAGE_NAMES = ["hud", "dash", "power", "trip", "settings", "system", "graphs", "logs", "bms"]
 
 # ---------------------------------------------------------------------------
 # THEMES — mirrors src/ui/Theme.cpp exactly (same order, same RGB values).
@@ -334,7 +334,7 @@ class State:
     product = "ESK8OS"
     version = "v0.9.4"
     version_full = "v0.9.4 dfcfd2d"
-    rider = "JOE"
+    rider = "ZOMBIE"
     pair_code = "0AE1"
     clock = "16:34"
     motor_t, motor_p = 38, 90
@@ -351,6 +351,22 @@ class State:
     peak_watts = 540         # peakWatts (peak-hold "now")
     page = HUD
     demo = True              # firmware default: demo until a VESC is configured
+    # dual-motor + BMS (POWER / BMS pages)
+    m1_amps = 24.1
+    m2_amps = 24.3
+    slave_online = True
+    max_batt_amps = 31.8
+    bms_pack_v = 41.92
+    bms_current = -12.4      # Daly wire sign: + charge, - discharge
+    bms_soc = 79
+    bms_ah = 25.31
+    bms_pack_ah = 32.0
+    bms_cycles = 7
+    bms_oc = "OC36/45/60"
+    bms_cells = [3962, 3968, 3961, 3970, 3966, 3959, 3892, 3964, 3967, 3960]
+    bms_min_cell = 7
+    bms_max_cell = 4
+    bms_temps = (19, 20)
     # power / trip stats
     motor_amps = 28.4
     batt_amps = 14.2
@@ -511,10 +527,13 @@ def draw_top_bar(p, s):
         p.set_color(YELLOW)
         p.draw_string("DEMO MODE", X0 + 85, 4)
     elif s.rider:
+        # firmware: name alone, clipped to 14 chars so it can never reach the
+        # clock's clear rect (updateClock erases 132..166 every second).
+        rider = s.rider[:14]
         p.set_color(DIM)
-        p.draw_string("RIDER: " + s.rider, X0 + 85, 4)
+        p.draw_string(rider, X0 + 85, 4)
     p.hline(X0, 16, W, BORDER)
-    # updateClock: TR at 166,4 in white
+    # updateClock: TR at 166,4 in white; erase rect 132..166
     p.set_datum(TR); p.set_color(WHITE)
     p.draw_string(s.clock, X0 + 166, 4)
 
@@ -630,31 +649,37 @@ def draw_page_dash(p, s):
 # PAGE 2: POWER  (drawStaticPower + updatePower)
 # ---------------------------------------------------------------------------
 def draw_page_power(p, s):
-    draw_card(p, 4, 22, 162, 82, "POWER")
+    draw_card(p, 4, 22, 162, 98, "POWER")
     draw_row_label(p, "MOTOR", 40)
-    draw_row_label(p, "BATTERY", 56)
-    draw_row_label(p, "DUTY", 72)
-    draw_row_label(p, "PEAK NOW", 88)
+    draw_row_label(p, "M1 / M2", 56)
+    draw_row_label(p, "BATTERY", 72)
+    draw_row_label(p, "DUTY", 88)
+    draw_row_label(p, "PEAK NOW", 104)
 
-    draw_card(p, 4, 108, 162, 48, "ENERGY")
-    draw_row_label(p, "USED", 126)
-    draw_row_label(p, "REGEN", 142)
+    draw_card(p, 4, 124, 162, 48, "ENERGY")
+    draw_row_label(p, "USED", 142)
+    draw_row_label(p, "REGEN", 158)
 
-    draw_card(p, 4, 160, 162, 48, "SESSION")
-    draw_row_label(p, "MAX RIDE", 178)
-    draw_row_label(p, "MIN VOLT", 194)
+    draw_card(p, 4, 176, 162, 62, "SESSION")
+    draw_row_label(p, "MAX RIDE", 194)
+    draw_row_label(p, "MAX BATT", 210)
+    draw_row_label(p, "MIN VOLT", 226)
 
     duty = int(s.duty)
     peak_w = int(s.peak_watts)
     draw_val(p, 40, "%.1f A" % s.motor_amps, WHITE)
-    draw_val(p, 56, "%.1f A" % s.batt_amps, WHITE)
-    draw_val(p, 72, "%d %%" % duty, duty_color(duty))
-    draw_val(p, 88, "%d W" % peak_w, watt_color(peak_w))
-    draw_val(p, 126, "%d Wh" % int(s.wh_used), WHITE)
-    draw_val(p, 142, "+%d Wh" % int(s.wh_regen), GREEN)
+    m12 = ("%s/%s A" % (s.m1_amps, s.m2_amps)) if s.slave_online \
+        else "%s A" % s.m1_amps
+    draw_val(p, 56, m12, WHITE)
+    draw_val(p, 72, "%.1f A" % s.batt_amps, WHITE)
+    draw_val(p, 88, "%d %%" % duty, duty_color(duty))
+    draw_val(p, 104, "%d W" % peak_w, watt_color(peak_w))
+    draw_val(p, 142, "%d Wh" % int(s.wh_used), WHITE)
+    draw_val(p, 158, "+%d Wh" % int(s.wh_regen), GREEN)
     max_w = int(s.max_watts)
-    draw_val(p, 178, "%d W" % max_w, watt_color(max_w))
-    draw_val(p, 194, "%.1f V" % s.min_voltage, WHITE)
+    draw_val(p, 194, "%d W" % max_w, watt_color(max_w))
+    draw_val(p, 210, "%.1f A" % s.max_batt_amps, WHITE)
+    draw_val(p, 226, "%.1f V" % s.min_voltage, WHITE)
 
 
 # ---------------------------------------------------------------------------
@@ -673,8 +698,7 @@ def draw_page_trip(p, s):
 
     p.set_font(FONT0)
     p.set_datum(MC); p.set_color(DIM)
-    p.draw_string("hold L: reset + recharge" if s.demo else "hold L to reset trip",
-                  X0 + W // 2, 190)
+    p.draw_string("hold R to reset trip", X0 + W // 2, 190)
 
     du = dist_unit(s)
     su = "mph" if s.use_mph else "kmh"
@@ -686,6 +710,57 @@ def draw_page_trip(p, s):
     draw_val(p, 88, "%d %s" % (int(s.max_kmh * cv), su), WHITE)
     draw_val(p, 104, "%.1f wh/%s" % (avg_wh, du), WHITE)
     draw_val(p, 150, "%.1f %s" % (s.odo_km * cv, du), WHITE)
+
+
+# ---------------------------------------------------------------------------
+# PAGE 8: BMS  (drawStaticBms + updateBms — BMS builds)
+# ---------------------------------------------------------------------------
+def draw_page_bms(p, s):
+    # Pack rollup card.
+    draw_card(p, 4, 22, 162, 58, "PACK")
+    draw_row_label(p, "VOLTAGE", 40)
+    draw_row_label(p, "CURRENT", 56)
+    draw_row_label(p, "DALY SOC", 72)
+
+    draw_card(p, 4, 84, 162, 156, "CELLS")
+
+    ride_a = -s.bms_current    # ride convention: + discharge, - charge
+    draw_val(p, 40, "%.1f V" % s.bms_pack_v, WHITE)
+    draw_val(p, 56, "%.1f A" % ride_a, GREEN if ride_a < -0.5 else WHITE)
+    draw_val(p, 72, "%d%% MOS+" % s.bms_soc, WHITE)
+
+    # Per-cell grid: min cell red, top cell accent, rest green (firmware rule).
+    cells = s.bms_cells
+    cols, grid_y0, row_h = 2, 102, 18
+    col_x = (X0 + 12, X0 + 90)
+    min_mv = min(cells)
+    max_mv = max(cells)
+    for c, mv in enumerate(cells):
+        y = grid_y0 + (c // cols) * row_h
+        color = DIM
+        if mv == min_mv and (max_mv - min_mv) >= 50:
+            color = RED
+        elif mv == max_mv:
+            color = ACCENT
+        else:
+            color = GREEN
+        p.set_font(FONT0)
+        p.set_datum(TL)
+        p.set_color(color)
+        p.draw_string("%2d %4d" % (c + 1, mv), col_x[c % cols], y)
+
+    # Imbalance + temps (delta / temps rollup, red past 100 mV).
+    delta = max_mv - min_mv
+    p.set_font(FONT0)
+    p.set_datum(TL)
+    p.set_color(RED if delta > 100 else DIM)
+    p.draw_string("delta %d mV   %d-%dC" % (delta, s.bms_temps[0], s.bms_temps[1]),
+                  X0 + 12, 216)
+    # Coulomb counter + cycles + the pack's own O/C limits.
+    p.set_color(DIM)
+    p.draw_string("%.1f/%.0fAh %dcy %s" % (s.bms_ah, s.bms_pack_ah, s.bms_cycles,
+                                           s.bms_oc),
+                  X0 + 12, 228)
 
 
 # ---------------------------------------------------------------------------
@@ -1051,7 +1126,7 @@ def draw(p, s):
 
     {HUD: draw_page_hud, DASH: draw_page_dash, POWER: draw_page_power,
      TRIP: draw_page_trip, SETTINGS: draw_page_settings, SYSTEM: draw_page_system,
-     GRAPHS: draw_page_graphs, LOGS: draw_page_logs}.get(s.page, draw_page_dash)(p, s)
+     GRAPHS: draw_page_graphs, LOGS: draw_page_logs, BMS: draw_page_bms}.get(s.page, draw_page_dash)(p, s)
 
     owns_full_height = s.page in (HUD, SETTINGS, SYSTEM)
     if not owns_full_height:
@@ -1193,7 +1268,7 @@ def main():
     ap.add_argument("--battery-focus", default=State.battery_focus,
                     choices=["pct", "volts"], help="battery HUD hero value")
     ap.add_argument("--page", type=int, default=0,
-                    help="0 hud 1 dash 2 power 3 trip 4 settings 5 system 6 graphs 7 logs")
+                    help="0 hud 1 dash 2 power 3 trip 4 settings 5 system 6 graphs 7 logs 8 bms")
     ap.add_argument("--theme", default="cam", choices=list(THEMES), help="color theme")
     ap.add_argument("--logstate", default=State.log_state, choices=["on", "off", "full"],
                     help="LOGS-page session-logging status")
