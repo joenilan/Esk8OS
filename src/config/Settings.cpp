@@ -24,7 +24,7 @@ const char* vehicleTypeName(int t) {
     }
 }
 const bool  USE_MPH_DEFAULT = true;
-const int   STORAGE_SCHEMA_VERSION = 2;
+const int   STORAGE_SCHEMA_VERSION = 3;
 const bool  DEMO_MODE_DEFAULT = true;
 
 bool gDemoMode = DEMO_MODE_DEFAULT;
@@ -121,7 +121,11 @@ void begin() {
 
     int storedSchema = prefs.getInt("schema", 0);
     if (storedSchema != STORAGE_SCHEMA_VERSION) {
-        // Future format-versioned keys migrate here; odo/trip are kept as-is.
+        // v3 invalidates only the old pack-energy estimate. Pre-v3 firmware
+        // inferred capacity from voltage-derived SOC under load, so that value
+        // was not a defensible battery-health or range input. Keep resistance,
+        // consumption, odometer, trip, and every rider setting intact.
+        if (storedSchema < 3) prefs.remove("packWhL");
         prefs.putInt("schema", STORAGE_SCHEMA_VERSION);
     }
 

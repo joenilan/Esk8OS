@@ -56,7 +56,7 @@ float gPackROhm = 0.045f;       // seed = a healthy 10s6p (cells ~0.037 + wiring
                                 // from real current steps, so a specific pack's R is learned,
                                 // never baked in. (Was 0.11 = an old pre-rewire 18650 pack.)
 float gTypicalRideAmps = 15.0f; // typical battery draw while rolling
-float gLearnedPackWh = 0;       // measured deliverable pack Wh (0 = not learned yet)
+float gLearnedPackWh = 0;       // qualified range-model pack Wh (0 = not learned yet)
 float gLearnedWhPerKm = 0;      // cross-ride Wh/km EMA (0 = not learned yet)
 
 unsigned long rideStartMs = 0;

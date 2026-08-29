@@ -41,12 +41,13 @@ void setup() {
     Esk8OS::Board::begin();
     Esk8OS::UiRenderer::showBootSplash(44, "BOARD");
     Esk8OS::Transports::beginVescUart(prefs.getUChar("slaveId", 0));
-    Esk8OS::Transports::beginDalyBms();   // no-op unless -DESK8OS_BMS_DALY
     Esk8OS::UiRenderer::showBootSplash(60, "UART");
 
     // Bring up the companion BLE service now so it advertises 100% of the time.
-    // It owns the NimBLE stack; the VESC-Tool bridge co-hosts on the same server.
+    // It owns the one NimBLE stack; the VESC-Tool bridge co-hosts on the same
+    // server and the optional Daly transport adds a central/client afterward.
     companionBleBegin();
+    Esk8OS::Transports::beginDalyBms();   // no-op unless -DESK8OS_BMS_DALY
     Esk8OS::UiRenderer::showBootSplash(78, "PHONE");
 
     #if ESK8OS_DISPLAY_TFT && !defined(WOKWI_SIMULATION)

@@ -15,6 +15,7 @@
 #include "ui/UiRenderer.h"
 #include "app/App.h"
 #include "telemetry/telemetry.h"
+#include "telemetry/BatteryView.h"
 #include "transports/DalyBms.h"
 #include "logging/sessionlog.h"
 #include "config/Settings.h"
@@ -115,7 +116,7 @@ static const char* uiKindName() {
 
 // ---- Settings characteristic (0002) ---------------------------------------
 
-static void buildSettingsJson(char* out, size_t cap) {
+static size_t buildSettingsJson(char* out, size_t cap) {
     JsonDocument doc;
     doc["fwv"]     = FW_VERSION_FULL;   // ESK8OS firmware version (About page)
     doc["hw"]      = hardwareModelName();
@@ -191,8 +192,9 @@ static void buildSettingsJson(char* out, size_t cap) {
     doc["calR"]    = (int)lroundf(gPackROhm * 1000.0f);   // pack IR, mohm
     doc["calA"]    = r1(gTypicalRideAmps);                // typical riding draw, A
     doc["calWhmi"] = gLearnedWhPerKm > 0.5f ? r1(gLearnedWhPerKm * 1.609344f) : 0.0f;
-    doc["calWh"]   = (int)lroundf(gLearnedPackWh);        // deliverable pack Wh, 0 = unlearned
-    serializeJson(doc, out, cap);
+    doc["calWh"]   = (int)lroundf(gLearnedPackWh);        // qualified range-model Wh, 0 = unlearned
+    const size_t n = serializeJson(doc, out, cap);
+    return n < cap ? n : cap - 1;   // no room for the NUL on overflow -> cap it
 }
 
 // ---- Base-config characteristic (0005, read-only) ---------------------------
@@ -201,7 +203,7 @@ static void buildSettingsJson(char* out, size_t cap) {
 // characteristic because the settings JSON is near the 512 B attribute cap.
 // {"valid":true,"cells":10,...,"src":{"cells":"r",...}}  src: r=rider override,
 // v=vesc base, d=generic default. valid:false = no FW-matched mcconf ever parsed.
-static void buildBaseConfJson(char* out, size_t cap) {
+static size_t buildBaseConfJson(char* out, size_t cap) {
     JsonDocument doc;
     Esk8OS::Transports::VescBaseConfig b;
     bool have = Esk8OS::Settings::vescBase(&b);
@@ -230,14 +232,15 @@ static void buildBaseConfJson(char* out, size_t cap) {
     src["stop"]  = String(sourceTag("stopCell")[0]);
     src["whmi"]  = String(sourceTag("whmi", false)[0]);
     src["wheel"] = gWheelDiameterMm > 0 ? "r" : (have ? "v" : "d");
-    serializeJson(doc, out, cap);
+    const size_t n = serializeJson(doc, out, cap);
+    return n < cap ? n : cap - 1;
 }
 
 class BaseConfCallbacks : public NimBLECharacteristicCallbacks {
     void onRead(NimBLECharacteristic* c) override {
         char buf[320];
-        buildBaseConfJson(buf, sizeof(buf));
-        c->setValue((uint8_t*)buf, strlen(buf));
+        const size_t n = buildBaseConfJson(buf, sizeof(buf));
+        c->setValue((uint8_t*)buf, n);
     }
 };
 
@@ -248,7 +251,7 @@ class BaseConfCallbacks : public NimBLECharacteristicCallbacks {
 // so the app can grey a cell that stopped reporting instead of trusting an old
 // mV; balancing is a bitmask too. Compact keys — a 16S pack must clear the
 // 509-byte notify ceiling (10S measures ~300 B). Cell mV are millivolts (ints).
-static void buildBmsJson(char* out, size_t cap) {
+static size_t buildBmsJson(char* out, size_t cap) {
     using namespace Esk8OS::Transports;
     BmsData b;
     getBmsData(&b);                       // atomic snapshot (F-2)
@@ -256,6 +259,8 @@ static void buildBmsJson(char* out, size_t cap) {
     JsonDocument doc;
     doc["link"] = b.linkOk;
     if (b.linkOk) {
+        doc["fv"]  = bmsFreshMask(b);      // response-group freshness bitmask
+        doc["al"]  = (int)bmsAlarmLevel(b);// 0 none, 1 verified warning, 2 alert, 3 stale
         doc["pv"]  = r2(b.packVoltage);
         doc["cur"] = r1(b.current);       // + charge, - discharge
         doc["soc"] = (int)lroundf(b.soc);
@@ -280,8 +285,35 @@ static void buildBmsJson(char* out, size_t cap) {
         doc["cmos"] = b.chargeMos;
         doc["dmos"] = b.dischargeMos;
         doc["flt"]  = b.hasFault;
+        char faultHex[15];
+        for (int i = 0; i < 7; i++) {
+            snprintf(&faultHex[i * 2], 3, "%02x", b.faultBytes[i]);
+        }
+        doc["fb"] = faultHex;              // raw 0x98 bytes; never lose evidence
+        if (b.lastFaultMs != 0) {
+            char lastFaultHex[15];
+            for (int i = 0; i < 7; i++) {
+                snprintf(&lastFaultHex[i * 2], 3, "%02x", b.lastFaultBytes[i]);
+            }
+            doc["lfb"] = lastFaultHex;      // most recent non-zero 0x98 this boot
+            doc["lfa"] = (uint32_t)((millis() - b.lastFaultMs) / 1000UL);
+        }
+        if (b.dischargeOcSettingsValid) {
+            // [warning A, protection-1 A, protection-1 delay ms,
+            //  protection-2 A, protection-2 delay ms]. Compact because a 16S
+            // cell array still has to fit one ATT notification.
+            JsonArray oc = doc["oc"].to<JsonArray>();
+            oc.add(r1(b.dischargeOcWarningA));
+            oc.add(r1(b.dischargeOcProtection1A));
+            oc.add(b.dischargeOcProtection1DelayMs);
+            oc.add(r1(b.dischargeOcProtection2A));
+            oc.add(b.dischargeOcProtection2DelayMs);
+            doc["oca"] =
+                (uint32_t)((millis() - b.dischargeOcSettingsSeenMs) / 1000UL);
+        }
     }
-    serializeJson(doc, out, cap);
+    const size_t n = serializeJson(doc, out, cap);
+    return n < cap ? n : cap - 1;
 }
 #endif
 
@@ -468,8 +500,7 @@ class SettingsCallbacks : public NimBLECharacteristicCallbacks {
     void onRead(NimBLECharacteristic* c) override {
         char buf[640];   // was 512 — the JSON hit 521 B and truncated into
                          // invalid JSON, breaking the app's settings read.
-        buildSettingsJson(buf, sizeof(buf));
-        size_t n = strlen(buf);
+        const size_t n = buildSettingsJson(buf, sizeof(buf));
         // Serialized cleanly and fits the ATT MTU (512 → 511-byte single read;
         // the app negotiates 512). If it ever exceeds this, warn on serial so
         // the next field addition doesn't silently break the settings page.
@@ -516,7 +547,18 @@ static void dispatchCommand(const char* cmd) {
     // Any app command is rider interaction — wakes the screensaver exactly like
     // a physical button press (on buttonless glass the phone IS the buttons).
     gLastInteractionMs = millis();
-    if      (!strcmp(cmd, "TRIP_RESET"))        Esk8OS::App::resetTrip();
+
+    // Bridge mode owns the screen and the VESC UART: only its own entry/exit
+    // commands act there. A queued TRIP_RESET/PAGE_SET/CAL_RESET/REBOOT from
+    // the (unauthenticated) radio would repaint the bridge UI or kill the
+    // session mid-VESC-Tool-write.
+    if (systemMode != MODE_DASHBOARD) {
+        if      (!strcmp(cmd, "BRIDGE_EXIT"))   { if (systemMode == MODE_VESC_BRIDGE) exitBridgeMode(); }
+        else if (!strcmp(cmd, "BRIDGE_TOGGLE")) { if (systemMode == MODE_VESC_BRIDGE) exitBridgeMode(); }
+        return;
+    }
+
+    if      (!strcmp(cmd, "TRIP_RESET"))        Esk8OS::App::resetTrip(Esk8OS::App::TripResetReason::CompanionBle);
     else if (!strcmp(cmd, "PAGE_NEXT"))         Esk8OS::App::pageRel(+1);   // same order as the buttons
     else if (!strcmp(cmd, "PAGE_PREV"))         Esk8OS::App::pageRel(-1);
     else if (!strncmp(cmd, "PAGE_SET:", 9))   { int p = atoi(cmd + 9); if (p >= 0 && p < PAGE_COUNT) { settingsCursor = 0; currentPage = p; drawStaticFrame(); gRedrawAll = true; } }  // absolute page (app pages don't 1:1 the board's count)
@@ -526,6 +568,13 @@ static void dispatchCommand(const char* cmd) {
     else if (!strcmp(cmd, "WIFI_EXPORT_START")) requestWifiExport();        // standalone AP + http (logs/OTA); telemetry stays live
     else if (!strcmp(cmd, "WIFI_EXPORT_STOP"))  { if (webServiceActive())  { webServiceStop();  showToast("WIFI OFF"); } }
     else if (!strcmp(cmd, "CAL_RESET"))       { telemetryResetCal(); showToast("CAL RESET"); }   // new battery -> re-learn range from scratch
+    else if (!strncmp(cmd, "UNSET:", 6)) {
+        // Drop an explicit rider tier so the cached/live VESC base becomes
+        // authoritative again. Never implement this by writing the VESC number
+        // as another override: provenance must return to "v".
+        if (Esk8OS::Settings::removeOverride(cmd + 6)) showToast("USING VESC");
+        else showToast("UNKNOWN SETTING");
+    }
     else if (!strcmp(cmd, "REBOOT"))          { saveOdo(); sessionLogEnd(); delay(100); ESP.restart(); }
 }
 
@@ -666,6 +715,8 @@ void companionBleTick() {
     // match the conversions ui.cpp uses on the board's own pages.
     const float dCv = useMph ? KM2MI : 1.0f;     // km -> display distance
     const bool live = telemetryLive && (gDemoMode || vescLinkOk);
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
 
     // Warn (once per characteristic) while there's still headroom to trim.
     static bool coreWarned = false, sesWarned = false;
@@ -675,20 +726,24 @@ void companionBleTick() {
     JsonDocument doc;
     doc["live"]  = live;
     doc["vesc"]  = vescLinkOk;
+    doc["blive"] = battery.live;
+    doc["bsrc"]  = Esk8OS::Telemetry::batterySourceName(battery.source);
     doc["mph"]   = useMph;
     doc["spd"]   = live ? r1(useMph ? currentSpeedMph : currentSpeedKmh) : 0.0f;
-    doc["bat"]   = live ? currentBatteryPercent : 0;
-    doc["v"]     = live ? r1(currentVoltage) : 0.0f;
+    doc["bat"]   = battery.socValid ? battery.socPct : 0;
+    doc["v"]     = battery.voltageValid ? r1(battery.packVoltage) : 0.0f;
     doc["w"]     = live ? (int)currentWatts : 0;            // truncate (drop decimal), never round
     doc["mtr_t"] = live ? (int)currentMotorTemp : 0;        // truncate (hide decimal)
     doc["esc_t"] = live ? (int)currentEscTemp : 0;
-    doc["btemp"] = live ? (int)currentBatteryTemp : 0;
-    doc["rng"]   = live ? r1(useMph ? remainingRangeKm * KM2MI : remainingRangeKm) : 0.0f;
+    doc["btemp"] = battery.temperatureValid ? (int)battery.batteryTempC : 0;
+    doc["rng"]   = battery.rangeValid
+        ? r1(useMph ? battery.homeRangeKm * KM2MI : battery.homeRangeKm) : 0.0f;
     doc["bata"]  = live ? r1(currentAmps) : 0.0f;              // battery A
     doc["mota"]  = live ? r1(currentMotorAmps) : 0.0f;         // motor A
     doc["duty"]  = live ? (int)currentDuty : 0;                // already %
     doc["pkw"]   = live ? (int)peakWatts : 0;                  // live peak-hold W ("peak now")
-    doc["cellv"] = live ? roundf(loadedCellVoltage * 100.0f) / 100.0f : 0.0f;
+    doc["cellv"] = battery.cellVoltageValid
+        ? roundf(battery.cellVoltage * 100.0f) / 100.0f : 0.0f;
     doc["rwarn"] = live ? rangeAlertState : 0;   // 0 ok, 1 turn-home, 2 sag, 3 limp
     doc["fault"] = live ? vescFault : 0;
     // Remote input + diagnostics
@@ -729,7 +784,7 @@ void companionBleTick() {
     ses["trip"]  = r1(tripDistanceKm * dCv);
     ses["odo"]   = r1(totalDistanceKm * dCv);
     ses["est"]   = r1(estimatedRangeKm * dCv);
-    ses["lrng"]  = live ? r1(remainingLimpRangeKm * dCv) : 0.0f;
+    ses["lrng"]  = battery.rangeValid ? r1(battery.limpRangeKm * dCv) : 0.0f;
     ses["lest"]  = r1(estimatedLimpRangeKm * dCv);
     ses["eff"]   = r1(useMph ? avgWhPerKm / KM2MI : avgWhPerKm);      // Wh/mi (mph) or Wh/km
     ses["rtime"] = (uint32_t)(millis() / 1000UL);                     // board uptime this boot (seconds)
@@ -750,8 +805,7 @@ void companionBleTick() {
     // above, which already fires at 1 Hz). Its own characteristic so the big
     // per-cell array never crowds the core/session notifies. ----
     if (g_bms && g_server->getConnectedCount() > 0) {
-        buildBmsJson(buf, sizeof(buf));
-        size_t bn = strlen(buf);
+        const size_t bn = buildBmsJson(buf, sizeof(buf));
         if (bn > 400 && !sesWarned) {   // reuse the session warn latch — same 509 ceiling
             sesWarned = true;
             Serial.printf("[ble] BMS telemetry JSON %u bytes — nearing the notify limit\n", (unsigned)bn);
@@ -764,8 +818,8 @@ void companionBleTick() {
 
 // Serial-console access to the same settings machinery the app uses.
 void companionApplySettingsJson(const char* json) { applySettings(json); }
-void companionSettingsJson(char* out, size_t cap) { buildSettingsJson(out, cap); }
-void companionBaseConfJson(char* out, size_t cap) { buildBaseConfJson(out, cap); }
+size_t companionSettingsJson(char* out, size_t cap) { return buildSettingsJson(out, cap); }
+size_t companionBaseConfJson(char* out, size_t cap) { return buildBaseConfJson(out, cap); }
 
 #else
 // ---------------------------------------------------------------------------
@@ -774,6 +828,6 @@ void companionBaseConfJson(char* out, size_t cap) { buildBaseConfJson(out, cap);
 void companionBleBegin() {}
 void companionBleTick() {}
 void companionApplySettingsJson(const char* json) { (void)json; }
-void companionSettingsJson(char* out, size_t cap) { if (cap) { strlcpy(out, "{}", cap); } }
-void companionBaseConfJson(char* out, size_t cap) { if (cap) { strlcpy(out, "{}", cap); } }
+size_t companionSettingsJson(char* out, size_t cap) { if (cap) { strlcpy(out, "{}", cap); } return 2; }
+size_t companionBaseConfJson(char* out, size_t cap) { if (cap) { strlcpy(out, "{}", cap); } return 2; }
 #endif

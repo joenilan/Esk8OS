@@ -30,5 +30,5 @@ void companionBleTick();    // call from the dashboard loop: 5 Hz telemetry + ap
 // The BLE settings machinery, exposed for the serial console so `set`/`json`
 // share ONE code path with the app (same keys, same validation, spec §4).
 void companionApplySettingsJson(const char* json);       // apply a (partial) settings JSON
-void companionSettingsJson(char* out, size_t cap);       // current settings as JSON
-void companionBaseConfJson(char* out, size_t cap);       // VESC base + provenance as JSON
+size_t companionSettingsJson(char* out, size_t cap);    // current settings as JSON
+size_t companionBaseConfJson(char* out, size_t cap);    // VESC base + provenance as JSON

@@ -2,6 +2,7 @@
 #include "esk8os.h"
 #include "app/App.h"
 #include "telemetry/telemetry.h"
+#include "telemetry/BatteryView.h"
 #include "transports/VescUartTransport.h"
 #include "transports/DalyBms.h"
 #include "config/Settings.h"
@@ -92,6 +93,7 @@ static bool needConfirm(const char* what, const char* fullLine) {
 // Resolve a user-typed name to a full path: bare names go under /sessions.
 static String resolvePath(const char* arg) {
     String a = arg; a.trim();
+    if (a.indexOf("..") >= 0) return "";   // no parent traversal, ever
     if (a.startsWith("/")) return a;
     return String(SESSIONS_DIR) + "/" + a;
 }
@@ -134,6 +136,12 @@ static void cmdRm(const char* arg) {
         return;
     }
     String path = resolvePath(arg);
+    // rm is for ride logs only; anything else on the data partition (the
+    // mcconf capture) is deleted via explicit, confirmed console actions.
+    if (!path.startsWith(String(SESSIONS_DIR) + "/")) {
+        consoleOut().printf("rm: only files under %s can be removed\n", SESSIONS_DIR);
+        return;
+    }
     consoleOut().println(LittleFS.remove(path) ? "removed " + path : "failed: " + path);
 }
 
@@ -169,16 +177,48 @@ static bool liveTelemetryAvailable() {
 }
 
 static void cmdStat() {
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
     if (!liveTelemetryAvailable()) {
-        consoleOut().printf("telemetry unavailable | demo %s | VESC link %s | fault %d\n",
+        consoleOut().printf("drive telemetry unavailable | demo %s | VESC link %s | fault %d\n",
             gDemoMode ? "ON" : "OFF", vescLinkOk ? "OK" : "DOWN", vescFault);
-        consoleOut().println("live fields masked: speed/battery/volts/power/amps/temps/range");
+        if (battery.live) {
+            consoleOut().printf("battery LIVE via %s | %d%%%s | %.1fV",
+                Esk8OS::Telemetry::batterySourceName(battery.source),
+                battery.socPct, battery.socProvisional ? " provisional" : "",
+                battery.packVoltage);
+            if (battery.temperatureValid)
+                consoleOut().printf(" | %.0fC", battery.batteryTempC);
+            consoleOut().println();
+            if (battery.bmsReportedSocValid) {
+                consoleOut().printf("Daly raw counter %.1f%%",
+                    battery.bmsReportedSocPct);
+                if (battery.remainingAhValid)
+                    consoleOut().printf(" / %.3fAh", battery.remainingAh);
+                consoleOut().println(" (not range authority until ride-validated)");
+            }
+            consoleOut().printf("battery range %.1f km home / %.1f km limp | cell %.3fV\n",
+                battery.homeRangeKm, battery.limpRangeKm, battery.cellVoltage);
+        } else {
+            consoleOut().println("battery unavailable (no fresh VESC or Daly data)");
+        }
+        consoleOut().println("masked drive fields: speed/power/motor amps/duty/motor+ESC temps");
         return;
     }
     const char* su = useMph ? "mph" : "kmh";
     float spd = useMph ? currentSpeedMph : currentSpeedKmh;
-    consoleOut().printf("spd %.1f %s | batt %d%% | %.1fV | link %s | fault %d\n",
-        spd, su, currentBatteryPercent, currentVoltage, vescLinkOk ? "OK" : "DOWN", vescFault);
+    consoleOut().printf("spd %.1f %s | battery %d%%%s %.1fV via %s | link %s | fault %d\n",
+        spd, su, battery.socPct, battery.socProvisional ? " provisional" : "",
+        battery.packVoltage, Esk8OS::Telemetry::batterySourceName(battery.source),
+        vescLinkOk ? "OK" : "DOWN", vescFault);
+    if (battery.bmsReportedSocValid) {
+        consoleOut().printf("raw cross-check: VESC %d%% %.1fV | Daly %.1f%% %.1fV",
+            currentBatteryPercent, currentVoltage,
+            battery.bmsReportedSocPct, battery.packVoltage);
+        if (battery.remainingAhValid)
+            consoleOut().printf(" %.3fAh", battery.remainingAh);
+        consoleOut().println();
+    }
     consoleOut().printf("pwr %dW (peak %dW) | batA %.1f | motA %.1f | duty %d%%\n",
         (int)currentWatts, (int)peakWatts, currentAmps, currentMotorAmps, (int)currentDuty);
     consoleOut().printf("safety cell %.2fV | min loaded %.1fV | max batA %.1f | sag %d (%us home, %us limp)\n",
@@ -265,7 +305,7 @@ static void cmdPpmScan() {
 
 static void cmdTrip(const char* arg) {
     if (!strcmp(arg, "reset")) {
-        Esk8OS::App::resetTrip();
+        Esk8OS::App::resetTrip(Esk8OS::App::TripResetReason::Console);
         consoleOut().println("trip reset (distance + moving-time + session metrics)");
         return;
     }
@@ -294,10 +334,21 @@ static void cmdVescTerm(const char* arg) {
     // measure_linkage, foc_encoder_detect) that spin/energize the motor —
     // exposing those here would break the "read-only by design" guarantee.
     // Deny by default; motor detection belongs in VESC Tool via bridge mode.
+    // One command per request, and control characters are rejected outright:
+    // the wireless /cmd console does not filter %0A, so an argument like
+    // "faults\n<line2>" would pass the first-token check while line2 ran on
+    // the ESC unchecked.
     static const char* SAFE[] = {
         "help", "faults", "fault", "mem", "threads", "volt", "kv", "tim",
         "rpm_dep", "last_adc_duration", "uptime", "hw_status", "foc_state",
+        "ping",
     };
+    for (unsigned i = 0; i < a.length(); i++) {
+        if ((unsigned char)a[i] < 0x20) {
+            consoleOut().println("blocked: control characters are not allowed in terminal commands");
+            return;
+        }
+    }
     String tok = a;
     int sp = tok.indexOf(' ');
     if (sp > 0) tok = tok.substring(0, sp);
@@ -308,7 +359,8 @@ static void cmdVescTerm(const char* arg) {
         consoleOut().printf("blocked: '%s' is not a read-only command.\n", tok.c_str());
         consoleOut().println("motor-actuating commands (detect/measure/...) are disabled here by");
         consoleOut().println("design; use VESC Tool via bridge mode for those.");
-        consoleOut().println("allowed: help faults fault mem threads volt kv tim rpm_dep hw_status");
+        consoleOut().println("allowed: help faults fault mem threads volt kv tim rpm_dep");
+        consoleOut().println("         last_adc_duration uptime hw_status foc_state ping");
         return;
     }
 
@@ -339,6 +391,16 @@ static void cmdSet(const char* arg) {
     }
     String key = a.substring(0, sp);
     String val = a.substring(sp + 1); val.trim();
+    // The key goes into a JSON template verbatim; reject anything that is not
+    // a plain identifier so a crafted key cannot smuggle extra JSON pairs.
+    for (unsigned i = 0; i < key.length(); i++) {
+        const char c = key[i];
+        const bool okChar = isalnum((unsigned char)c) || c == '_';
+        if (!okChar) {
+            consoleOut().println("blocked: setting keys are [A-Za-z0-9_] only");
+            return;
+        }
+    }
     bool numeric = val.length() > 0;
     bool dot = false;
     for (unsigned i = 0; i < val.length(); i++) {
@@ -372,6 +434,10 @@ static void cmdUnset(const char* arg) {
 // One-line machine-readable full state: live telemetry + settings + VESC base.
 // For scripts and AI tooling - no printf scraping.
 static void cmdJsonDump() {
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    Esk8OS::Transports::BmsData bms;
+    Esk8OS::Transports::getBmsData(&bms);
     char buf[560];
     consoleOut().printf(
         "{\"live\":{\"link\":%s,\"demo\":%s,\"spd_kmh\":%.1f,\"volts\":%.1f,\"cellv\":%.2f,"
@@ -383,13 +449,50 @@ static void cmdJsonDump() {
         (int)currentDuty, (int)currentMotorTemp, (int)currentEscTemp,
         vescFault, gLastFault, tripDistanceKm, totalDistanceKm,
         remainingRangeKm, remainingLimpRangeKm, millis() / 1000UL);
-    companionSettingsJson(buf, sizeof(buf));
+    consoleOut().printf(
+        "\"battery\":{\"live\":%s,\"source\":\"%s\",\"vesc\":%s,\"bms\":%s,"
+        "\"v_ok\":%s,\"volts\":%.2f,\"soc_ok\":%s,\"soc\":%d,"
+        "\"soc_provisional\":%s,\"daly_soc_ok\":%s,\"daly_soc\":%.1f,"
+        "\"ah_ok\":%s,\"remaining_ah\":%.3f,\"temp_ok\":%s,\"temp_c\":%.1f,"
+        "\"cell_ok\":%s,\"cell_v\":%.3f,\"min_cell\":%u,\"delta_mv\":%u,"
+        "\"range_ok\":%s,\"range_km\":%.2f,\"limp_km\":%.2f,"
+        "\"bms_fresh\":\"0x%03x\",\"bms_alarm\":%u},",
+        battery.live ? "true" : "false",
+        Esk8OS::Telemetry::batterySourceName(battery.source),
+        battery.vescLive ? "true" : "false", battery.bmsLive ? "true" : "false",
+        battery.voltageValid ? "true" : "false", battery.packVoltage,
+        battery.socValid ? "true" : "false", battery.socPct,
+        battery.socProvisional ? "true" : "false",
+        battery.bmsReportedSocValid ? "true" : "false",
+        battery.bmsReportedSocPct,
+        battery.remainingAhValid ? "true" : "false", battery.remainingAh,
+        battery.temperatureValid ? "true" : "false", battery.batteryTempC,
+        battery.cellVoltageValid ? "true" : "false", battery.cellVoltage,
+        (unsigned)battery.minCellNo, (unsigned)battery.deltaMv,
+        battery.rangeValid ? "true" : "false",
+        battery.homeRangeKm, battery.limpRangeKm,
+        (unsigned)battery.bmsFreshMask, (unsigned)battery.alarmLevel);
+    consoleOut().printf(
+        "\"bms_settings\":{\"valid\":%s,\"age_s\":%lu,"
+        "\"discharge_oc_warn_a\":%.1f,\"discharge_oc_protect1_a\":%.1f,"
+        "\"discharge_oc_protect1_delay_ms\":%u,"
+        "\"discharge_oc_protect2_a\":%.1f,"
+        "\"discharge_oc_protect2_delay_ms\":%u},",
+        bms.dischargeOcSettingsValid ? "true" : "false",
+        bms.dischargeOcSettingsValid
+            ? (unsigned long)((millis() - bms.dischargeOcSettingsSeenMs) / 1000UL)
+            : 0UL,
+        bms.dischargeOcWarningA, bms.dischargeOcProtection1A,
+        (unsigned)bms.dischargeOcProtection1DelayMs,
+        bms.dischargeOcProtection2A,
+        (unsigned)bms.dischargeOcProtection2DelayMs);
+    const size_t sn = companionSettingsJson(buf, sizeof(buf));
     consoleOut().print("\"settings\":");
-    consoleOut().print(buf);
+    consoleOut().write((const uint8_t*)buf, sn);
     consoleOut().print(",");
-    companionBaseConfJson(buf, sizeof(buf));
+    const size_t bn = companionBaseConfJson(buf, sizeof(buf));
     consoleOut().print("\"base\":");
-    consoleOut().print(buf);
+    consoleOut().write((const uint8_t*)buf, bn);
     consoleOut().println("}");
 }
 
@@ -696,18 +799,48 @@ static void cmdBms() {
     getBmsData(&b);   // atomic snapshot (F-2)
 
     if (!b.linkOk) {
-        consoleOut().println(F("BMS link down (no Daly frame yet - check UART wiring 43/44, dongle removed)"));
+        consoleOut().println(F("BMS link down (disconnect Daly app; check UART K module power/range)"));
         return;
     }
 
     consoleOut().printf("pack %.1f V  %.1f A  SOC %.0f%%  %.2f Ah  %u cycles\n",
                         b.packVoltage, b.current, b.soc, b.remainingAh, (unsigned)b.cycles);
-    consoleOut().printf("MOS  chg %s  dischg %s%s\n",
+    BmsAlarmLevel alarm = bmsAlarmLevel(b);
+    const char* alarmText = alarm == BMS_ALARM_NONE ? "none" :
+                            alarm == BMS_ALARM_WARNING ? "verified L1 warning" :
+                            alarm == BMS_ALARM_ALERT ? bmsFaultName(bmsFaultKind(b)) :
+                            "fault response stale";
+    consoleOut().printf("MOS  chg %s  dischg %s | alarm %s\n",
                         b.chargeMos ? "ON" : "off",
                         b.dischargeMos ? "ON" : "off",
-                        b.hasFault ? "   *** FAULT ***" : "");
+                        alarmText);
+    if (b.lastFaultMs != 0) {
+        consoleOut().printf("last BMS event %s (%lus ago)\n",
+                            bmsFaultName(bmsLastFaultKind(b)),
+                            (unsigned long)((millis() - b.lastFaultMs) / 1000UL));
+    }
+    consoleOut().printf("fresh mask 0x%03X [pack/minV/minT/MOS/status/cells/temps/bal/fault]\n",
+                        (unsigned)bmsFreshMask(b));
+    if (b.dischargeOcSettingsValid) {
+        consoleOut().printf(
+            "read-only discharge O/C settings: warn %.1f A | "
+            "protect1 %.1f A / %u ms | protect2 %.1f A / %u ms "
+            "(read %lus ago)\n",
+            b.dischargeOcWarningA,
+            b.dischargeOcProtection1A,
+            (unsigned)b.dischargeOcProtection1DelayMs,
+            b.dischargeOcProtection2A,
+            (unsigned)b.dischargeOcProtection2DelayMs,
+            (unsigned long)((millis() - b.dischargeOcSettingsSeenMs) / 1000UL));
+    } else {
+        consoleOut().println(
+            F("read-only discharge O/C settings: awaiting verified Modbus read"));
+    }
 
-    const int cells = b.cellCount ? b.cellCount : 0;
+    // Parser-side clamps (defense in depth): the BMS task clamps cell/temp
+    // counts at decode, but every consumer that indexes the arrays should not
+    // have to trust that invariant.
+    const int cells = min((int)b.cellCount, BMS_MAX_CELLS);
     for (int c = 0; c < cells; c++) {
         const bool isMin = (c + 1) == b.minCellNo;
         const bool isMax = (c + 1) == b.maxCellNo;
@@ -721,10 +854,10 @@ static void cmdBms() {
                         (unsigned)b.cellDeltamV, (unsigned)b.minCellmV, (unsigned)b.maxCellmV);
 
     consoleOut().print(F("temps"));
-    for (int t = 0; t < b.tempCount; t++) consoleOut().printf(" %dC", b.temps[t]);
+    for (int t = 0; t < min((int)b.tempCount, BMS_MAX_TEMPS); t++) consoleOut().printf(" %dC", b.temps[t]);
     consoleOut().printf("  (min %dC / max %dC)\n", b.tempMin, b.tempMax);
 
-    if (b.hasFault) {
+    if (b.hasFault || alarm == BMS_ALARM_STALE) {
         consoleOut().print(F("fault bytes:"));
         for (int i = 0; i < 7; i++) consoleOut().printf(" %02X", b.faultBytes[i]);
         consoleOut().println();

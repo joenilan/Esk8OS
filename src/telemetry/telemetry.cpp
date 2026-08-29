@@ -1,5 +1,7 @@
 #include "telemetry.h"
+#include "telemetry/BatteryView.h"
 #include "transports/VescUartTransport.h"
+#include "transports/DalyBms.h"
 #include "logging/sessionlog.h"
 #include "config/Settings.h"
 
@@ -187,12 +189,16 @@ static float configuredNominalPackWh() {
 }
 
 static int liionSocFromCellV(float v);
+static float defaultWhPerKm();
+static float recentWhPerKm();
 
 // Smoothed SoC (defined with the OCV section below, needed here for learning)
 // and the SoC captured when the session energy baseline was set — the pair
 // gives Wh-per-SoC%, i.e. the pack's actually-deliverable energy.
 static float gSocFilt = -1.0f;
 static float gSocAtBaseline = -1.0f;
+static unsigned long gPackLearnRestSinceMs = 0;
+static float gLastPackLearnSocDrop = 0.0f;
 
 static float configuredUsablePackWh(float floorCellV) {
     // Spec-derived fallback until the pack's real energy has been learned.
@@ -232,6 +238,24 @@ static float remainingWhToFloor(float floorCellV) {
     float usablePctWindow = max(1.0f, 100.0f - floorPct);
     float remainingFrac = constrain((currentBatteryPercent - floorPct) / usablePctWindow, 0.0f, 1.0f);
     return packWhToFloor(floorCellV) * remainingFrac;
+}
+
+float estimateRemainingRangeForSoc(float socPct, bool toLimpFloor) {
+    const float floorCellV = toLimpFloor
+        ? effectiveFloorCellV(BATTERY_STOP_CELL_V)
+        : effectiveFloorCellV(max(BATTERY_HOME_CELL_V, BATTERY_STOP_CELL_V));
+    const int floorPct = liionSocFromCellV(floorCellV);
+    const float usablePctWindow = max(1.0f, 100.0f - floorPct);
+    const float remainingFrac =
+        constrain((socPct - floorPct) / usablePctWindow, 0.0f, 1.0f);
+    const float remainingWh = packWhToFloor(floorCellV) * remainingFrac;
+    float whPerKm = avgWhPerKm > 0.5f ? avgWhPerKm
+                                     : (gLearnedWhPerKm > 0.5f
+                                            ? gLearnedWhPerKm
+                                            : defaultWhPerKm());
+    const float recent = recentWhPerKm();
+    if (recent > 0.5f) whPerKm = max(whPerKm, recent);
+    return remainingWh / max(whPerKm, defaultWhPerKm() * 0.6f);
 }
 
 static float defaultWhPerKm() {
@@ -308,17 +332,46 @@ void updateRangeEstimate() {
         }
     }
 
-    // Learn the pack's deliverable energy: net Wh consumed per SoC% actually
-    // dropped, measured over this ride. Converges on what THIS pack really
-    // delivers (aging, IR truncation) instead of trusting the label capacity.
-    if (realRide && rideEnergyBaselineSet && gSocAtBaseline > 0 && gSocFilt >= 0) {
+    // Pack-energy learning is much easier to poison than consumption learning:
+    // voltage-derived SOC under load is not an endpoint measurement. Require a
+    // near-full baseline, a meaningful discharge, and a stationary/low-current
+    // endpoint held for 20 s. Never fold the same SOC window repeatedly.
+    const bool packLearnResting =
+        realRide && currentSpeedKmh < 0.5f && fabsf(currentAmps) < 1.0f;
+    if (packLearnResting) {
+        if (gPackLearnRestSinceMs == 0) gPackLearnRestSinceMs = millis();
+    } else {
+        gPackLearnRestSinceMs = 0;
+    }
+    // The rider-facing view now trusts the physically validated Daly counter,
+    // but this older pack-energy learner still compares its own voltage-derived
+    // gSocFilt endpoints. Do not mix those two SOC domains. Consumption learning
+    // remains enabled; a BMS-aware pack-energy learner is separate future work.
+    bool freshBmsOutsidePackLearnModel = false;
+#if ESK8OS_BMS_DALY
+    {
+        Esk8OS::Transports::BmsData bms;
+        if (Esk8OS::Transports::getBmsData(&bms)) {
+            freshBmsOutsidePackLearnModel =
+                Esk8OS::Transports::bmsFieldFresh(
+                    bms, Esk8OS::Transports::BMS_FIELD_PACK);
+        }
+    }
+#endif
+    const bool restedEndpoint = gPackLearnRestSinceMs != 0 &&
+                                millis() - gPackLearnRestSinceMs >= 20000UL;
+    if (!freshBmsOutsidePackLearnModel && restedEndpoint && rideEnergyBaselineSet &&
+        gSocAtBaseline >= 90.0f && gSocFilt >= 0) {
         float socDrop = gSocAtBaseline - gSocFilt;
-        if (socDrop >= 10.0f && netWhUsed >= 30.0f) {
+        if (socDrop >= 15.0f && netWhUsed >= 50.0f &&
+            socDrop >= gLastPackLearnSocDrop + 5.0f) {
             static unsigned long lastPackFold = 0;
             if (millis() - lastPackFold > 60000) {
                 lastPackFold = millis();
+                gLastPackLearnSocDrop = socDrop;
                 float nom = configuredNominalPackWh();
-                float est = constrain(netWhUsed / (socDrop / 100.0f), nom * 0.3f, nom * 1.25f);
+                float est = constrain(netWhUsed / (socDrop / 100.0f),
+                                      nom * 0.55f, nom * 1.15f);
                 gLearnedPackWh = (gLearnedPackWh > 1.0f)
                     ? gLearnedPackWh * 0.8f + est * 0.2f
                     : est;
@@ -356,6 +409,20 @@ static int liionSocFromCellV(float v) {
         }
     }
     return 0;
+}
+
+int estimateLiIonSocFromCellVoltage(float cellVolts) {
+    return liionSocFromCellV(cellVolts);
+}
+
+int estimateLiIonSocFromLoadedCellVoltage(float cellVolts,
+                                          float packCurrentA,
+                                          int cellCount) {
+    const int cells = max(1, cellCount);
+    const float boundedCurrent = constrain(packCurrentA, -60.0f, 120.0f);
+    const float openCircuitCellV =
+        cellVolts + boundedCurrent * gPackROhm / cells;
+    return liionSocFromCellV(openCircuitCellV);
 }
 
 // Pack internal resistance used to undo voltage sag (V_open = V + I*R) lives in
@@ -441,6 +508,8 @@ void pollVescData() {
                 rideStartVescWhRegen = raw.wattHoursCharged;
                 rideEnergyBaselineSet = true;
                 gSocAtBaseline = gSocFilt;   // anchor for pack-energy learning
+                gLastPackLearnSocDrop = 0.0f;
+                gPackLearnRestSinceMs = 0;
             }
             currentWattHours = max(0.0f, raw.wattHours - rideStartVescWh);
             currentWhRegen = max(0.0f, raw.wattHoursCharged - rideStartVescWhRegen);
@@ -529,21 +598,39 @@ void pollVescData() {
     // samples is a disconnect (BMS cut / anti-spark / main lead), never sag —
     // the Jul-3 death showed 33->11 V in one second. Mark+flush immediately so
     // the collapse row survives even if power dies before the periodic flush.
+    //
+    // What PRECEDED the step decides what it was. Every collapse in the
+    // 2026-07/08 archives was either a riding event (s0228: 23 mph and 44 A in
+    // the seconds before the BMS opened its discharge MOS) or a parked
+    // power-down (idle for the whole ride tail; the collapse row is the
+    // session's last). Classify on the last 5 s of activity, not the collapse
+    // row itself — the ESC can already be cut (0.3 A) when the voltage steps.
     static float lastBusV = 0;
-    static uint32_t lastBusMs = 0, lastCollapseMs = 0;
+    static uint32_t lastBusMs = 0, lastCollapseMs = 0, lastActiveMs = 0;
     static bool escFaultSnapPending = false;
     static uint32_t lastFaultSnapMs = 0;
     if (telemetryLive && !DEMO_DATA) {
         uint32_t nowBusMs = millis();
+        if (currentSpeedKmh > 2.0f || fabsf(currentAmps) > 2.0f) {
+            lastActiveMs = nowBusMs;
+        }
+        const bool idle = nowBusMs - lastActiveMs > 5000UL;
         if (lastBusV > 15.0f && currentVoltage < lastBusV - 8.0f &&
             nowBusMs - lastBusMs < 2000 && nowBusMs - lastCollapseMs > 2000) {
             lastCollapseMs = nowBusMs;
-            sessionLogMark("vcollapse");
-            // Grab the ESC's own fault log while its logic is still alive —
-            // it's RAM-only on the ESC, gone at its next power-up.
-            if (Esk8OS::Transports::requestVescTerminal("faults")) {
-                escFaultSnapPending = true;
-                lastFaultSnapMs = nowBusMs;
+            if (idle) {
+                // Power-down signature, not a disconnect: log the marker (it
+                // survives the cut) but skip the ESC fault snapshot — the ESC
+                // is dying too, and its RAM fault log is moot.
+                sessionLogMark("powerdown");
+            } else {
+                sessionLogMark("vcollapse");
+                // Grab the ESC's own fault log while its logic is still alive —
+                // it's RAM-only on the ESC, gone at its next power-up.
+                if (Esk8OS::Transports::requestVescTerminal("faults")) {
+                    escFaultSnapPending = true;
+                    lastFaultSnapMs = nowBusMs;
+                }
             }
         }
         lastBusV = currentVoltage;
@@ -684,10 +771,11 @@ void telemetryPrintCal(Print& out) {
     out.printf("pack R %.0f mohm (seed 45) | typical draw %.1f A\n",
         gPackROhm * 1000.0f, gTypicalRideAmps);
     if (gLearnedPackWh > 1.0f)
-        out.printf("pack energy LEARNED %.0f Wh (label %.0f Wh -> %.0f%% healthy)\n",
+        out.printf("pack energy MODEL %.0f Wh (label %.0f Wh -> %.0f%%; not a health test)\n",
             gLearnedPackWh, nom, 100.0f * gLearnedPackWh / nom);
     else
-        out.printf("pack energy not learned yet (needs a >=10%% SoC ride) | label %.0f Wh\n", nom);
+        out.printf("pack energy not qualified (BMS SOC is outside legacy voltage-endpoint learner) | label %.0f Wh\n",
+            nom);
     if (gLearnedWhPerKm > 0.5f)
         out.printf("consumption LEARNED %.1f Wh/%s (default %.1f)\n",
             gLearnedWhPerKm / cv, u, RANGE_DEFAULT_WH_PER_MILE * (useMph ? 1.0f : 1.0f / 1.609344f));
@@ -700,8 +788,16 @@ void telemetryPrintCal(Print& out) {
     out.printf("sag-aware floors: home %.2f V/cell (cfg %.2f, SoC %d%%) | limp %.2f (cfg %.2f, SoC %d%%)\n",
         homeFloor, max(BATTERY_HOME_CELL_V, BATTERY_STOP_CELL_V), liionSocFromCellV(homeFloor),
         limpFloor, BATTERY_STOP_CELL_V, liionSocFromCellV(limpFloor));
-    out.printf("range now: %.1f %s to home floor | %.1f %s to limp\n",
-        remainingRangeKm * cv, u, remainingLimpRangeKm * cv, u);
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    if (battery.rangeValid) {
+        out.printf("primary range now: %.1f %s home | %.1f %s limp via %s%s\n",
+            battery.homeRangeKm * cv, u, battery.limpRangeKm * cv, u,
+            Esk8OS::Telemetry::batterySourceName(battery.source),
+            battery.socProvisional ? " (provisional SOC)" : "");
+    } else {
+        out.println("primary range unavailable (no fresh battery source)");
+    }
 }
 
 void telemetryResetCal() {
@@ -709,6 +805,8 @@ void telemetryResetCal() {
     gTypicalRideAmps = 15.0f;
     gLearnedPackWh = 0;
     gLearnedWhPerKm = 0;
+    gPackLearnRestSinceMs = 0;
+    gLastPackLearnSocDrop = 0.0f;
     prefs.remove("packR");
     prefs.remove("typA");
     prefs.remove("packWhL");

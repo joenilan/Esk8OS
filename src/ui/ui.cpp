@@ -2,6 +2,7 @@
 #include "ui.h"            // public UI entry points used by main.cpp
 #include "UiRenderer.h"
 #include "telemetry/telemetry.h"     // getHistorySample() for the graph pages
+#include "telemetry/BatteryView.h"   // source-aware VESC/Daly presentation data
 #include "logging/sessionlog.h"    // board-session CSV status for the LOGS page warning
 #include "transports/DalyBms.h"    // getBmsData() for the BMS page (BMS builds only)
 
@@ -84,16 +85,19 @@ static int batteryCellsStartX() {
 }
 
 static void drawBatteryCellsRow(int y, int cellH, bool drawFill) {
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    const int pct = battery.socValid ? battery.socPct : 0;
     int cellW = batteryCellW();
     int cellGap = batteryCellGap();
     int cellStartX = batteryCellsStartX();
     // Continuous level so the gauge depletes smoothly: whole cells fill solid and
     // the boundary cell fills a fractional WIDTH instead of popping on/off, so the
     // bar shrinks ~1px at a time while staying segmented.
-    float level = currentBatteryPercent * BATTERY_CELLS_COUNT / 100.0f;
+    float level = pct * BATTERY_CELLS_COUNT / 100.0f;
     int   full  = (int)level;
     float frac  = level - full;
-    uint16_t fillCol = battColor(currentBatteryPercent);
+    uint16_t fillCol = battColor(pct);
     for (int i = 0; i < BATTERY_CELLS_COUNT; i++) {
         int cx = cellStartX + i * (cellW + cellGap);
         GFX->drawRect(cx, y, cellW, cellH, COL_BORDER);
@@ -236,7 +240,7 @@ void waitForBootReady() {
             telemetryLive = false;
             vescLinkOk = false;
             lastVescOkMs = 0;
-            drawBootProgress(100, "NO VESC - BLE READY", COL_YELLOW);
+            drawBootProgress(100, "DRIVE OFF - BLE READY", COL_YELLOW);
             delay(700);
             return;
         }
@@ -262,7 +266,7 @@ static void drawRowLabel(const char* label, int y) {
     GFX->drawString(label, X0 + 12, y);
 }
 
-static void drawSpeedReadout(int spdInt, bool clearZone) {
+static void drawSpeedReadout(const String& speedText, bool clearZone) {
     if (clearZone) {
         GFX->fillRect(X0, 17, UI_W, 73, COL_BG);
     }
@@ -272,7 +276,7 @@ static void drawSpeedReadout(int spdInt, bool clearZone) {
     GFX->setTextColor(COL_WHITE);
     GFX->setFont(&BebasNeue80pt7b);
     GFX->setTextDatum(TC_DATUM);
-    GFX->drawString(String(spdInt), X0 + 96, 17);
+    GFX->drawString(speedText, X0 + 96, 17);
 
     // Unit: Bebas24 is smaller than the hero number, so it reads as secondary label.
     GFX->setFont(&BebasNeue24pt7b);
@@ -283,8 +287,10 @@ static void drawSpeedReadout(int spdInt, bool clearZone) {
 
 // ── PAGE 0: DASHBOARD static chrome ──
 static void drawStaticDash() {
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
     int spdInt = (int)(useMph ? currentSpeedMph : currentSpeedKmh);
-    drawSpeedReadout(spdInt, false);
+    drawSpeedReadout(battery.vescLive ? String(spdInt) : String("--"), false);
 
     // VOLTS | WATTS panel (y=86..118) — values drawn by updateStatPanel
     int spW = 162, spH = 32, spY = 86;
@@ -308,19 +314,22 @@ static void drawStaticDash() {
 static void drawStaticPower() {
     // Power/energy only — speed max/avg lives on the TRIP page (deduped). "PEAK NOW"
     // is the live peak-hold; "MAX RIDE" (Session) is the session maximum.
-    drawCard(4, 22, 162, 82, "POWER");
+    // M1/M2 is the per-motor split (dual VESC over CAN); M2 reads "--" single.
+    drawCard(4, 22, 162, 98, "POWER");
     drawRowLabel("MOTOR",    40);
-    drawRowLabel("BATTERY",  56);
-    drawRowLabel("DUTY",     72);
-    drawRowLabel("PEAK NOW", 88);
+    drawRowLabel("M1 / M2",  56);
+    drawRowLabel("BATTERY",  72);
+    drawRowLabel("DUTY",     88);
+    drawRowLabel("PEAK NOW", 104);
 
-    drawCard(4, 108, 162, 48, "ENERGY");
-    drawRowLabel("USED",  126);
-    drawRowLabel("REGEN", 142);
+    drawCard(4, 124, 162, 48, "ENERGY");
+    drawRowLabel("USED",  142);
+    drawRowLabel("REGEN", 158);
 
-    drawCard(4, 160, 162, 48, "SESSION");
-    drawRowLabel("MAX RIDE", 178);
-    drawRowLabel("MIN VOLT", 194);
+    drawCard(4, 176, 162, 62, "SESSION");
+    drawRowLabel("MAX RIDE", 194);
+    drawRowLabel("MAX BATT", 210);
+    drawRowLabel("MIN VOLT", 226);
 }
 
 #if ESK8OS_BMS_DALY
@@ -331,8 +340,8 @@ static void drawStaticBms() {
     drawCard(4, 22, 162, 58, "PACK");
     drawRowLabel("VOLTAGE", 40);
     drawRowLabel("CURRENT", 56);
-    drawRowLabel("CHARGE",  72);
-    drawCard(4, 84, 162, 150, "CELLS");
+    drawRowLabel("DALY SOC", 72);
+    drawCard(4, 84, 162, 156, "CELLS");   // room for the delta + Ah/cy/OC lines
 }
 #endif
 
@@ -351,8 +360,9 @@ static void drawStaticTrip() {
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_DIM);
-    GFX->drawString(DEMO_DATA ? "hold L: reset + recharge" : "hold L to reset trip",
-                    X0 + UI_W / 2, 190);
+    // The binding is hold-RIGHT on this page (App.cpp checkButtons); the old
+    // text said hold-L, which toggles units instead.
+    GFX->drawString("hold R to reset trip", X0 + UI_W / 2, 190);
 }
 
 // ── PAGE 3: SETTINGS static chrome ──
@@ -563,12 +573,15 @@ static void drawHudGaugeText(String value, int px, int y, uint16_t color) {
 }
 
 static void drawFullScreenBatteryGauge() {
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    const int pct = battery.socValid ? battery.socPct : 0;
     const int gx = X0 + 6;
     const int gy = 26;
     const int gw = UI_W - 12;
     const int gh = 266;
-    uint16_t fillCol = battColor(currentBatteryPercent);
-    int fillH = (int)round((gh - 2) * constrain(currentBatteryPercent, 0, 100) / 100.0f);
+    uint16_t fillCol = battColor(pct);
+    int fillH = (int)round((gh - 2) * constrain(pct, 0, 100) / 100.0f);
 
     GFX->drawRect(gx - 1, gy - 1, gw + 2, gh + 2, COL_BORDER);
     GFX->fillRect(gx + 1, gy + 1, gw - 2, gh - 2, COL_BG);
@@ -606,6 +619,9 @@ static void drawFullScreenWattsGauge(int watts) {
 }
 
 static void drawHudSpeedFace() {
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    const int pct = battery.socValid ? battery.socPct : 0;
     int spdInt = (int)(useMph ? currentSpeedMph : currentSpeedKmh);   // truncate, never round
 
     // Hero speed: native BebasNeue110 (~79px digits) drawn at scale 1.0 — crisp,
@@ -616,7 +632,8 @@ static void drawHudSpeedFace() {
     GFX->setFont(&BebasNeue110pt7b);
     GFX->setTextDatum(TC_DATUM);
     GFX->setTextColor(COL_WHITE);
-    GFX->drawString(String(spdInt), X0 + UI_W / 2, hudSpeedY);
+    GFX->drawString(battery.vescLive ? String(spdInt) : String("--"),
+                    X0 + UI_W / 2, hudSpeedY);
 
     GFX->setFont(&BebasNeue24pt7b);
     GFX->setTextDatum(MC_DATUM);
@@ -632,56 +649,84 @@ static void drawHudSpeedFace() {
     GFX->setFont(&BebasNeue34pt7b);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_WHITE);
-    GFX->drawString(String(currentBatteryPercent) + "%", X0 + UI_W / 2, 184);
+    GFX->drawString(battery.socValid ? String(pct) + "%" : String("--%"),
+                    X0 + UI_W / 2, 184);
 
     // Four key ride tiles (2x2), sitting just above the bottom status bar.
     int watts = (int)max(0.0f, peakWatts);   // truncate (hide decimal)
-    float rangeDisplay = useMph ? remainingRangeKm * 0.621371f : remainingRangeKm;
+    float rangeKm = battery.rangeValid ? battery.homeRangeKm : 0.0f;
+    float rangeDisplay = useMph ? rangeKm * 0.621371f : rangeKm;
     String rangeUnit = useMph ? "mi" : "km";
-    float hottest = max(currentMotorTemp, currentEscTemp);
+    float hottest = battery.vescLive ? max(currentMotorTemp, currentEscTemp)
+                                     : battery.batteryTempC;
 
-    drawHudSmallMetric(4,  202, 78, "WATTS", String(watts), wattColor(watts));
-    drawHudSmallMetric(88, 202, 78, "VOLTS", String(currentVoltage, 1), battColor(currentBatteryPercent));
-    drawHudSmallMetric(4,  250, 78, "RANGE", String(rangeDisplay, 1) + rangeUnit, COL_WHITE);
-    drawHudSmallMetric(88, 250, 78, "TEMP", String((int)hottest) + "C",
-                       hottest > MOTOR_TEMP_LIMIT ? COL_RED : COL_GREEN);
+    drawHudSmallMetric(4,  202, 78, "WATTS",
+                       battery.vescLive ? String(watts) : String("--"),
+                       battery.vescLive ? wattColor(watts) : COL_DIM);
+    drawHudSmallMetric(88, 202, 78, "VOLTS",
+                       battery.voltageValid ? String(battery.packVoltage, 1) : String("--"),
+                       battery.voltageValid ? battColor(pct) : COL_DIM);
+    drawHudSmallMetric(4,  250, 78, "RANGE",
+                       battery.rangeValid ? String(rangeDisplay, 1) + rangeUnit : String("--"),
+                       battery.rangeValid ? COL_WHITE : COL_DIM);
+    drawHudSmallMetric(88, 250, 78, battery.vescLive ? "TEMP" : "BMS TEMP",
+                       battery.temperatureValid ? String((int)hottest) + "C" : String("--"),
+                       battery.temperatureValid && hottest > MOTOR_TEMP_LIMIT ? COL_RED :
+                       (battery.temperatureValid ? COL_GREEN : COL_DIM));
 }
 
 static void drawHudBatteryFace() {
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    const String volts = battery.voltageValid ? String(battery.packVoltage, 1) : String("--");
+    const String pct = battery.socValid ? String(battery.socPct) : String("--");
     drawFullScreenBatteryGauge();
     bool voltsFocus = (gBatteryFocus == BATTERY_FOCUS_VOLTS);
     if (voltsFocus) {
-        drawHudHeroMetric(String(currentVoltage, 1), "V", 82, COL_WHITE);
-        drawHudGaugeText(String(currentBatteryPercent) + "%", 34, 214, COL_WHITE);
+        drawHudHeroMetric(volts, "V", 82, battery.voltageValid ? COL_WHITE : COL_DIM);
+        drawHudGaugeText(pct + "%", 34, 214, battery.socValid ? COL_WHITE : COL_DIM);
     } else {
-        drawHudHeroMetric110(String(currentBatteryPercent), "%", 70, COL_WHITE);
-        drawHudGaugeText(String(currentVoltage, 1) + "V", 34, 214, COL_WHITE);
+        drawHudHeroMetric110(pct, "%", 70, battery.socValid ? COL_WHITE : COL_DIM);
+        drawHudGaugeText(volts + "V", 34, 214, battery.voltageValid ? COL_WHITE : COL_DIM);
     }
 }
 
 static void drawHudWattsFace() {
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
     int watts = (int)max(0.0f, currentWatts);
     int peak = (int)max(0.0f, peakWatts);
     drawFullScreenWattsGauge(watts);
-    drawHudHeroMetric110(String(watts), "W", 70, COL_WHITE);
-    drawHudGaugeText(String(peak) + "W PEAK", 34, 214, COL_WHITE);
+    drawHudHeroMetric110(battery.vescLive ? String(watts) : String("--"), "W", 70,
+                         battery.vescLive ? COL_WHITE : COL_DIM);
+    drawHudGaugeText(battery.vescLive ? String(peak) + "W PEAK" : String("--"),
+                     34, 214, battery.vescLive ? COL_WHITE : COL_DIM);
 }
 
 // SAFETY face: loaded cell voltage as the hero (the number the sag/limp alerts
 // key off), the alert state spelled out, and the session floor stats in the
 // same cells-row + 2x2 tile layout as the SPEED face.
 static void drawHudSafetyFace() {
-    bool haveData = telemetryLive;
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    bool haveData = battery.cellVoltageValid;
     drawHudFaceLabel("SAFETY - CELL V");
 
     uint16_t heroCol = !haveData ? COL_DIM :
+                       battery.alarmLevel == Esk8OS::Transports::BMS_ALARM_ALERT ? COL_RED :
+                       battery.alarmLevel == Esk8OS::Transports::BMS_ALARM_WARNING ? COL_YELLOW :
                        rangeAlertState >= 3 ? COL_RED :
                        rangeAlertState == 2 ? COL_ORANGE :
                        rangeAlertState == 1 ? COL_YELLOW : COL_GREEN;
-    drawHudHeroMetric(haveData ? String(loadedCellVoltage, 2) : String("-.--"),
+    drawHudHeroMetric(haveData ? String(battery.cellVoltage, 2) : String("-.--"),
                       "V", 44, heroCol);
 
     const char* stateTxt = !haveData ? "NO DATA" :
+                           !battery.vescLive &&
+                               battery.alarmLevel == Esk8OS::Transports::BMS_ALARM_ALERT ? "BMS ALERT" :
+                           !battery.vescLive &&
+                               battery.alarmLevel == Esk8OS::Transports::BMS_ALARM_WARNING ? "BMS WARNING" :
+                           !battery.vescLive ? "BMS MONITOR" :
                            rangeAlertState >= 3 ? "LIMP HOME" :
                            rangeAlertState == 2 ? "VOLT SAG" :
                            rangeAlertState == 1 ? "TURN HOME" : "PACK OK";
@@ -697,19 +742,22 @@ static void drawHudSafetyFace() {
     GFX->setFont(&BebasNeue34pt7b);
     GFX->setTextDatum(MC_DATUM);
     GFX->setTextColor(COL_WHITE);
-    GFX->drawString(String(currentBatteryPercent) + "%", X0 + UI_W / 2, 184);
+    GFX->drawString(battery.socValid ? String(battery.socPct) + "%" : String("--%"),
+                    X0 + UI_W / 2, 184);
 
     // Min-volt tracker holds its BATTERY_MAX_V seed until telemetry is live.
-    float minVl = haveData ? minVoltageUnderLoadSession : 0.0f;
-    float limp  = useMph ? remainingLimpRangeKm * 0.621371f : remainingLimpRangeKm;
+    float minVl = battery.vescLive ? minVoltageUnderLoadSession : battery.packVoltage;
+    float limpKm = battery.rangeValid ? battery.limpRangeKm : 0.0f;
+    float limp  = useMph ? limpKm * 0.621371f : limpKm;
     String limpUnit = useMph ? "mi" : "km";
 
     drawHudSmallMetric(4,  202, 78, "MIN V",  String(minVl, 1),
                        minVl > 0 && minVl <= BATTERY_MIN_V ? COL_RED : COL_WHITE);
     drawHudSmallMetric(88, 202, 78, "SAG",    String(sagEventsSession),
                        sagEventsSession > 0 ? COL_ORANGE : COL_GREEN);
-    drawHudSmallMetric(4,  250, 78, "LIMP",   String(haveData ? limp : 0.0f, 1) + limpUnit,
-                       COL_WHITE);
+    drawHudSmallMetric(4,  250, 78, "LIMP",
+                       battery.rangeValid ? String(limp, 1) + limpUnit : String("--"),
+                       battery.rangeValid ? COL_WHITE : COL_DIM);
     drawHudSmallMetric(88, 250, 78, "LOW",    String((unsigned)homeVoltageSecondsSession) + "s",
                        homeVoltageSecondsSession > 0 ? COL_ORANGE : COL_GREEN);
 }
@@ -1010,7 +1058,13 @@ void drawStaticFrame() {
         GFX->drawString("DEMO MODE", X0 + 85, 4);
     } else if (RIDER_NAME[0]) {
         GFX->setTextColor(COL_DIM);
-        GFX->drawString(String("RIDER: ") + RIDER_NAME, X0 + 85, 4);
+        // Center slot sits between the product tag (left) and the clock zone
+        // (right). Draw the name alone and clip it so it can never reach the
+        // clock's clear rect: updateClock repaints every second and would
+        // erase the tail — a 6-char name lost its last letter that way.
+        String rider = RIDER_NAME;
+        if (rider.length() > 14) rider = rider.substring(0, 14);   // 84 px: 43..127, clock starts 130
+        GFX->drawString(rider, X0 + 85, 4);
     }
     drawHLine(X0, 16, UI_W, COL_BORDER);
 
@@ -1069,7 +1123,10 @@ void updateClock() {
 
     char buf[6];
     snprintf(buf, sizeof(buf), "%02d:%02d", mins, secs);
-    GFX->fillRect(X0 + 120, 4, 46, 9, COL_BG);
+    // Erase only what the clock can occupy (5 chars = 30 px, right-aligned at
+    // 166). The old 46 px-wide rect reached x=120 and ate the tail of the
+    // rider name drawn beside it.
+    GFX->fillRect(X0 + 132, 4, 34, 9, COL_BG);
     GFX->setFont(&fonts::Font0);
     GFX->setTextDatum(TR_DATUM);
     GFX->setTextColor(COL_WHITE);
@@ -1083,13 +1140,18 @@ void updateClock() {
 static void updateSpeed() {
     static int lastSpeedInt = -1;
     static bool lastUseMph = !useMph;
+    static bool lastLive = false;
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
 
     int spdInt = (int)(useMph ? currentSpeedMph : currentSpeedKmh);
 
-    if (spdInt != lastSpeedInt || useMph != lastUseMph || gRedrawAll) {
-        drawSpeedReadout(spdInt, true);
+    if (spdInt != lastSpeedInt || useMph != lastUseMph ||
+        battery.vescLive != lastLive || gRedrawAll) {
+        drawSpeedReadout(battery.vescLive ? String(spdInt) : String("--"), true);
         lastSpeedInt = spdInt;
         lastUseMph = useMph;
+        lastLive = battery.vescLive;
         markDirty(17, 73);
     }
 }
@@ -1121,47 +1183,57 @@ static void updateStatPanel() {
     static float lastV = -1;
     static int lastW = -1;
     static int lastPct = -1;
+    static bool lastDriveLive = false;
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    const float voltage = battery.voltageValid ? battery.packVoltage : 0.0f;
+    const int pct = battery.socValid ? battery.socPct : 0;
 
     int bx = X0 + (UI_W - 162) / 2;
     int midx = X0 + UI_W / 2;
     int by = 86, bh = 32;
 
     int w = (int)peakWatts;
-    bool vchanged = abs(currentVoltage - lastV) > 0.05 || currentBatteryPercent != lastPct || gRedrawAll;
-    bool wchanged = abs(w - lastW) >= 5 || gRedrawAll;
+    bool vchanged = abs(voltage - lastV) > 0.05 || pct != lastPct || gRedrawAll;
+    bool wchanged = abs(w - lastW) >= 5 ||
+                    battery.vescLive != lastDriveLive || gRedrawAll;
 
     if (vchanged) {
         GFX->fillRect(bx + 1, by + 1, midx - bx - 2, bh - 2, COL_BG);
-        drawStat((bx + midx) / 2, String(currentVoltage, 1), "V", battColor(currentBatteryPercent));
-        lastV = currentVoltage; lastPct = currentBatteryPercent;
+        drawStat((bx + midx) / 2, battery.voltageValid ? String(voltage, 1) : String("--"),
+                 "V", battery.voltageValid ? battColor(pct) : COL_DIM);
+        lastV = voltage; lastPct = pct;
     }
     if (wchanged) {
         GFX->fillRect(midx + 1, by + 1, (bx + 162) - midx - 2, bh - 2, COL_BG);
-        drawStat((midx + bx + 162) / 2, String(w), "W", wattColor(w));
+        drawStat((midx + bx + 162) / 2,
+                 battery.vescLive ? String(w) : String("--"), "W",
+                 battery.vescLive ? wattColor(w) : COL_DIM);
         lastW = w;
+        lastDriveLive = battery.vescLive;
     }
     if (vchanged || wchanged) markDirty(86, 32);
 }
 
 // One temps row: dim label is static; this redraws "<temp>C (pct%)".
 // `hot` turns the temperature red when past its limit.
-static void drawTempRow(int y, float temp, int pct, bool hot) {
+static void drawTempRow(int y, float temp, int pct, bool hot, bool valid = true) {
     GFX->setFont(&fonts::Font0);
-    String pstr = String("(") + pct + "%)";
-    String tstr = String((int)temp) + "C";   // truncate (hide decimal)
+    String pstr = valid ? String("(") + pct + "%)" : String("");
+    String tstr = valid ? String((int)temp) + "C" : String("--");
 
     int pw = GFX->textWidth(pstr);
     GFX->setTextDatum(TR_DATUM);
-    GFX->setTextColor(COL_GREEN);
+    GFX->setTextColor(valid ? COL_GREEN : COL_DIM);
     GFX->drawString(pstr, X0 + 158, y);
 
-    GFX->setTextColor(hot ? COL_RED : COL_WHITE);
+    GFX->setTextColor(!valid ? COL_DIM : (hot ? COL_RED : COL_WHITE));
     GFX->drawString(tstr, X0 + 158 - pw - 4, y);
 
     int barX = X0 + 8;
     int barY = y + 11;
     int barW = 154;
-    int fillW = constrain((barW * pct) / 100, 0, barW);
+    int fillW = valid ? constrain((barW * pct) / 100, 0, barW) : 0;
     uint16_t c = hot ? COL_RED : (pct < 70 ? COL_YELLOW : COL_GREEN);
     GFX->drawFastHLine(barX, barY, barW, COL_BORDER);
     if (fillW > 0) {
@@ -1174,19 +1246,30 @@ static void drawTempRow(int y, float temp, int pct, bool hot) {
 // ==========================================
 static void updateTemps() {
     static float lastMotor = -999, lastBat = -999, lastEsc = -999;
+    static bool lastDriveLive = false, lastBatteryLive = false;
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    const float batteryTemp = battery.temperatureValid ? battery.batteryTempC : 0.0f;
 
     if (abs(currentMotorTemp - lastMotor) > 0.3 ||
-        abs(currentBatteryTemp - lastBat) > 0.3 ||
-        abs(currentEscTemp - lastEsc) > 0.3 || gRedrawAll) {
+        abs(batteryTemp - lastBat) > 0.3 ||
+        abs(currentEscTemp - lastEsc) > 0.3 ||
+        battery.vescLive != lastDriveLive ||
+        battery.temperatureValid != lastBatteryLive || gRedrawAll) {
 
         // Clear the values column for all three rows
         GFX->fillRect(X0 + 90, 140, 72, 44, COL_BG);
 
-        drawTempRow(140, currentMotorTemp,   motorHealthPct,  currentMotorTemp > MOTOR_TEMP_LIMIT);
-        drawTempRow(156, currentBatteryTemp, batteryHealthPct, false);
-        drawTempRow(172, currentEscTemp,     escHealthPct,    currentEscTemp > ESC_TEMP_LIMIT);
+        drawTempRow(140, currentMotorTemp, motorHealthPct,
+                    currentMotorTemp > MOTOR_TEMP_LIMIT, battery.vescLive);
+        drawTempRow(156, batteryTemp, batteryHealthPct, false,
+                    battery.temperatureValid);
+        drawTempRow(172, currentEscTemp, escHealthPct,
+                    currentEscTemp > ESC_TEMP_LIMIT, battery.vescLive);
 
-        lastMotor = currentMotorTemp; lastBat = currentBatteryTemp; lastEsc = currentEscTemp;
+        lastMotor = currentMotorTemp; lastBat = batteryTemp; lastEsc = currentEscTemp;
+        lastDriveLive = battery.vescLive;
+        lastBatteryLive = battery.temperatureValid;
         markDirty(140, 44);
     }
 }
@@ -1198,8 +1281,13 @@ static void updateRange() {
     static float lastHome = -999, lastLimp = -999;
     static bool lastUseMph = !useMph;
 
-    if (abs(remainingRangeKm - lastHome) > 0.1 ||
-        abs(remainingLimpRangeKm - lastLimp) > 0.1 ||
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    const float homeKm = battery.rangeValid ? battery.homeRangeKm : 0.0f;
+    const float limpKm = battery.rangeValid ? battery.limpRangeKm : 0.0f;
+
+    if (abs(homeKm - lastHome) > 0.1 ||
+        abs(limpKm - lastLimp) > 0.1 ||
         useMph != lastUseMph || gRedrawAll) {
 
         // Clear the values column for both rows
@@ -1212,17 +1300,19 @@ static void updateRange() {
         String du = useMph ? "mi" : "km";
         float cv = useMph ? 0.621371 : 1.0;        // km -> mi for distances
 
-        String homeStr = String(remainingRangeKm * cv, 1) + " " + du;
-        if (avgSpeedKmh > 1.0) {
-            int mins = (int)(remainingRangeKm / avgSpeedKmh * 60.0);
-            if (mins > 0 && mins < 1000) homeStr += " " + String(mins) + "m";
+        String homeStr = battery.rangeValid ? String(homeKm * cv, 1) + " " + du
+                                            : String("--");
+        if (battery.vescLive && avgSpeedKmh > 1.0) {
+            int mins = (int)(homeKm / avgSpeedKmh * 60.0);
+            if (mins > 0 && mins < 1000) homeStr += " (" + String(mins) + "m)";
         }
-        String limpStr = String(remainingLimpRangeKm * cv, 1) + " " + du;
+        String limpStr = battery.rangeValid ? String(limpKm * cv, 1) + " " + du
+                                            : String("--");
 
         GFX->drawString(homeStr, X0 + 158, 216);
         GFX->drawString(limpStr, X0 + 158, 232);
 
-        lastHome = remainingRangeKm; lastLimp = remainingLimpRangeKm;
+        lastHome = homeKm; lastLimp = limpKm;
         lastUseMph = useMph;
         markDirty(216, 28);
     }
@@ -1243,9 +1333,12 @@ void updateBatteryCells() {
         return;
     }
 
-    if (currentBatteryPercent != lastPct || BATTERY_CELLS_COUNT != lastCells || gRedrawAll) {
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    const int pct = battery.socValid ? battery.socPct : 0;
+    if (pct != lastPct || BATTERY_CELLS_COUNT != lastCells || gRedrawAll) {
         drawBatteryCellsRow(276, 12, true);
-        lastPct = currentBatteryPercent;
+        lastPct = pct;
         lastCells = BATTERY_CELLS_COUNT;
         markDirty(276, 13);
     }
@@ -1259,7 +1352,10 @@ void updateBottomBar() {
     static bool lastUseMph = !useMph;
     static float lastTrip = -1;
 
-    if (currentBatteryPercent != lastPct || useMph != lastUseMph ||
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    const int pct = battery.socValid ? battery.socPct : 0;
+    if (pct != lastPct || useMph != lastUseMph ||
         abs(tripDistanceKm - lastTrip) >= 0.05 || gRedrawAll) {
         GFX->fillRect(X0, 300, UI_W, 18, COL_BG);
         GFX->setFont(&fonts::Font0);
@@ -1268,7 +1364,7 @@ void updateBottomBar() {
         float odo  = useMph ? totalDistanceKm * 0.621371 : totalDistanceKm;
         float trip = useMph ? tripDistanceKm * 0.621371 : tripDistanceKm;
 
-        String pctStr = String(currentBatteryPercent) + "%";
+        String pctStr = battery.socValid ? String(pct) + "%" : String("--%");
         String rest = String("  T:") + String(trip, 1) + du +
                       "  O:" + String(odo, 0) + du;
         // AUDIT tripwire: lifetime odo must always be >= trip (it includes it).
@@ -1288,12 +1384,12 @@ void updateBottomBar() {
         int sx = X0 + (UI_W - (wp + wr)) / 2;
 
         GFX->setTextDatum(ML_DATUM);
-        GFX->setTextColor(battColor(currentBatteryPercent));
+        GFX->setTextColor(battery.socValid ? battColor(pct) : COL_DIM);
         GFX->drawString(pctStr, sx, 308);
         GFX->setTextColor(COL_DIM);
         GFX->drawString(rest, sx + wp, 308);
 
-        lastPct = currentBatteryPercent;
+        lastPct = pct;
         lastUseMph = useMph;
         lastTrip = tripDistanceKm;
         markDirty(300, 18);
@@ -1317,19 +1413,43 @@ static void updatePower() {
     if (!gRedrawAll && millis() - lastMs < 400) return;
     lastMs = millis();
 
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
     int duty = (int)currentDuty;          // truncate (hide decimal), never round
     int peakW = (int)peakWatts;
-    drawVal(40,  String(currentMotorAmps, 1) + " A", COL_WHITE);
-    drawVal(56,  String(currentAmps, 1) + " A",      COL_WHITE);
-    drawVal(72,  String(duty) + " %", dutyColor(duty));
-    drawVal(88,  String(peakW) + " W", wattColor(peakW));   // PEAK NOW (peak-hold)
-    drawVal(126, String((int)currentWattHours) + " Wh", COL_WHITE);
-    drawVal(142, String("+") + String((int)currentWhRegen) + " Wh", COL_GREEN);
+    const bool live = battery.vescLive;
+    drawVal(40, live ? String(currentMotorAmps, 1) + " A" : String("--"),
+            live ? COL_WHITE : COL_DIM);
+    // Per-motor split (dual VESC over CAN). M2 dim-dashes until the slave
+    // answers the CAN sweep, so a single-motor rider sees one honest value.
+    String m12 = "--";
+    if (live) {
+        m12 = gSlaveOnline
+            ? String(gMasterMotorAmps, 1) + "/" + String(gSlaveMotorAmps, 1) + " A"
+            : String(gMasterMotorAmps, 1) + " A";
+    }
+    drawVal(56, m12, live ? COL_WHITE : COL_DIM);
+    drawVal(72, live ? String(currentAmps, 1) + " A" : String("--"),
+            live ? COL_WHITE : COL_DIM);
+    drawVal(88, live ? String(duty) + " %" : String("--"),
+            live ? dutyColor(duty) : COL_DIM);
+    drawVal(104, live ? String(peakW) + " W" : String("--"),
+            live ? wattColor(peakW) : COL_DIM);
+    drawVal(142, live ? String((int)currentWattHours) + " Wh" : String("--"),
+            live ? COL_WHITE : COL_DIM);
+    drawVal(158, live ? String("+") + String((int)currentWhRegen) + " Wh" : String("--"),
+            live ? COL_GREEN : COL_DIM);
 
     int maxW = (int)maxWattsSession;
-    drawVal(178, String(maxW) + " W", wattColor(maxW));     // MAX RIDE (session max)
-    drawVal(194, String(minVoltageSession, 1) + " V", COL_WHITE);
-    markDirty(22, 186);
+    drawVal(194, live ? String(maxW) + " W" : String("--"),
+            live ? wattColor(maxW) : COL_DIM);
+    // Session peak battery current — the number to eyeball against the pack's
+    // own O/C limits on the BMS page.
+    drawVal(210, live ? String(maxBatteryAmpsSession, 1) + " A" : String("--"),
+            live ? COL_WHITE : COL_DIM);
+    drawVal(226, live ? String(minVoltageSession, 1) + " V" : String("--"),
+            live ? COL_WHITE : COL_DIM);
+    markDirty(22, 238);
 }
 
 #if ESK8OS_BMS_DALY
@@ -1361,10 +1481,32 @@ static void updateBms() {
         drawVal(56, "-- A", COL_DIM);
         drawVal(72, "--",   COL_DIM);
     } else {
+        const bool mosFresh =
+            Esk8OS::Transports::bmsFieldFresh(b, Esk8OS::Transports::BMS_FIELD_MOS);
+        const Esk8OS::Transports::BmsAlarmLevel alarm =
+            Esk8OS::Transports::bmsAlarmLevel(b);
+        // Ride convention (+ = discharge, - = charge/regen); the Daly wire
+        // format is opposite. Green marks charging so the sign flip reads.
+        const float rideA = -b.current;
         drawVal(40, String(b.packVoltage, 1) + " V", COL_WHITE);
-        drawVal(56, String(b.current, 1) + " A", b.current > 0.5f ? COL_GREEN : COL_WHITE);
-        String mos = (b.chargeMos && b.dischargeMos) ? " MOS+" : " MOS-";
-        drawVal(72, String((int)lroundf(b.soc)) + "%" + mos, b.hasFault ? COL_RED : COL_WHITE);
+        drawVal(56, String(rideA, 1) + " A", rideA < -0.5f ? COL_GREEN : COL_WHITE);
+        String mos = !mosFresh ? " MOS?" :
+                     ((b.chargeMos && b.dischargeMos) ? " MOS+" : " MOS-");
+        const Esk8OS::Transports::BmsFaultKind faultKind =
+            Esk8OS::Transports::bmsFaultKind(b);
+        String alarmText =
+            faultKind == Esk8OS::Transports::BMS_FAULT_DISCHARGE_OVERCURRENT_PROTECTION ? " O/C CUT" :
+            faultKind == Esk8OS::Transports::BMS_FAULT_DISCHARGE_OVERCURRENT_WARNING ? " O/C WARN" :
+            alarm == Esk8OS::Transports::BMS_ALARM_WARNING ? " WARN" :
+            alarm == Esk8OS::Transports::BMS_ALARM_ALERT ? " ALERT" : "";
+        // The value zone clears 84 px; "100% MOS- O/C CUT" overflows it and
+        // overdraws the SOC label — during an alarm the MOS state is implied
+        // (a cut IS a MOS-), so show the alarm instead of both.
+        if (alarmText.length()) mos = "";
+        uint16_t alarmColor = alarm == Esk8OS::Transports::BMS_ALARM_ALERT ? COL_RED :
+                              alarm == Esk8OS::Transports::BMS_ALARM_WARNING ? COL_YELLOW :
+                              COL_WHITE;
+        drawVal(72, String((int)lroundf(b.soc)) + "%" + mos + alarmText, alarmColor);
     }
 
     // Cells card interior (below the header underline at y=98): clear + redraw.
@@ -1376,7 +1518,7 @@ static void updateBms() {
         GFX->setTextDatum(MC_DATUM);
         GFX->setTextColor(COL_DIM);
         GFX->drawString("BMS LINK DOWN", X0 + UI_W / 2, 150);
-        GFX->drawString("check UART wiring", X0 + UI_W / 2, 164);
+        GFX->drawString("close Daly app / move closer", X0 + UI_W / 2, 164);
         markDirty(22, 234);
         return;
     }
@@ -1390,8 +1532,16 @@ static void updateBms() {
 
     for (int c = 0; c < cells && c < Esk8OS::Transports::BMS_MAX_CELLS; c++) {
         const int y = gridY0 + (c / cols) * rowH;
-        const bool isMin = (c + 1) == b.minCellNo;
-        const bool isMax = (c + 1) == b.maxCellNo;
+        // A healthy pack always has a mathematical minimum; red is reserved for
+        // a meaningfully lagging cell so an 8-10 mV normal spread is not painted
+        // like a failure.
+        // minCellNo/maxCellNo/delta come from the 0x91 frame and are carried
+        // forward when it stops arriving — gate the highlight on that group's
+        // freshness exactly like the per-cell rows gate on cellFresh.
+        const bool extremaFresh =
+            Esk8OS::Transports::bmsFieldFresh(b, Esk8OS::Transports::BMS_FIELD_MINMAX_V);
+        const bool isMin = extremaFresh && (c + 1) == b.minCellNo && b.cellDeltamV >= 50;
+        const bool isMax = extremaFresh && (c + 1) == b.maxCellNo;
         const bool stale = !Esk8OS::Transports::cellFresh(b, c);
         GFX->setTextColor(bmsCellColor(isMin, isMax, b.balancing[c], stale));
         char row_s[16];
@@ -1401,14 +1551,47 @@ static void updateBms() {
     }
 
     // Imbalance + temp range. Delta is the number to watch; red past ~100 mV.
+    // 0x91/0x92 are independent response groups: when one stops arriving, show
+    // "?" rather than a carried-forward value presented as current.
+    const bool deltaFresh =
+        Esk8OS::Transports::bmsFieldFresh(b, Esk8OS::Transports::BMS_FIELD_MINMAX_V);
+    const bool tempFresh =
+        Esk8OS::Transports::bmsFieldFresh(b, Esk8OS::Transports::BMS_FIELD_MINMAX_T) ||
+        Esk8OS::Transports::bmsFieldFresh(b, Esk8OS::Transports::BMS_FIELD_TEMPS);
     char st[28];
-    snprintf(st, sizeof(st), "delta %u mV   %d-%dC",
-             (unsigned)b.cellDeltamV, b.tempMin, b.tempMax);
+    if (deltaFresh && tempFresh) {
+        snprintf(st, sizeof(st), "delta %u mV   %d-%dC",
+                 (unsigned)b.cellDeltamV, b.tempMin, b.tempMax);
+    } else if (deltaFresh) {
+        snprintf(st, sizeof(st), "delta %u mV   ?-?C", (unsigned)b.cellDeltamV);
+    } else {
+        snprintf(st, sizeof(st), "delta ? mV   ?-?C");
+    }
     GFX->setTextDatum(TL_DATUM);
-    GFX->setTextColor((b.hasFault || b.cellDeltamV > 100) ? COL_RED : COL_DIM);
+    const Esk8OS::Transports::BmsAlarmLevel alarm =
+        Esk8OS::Transports::bmsAlarmLevel(b);
+    GFX->setTextColor((alarm == Esk8OS::Transports::BMS_ALARM_ALERT ||
+                       b.cellDeltamV > 100) ? COL_RED :
+                      (alarm == Esk8OS::Transports::BMS_ALARM_WARNING ? COL_YELLOW : COL_DIM));
     GFX->drawString(st, X0 + 12, 216);
 
-    markDirty(22, 234);
+    // Coulomb counter, cycle count, and (once the read-only Modbus read has
+    // landed) the pack's own discharge O/C limits — the context that puts the
+    // POWER page's session peak amps in perspective.
+    char st2[40];
+    if (b.dischargeOcSettingsValid) {
+        snprintf(st2, sizeof(st2), "%.1f/%.0fAh %ucy OC%.0f/%.0f/%.0f",
+                 b.remainingAh, BATTERY_EFFECTIVE_CAPACITY_AH, (unsigned)b.cycles,
+                 b.dischargeOcWarningA, b.dischargeOcProtection1A,
+                 b.dischargeOcProtection2A);
+    } else {
+        snprintf(st2, sizeof(st2), "%.1f/%.0fAh %ucy",
+                 b.remainingAh, BATTERY_EFFECTIVE_CAPACITY_AH, (unsigned)b.cycles);
+    }
+    GFX->setTextColor(COL_DIM);
+    GFX->drawString(st2, X0 + 12, 228);
+
+    markDirty(22, 240);
 }
 #endif
 
@@ -1548,18 +1731,24 @@ static const char* faultName(int f) {
 }
 
 // Highest-priority alert: 1 fault, 2 link-lost, 3 over-temp, 4 crit battery,
-// 7 limp floor, 8 loaded sag, 9 turn-home reserve, 10 wifi confirm.
+// 7 limp floor, 8 loaded sag, 9 turn-home reserve, 10 wifi confirm, 11 BMS alert.
 int alertState() {
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
     if (systemMode == MODE_BRIDGE_CONFIRM) return 5;
     if (systemMode == MODE_TRIP_RESET_CONFIRM) return 6;
     if (systemMode == MODE_WIFI_CONFIRM) return 10;
     if (vescFault != 0) return 1;
-    if (!vescLinkOk) return 2;
+    if (battery.alarmLevel == Esk8OS::Transports::BMS_ALARM_ALERT) return 11;
+    // A VESC that was never seen this boot is an expected parked/USB-powered
+    // battery-monitor state. A link that disappears after being live remains a
+    // real alert and is never hidden merely because the BMS is still reachable.
+    if (!vescLinkOk && lastVescOkMs != 0) return 2;
     if (currentMotorTemp > MOTOR_TEMP_LIMIT || currentEscTemp > ESC_TEMP_LIMIT) return 3;
     if (rangeAlertState == 3) return 7;
     if (rangeAlertState == 2) return 8;
     if (rangeAlertState == 1) return 9;
-    if (currentBatteryPercent < BATT_CRIT_PCT) return 4;
+    if (battery.socValid && battery.socPct < BATT_CRIT_PCT) return 4;
     return 0;
 }
 
@@ -1590,13 +1779,31 @@ void updateOverlays(int state) {
     if (state == lastState && !gRedrawAll && millis() - lastEvalMs < 100) return;
     lastEvalMs = millis();
 
-    bool crit = (state == 4 || state == 7);
+    bool crit = (state == 4 || state == 7 || state == 11);
     int by = crit ? 108 : 118;
     int bh = crit ? 92 : 64;
 
     String line1, line2, line3 = "";
     if (state == 1)      { line1 = "! FAULT";      line2 = faultName(vescFault); }
     else if (state == 2) { line1 = "VESC";         line2 = "LINK LOST"; }
+    else if (state == 11) {
+        Esk8OS::Transports::BmsData bms;
+        Esk8OS::Transports::getBmsData(&bms);
+        const Esk8OS::Transports::BmsFaultKind kind =
+            Esk8OS::Transports::bmsFaultKind(bms);
+        if (kind == Esk8OS::Transports::BMS_FAULT_DISCHARGE_OVERCURRENT_PROTECTION) {
+            line1 = "! BMS CUT";
+            line2 = "DISCHARGE O/C";
+            line3 = "PROTECTION";
+        } else if (kind == Esk8OS::Transports::BMS_FAULT_DISCHARGE_OVERCURRENT_WARNING) {
+            line1 = "! BMS ALERT";
+            line2 = "DISCHARGE O/C";
+            line3 = "EASE THROTTLE";
+        } else {
+            line1 = "! BMS ALERT";
+            line2 = "CHECK PACK PAGE";
+        }
+    }
     else if (state == 3) {
         line1 = "! HOT";
         line2 = (currentMotorTemp > MOTOR_TEMP_LIMIT)
@@ -1624,9 +1831,11 @@ void updateOverlays(int state) {
         line2 = String(useMph ? remainingRangeKm * 0.621371f : remainingRangeKm, 1) +
                 (useMph ? " MI LEFT" : " KM LEFT");
     } else {
+        const Esk8OS::Telemetry::BatteryView battery =
+            Esk8OS::Telemetry::getBatteryView();
         line1 = "LOW BATTERY";
         line2 = "STOP & CHARGE";
-        line3 = String(currentBatteryPercent) + "%   " + String(currentVoltage, 1) + " V";
+        line3 = String(battery.socPct) + "%   " + String(battery.packVoltage, 1) + " V";
     }
 
     String textKey = line1 + "|" + line2 + "|" + line3;
@@ -1688,13 +1897,16 @@ void updateBatteryCells() {}
 void updateBottomBar() {}
 
 int alertState() {
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
     if (vescFault != 0) return 1;
-    if (!vescLinkOk) return 2;
+    if (battery.alarmLevel == Esk8OS::Transports::BMS_ALARM_ALERT) return 11;
+    if (!vescLinkOk && lastVescOkMs != 0) return 2;
     if (currentMotorTemp > MOTOR_TEMP_LIMIT || currentEscTemp > ESC_TEMP_LIMIT) return 3;
     if (rangeAlertState == 3) return 7;
     if (rangeAlertState == 2) return 8;
     if (rangeAlertState == 1) return 9;
-    if (currentBatteryPercent < BATT_CRIT_PCT) return 4;
+    if (battery.socValid && battery.socPct < BATT_CRIT_PCT) return 4;
     return 0;
 }
 

@@ -258,7 +258,7 @@ extern char  gVescHwName[17];
 // telemetry.cpp "adaptive calibration" section; `cal` console command)
 extern float gPackROhm;         // pack internal resistance (sag compensation)
 extern float gTypicalRideAmps;  // EMA of battery draw while rolling (sag-floor input)
-extern float gLearnedPackWh;    // measured deliverable pack energy (0 = not learned)
+extern float gLearnedPackWh;    // qualified range-model pack energy (0 = unlearned)
 extern float gLearnedWhPerKm;   // cross-ride consumption EMA (0 = not learned)
 extern unsigned long rideStartMs;
 extern float sessionTripStartKm, tripDistanceKm, totalDistanceKm;

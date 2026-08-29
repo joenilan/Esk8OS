@@ -1,5 +1,6 @@
 #include "ui/UiRenderer.h"
 #include "board/BoardLilyGoTDisplayS3.h"
+#include "telemetry/BatteryView.h"
 
 #if ESK8OS_DISPLAY_OLED
 #include <Wire.h>
@@ -51,9 +52,13 @@ static void setOledDimmed(bool dimmed) {
 
 static bool oledShouldDim(bool screensaverActive) {
     // Battery-low dim only with real data — the 0% boot-seed with no VESC
-    // linked otherwise kept the bench screen needlessly dim (TFT has the
-    // same telemetryLive gate on its low-power dim).
-    return screensaverActive || (oledTelemetryLive() && currentBatteryPercent <= 15);
+    // linked otherwise kept the bench screen needlessly dim. Source-aware like
+    // the TFT low-power dim: a BMS-only parked board dims on real SOC too, and
+    // the boundary matches the crit-battery banner (below BATT_CRIT_PCT).
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    return screensaverActive ||
+           (battery.live && battery.socValid && battery.socPct < BATT_CRIT_PCT);
 }
 
 static void drawOledBootSplash(uint8_t progressPct, const char* status) {
@@ -396,15 +401,21 @@ static void drawOledScreensaver() {
     oled.print("EVEE");
     oled.setTextColor(SSD1306_WHITE);
     oled.setTextSize(1);
-    // Live stat corners only with real data (TFT saver rule): with no VESC
-    // they'd read a fake "0% 0mi", so the logo + pair code stand alone.
-    if (oledTelemetryLive()) {
+    // Live stat corners only with real data (TFT saver rule): the source-aware
+    // battery view is live with the VESC OR the Daly BMS, so a BMS-only parked
+    // board still shows its pack; a bare bench shows just the logo + pair code.
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    if (battery.live) {
         oled.setCursor(1, 0);
-        oled.print(currentBatteryPercent);
+        oled.print(battery.socValid ? battery.socPct : 0);
         oled.print("%");
-        oled.setCursor(92, 24);
-        oled.print((int)(useMph ? remainingRangeKm * 0.621371f : remainingRangeKm));
-        oled.print(useMph ? "mi" : "km");
+        if (battery.rangeValid) {
+            oled.setCursor(92, 24);
+            oled.print((int)(useMph ? battery.homeRangeKm * 0.621371f
+                                    : battery.homeRangeKm));
+            oled.print(useMph ? "mi" : "km");
+        }
     }
     // Pair code while idle — matches the TFT saver, so the rider can match the
     // board to the app's scan list on any display tier.
@@ -629,14 +640,22 @@ void renderTftScreensaver() {
     GFX->setTextColor(COL_BG);
     GFX->drawString("EVEE", x + logoW / 2, y + logoH / 2);
     GFX->setFont(&fonts::Font0);
-    // Only show the live stat corners when the VESC is actually linked; with no
-    // ESC connected they'd read a fake "0%  0.0V", so leave just the logo.
-    if (telemetryLive) {
+    // Battery corners remain useful in parked USB-powered monitor mode. The
+    // source-aware view returns unavailable rather than fake zeroes on a build
+    // with neither VESC nor smart BMS.
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    if (battery.live) {
         GFX->setTextDatum(TL_DATUM);
         GFX->setTextColor(COL_DIM);
-        GFX->drawString(String(currentBatteryPercent) + "%  " + String(currentVoltage, 1) + "V", 6, 6);
-        String range = String(useMph ? remainingRangeKm * 0.621371f : remainingRangeKm, 0) + (useMph ? " mi" : " km");
-        GFX->drawString(range, w - GFX->textWidth(range) - 6, h - 14);
+        GFX->drawString(String(battery.socPct) + "%  " +
+                        String(battery.packVoltage, 1) + "V", 6, 6);
+        if (battery.rangeValid) {
+            String range = String(useMph ? battery.homeRangeKm * 0.621371f
+                                         : battery.homeRangeKm, 0) +
+                           (useMph ? " mi" : " km");
+            GFX->drawString(range, w - GFX->textWidth(range) - 6, h - 14);
+        }
     }
     // Pair code (BLE MAC tail) — visible while idle so the rider can match the
     // board to the right entry in the app's scan list before connecting.

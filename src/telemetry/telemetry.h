@@ -18,3 +18,17 @@ void telemetryResetCal();             // clear learned calibration back to seeds
 // just the resting number the user set.
 float effectiveHomeFloorCellV();
 float effectiveLimpFloorCellV();
+// Resting/open-circuit Li-ion estimate used when a coulomb counter is absent or
+// invalid. This is a provisional fallback, not a replacement for fresh BMS SOC.
+int estimateLiIonSocFromCellVoltage(float cellVolts);
+// Same estimate for a loaded cell measurement. Uses the VESC-authoritative
+// signed pack current and learned pack resistance to undo discharge sag (or
+// charge lift). It remains VESC-current based so drivetrain calculations keep a
+// single current authority even though Daly sign/scaling is now ride-verified.
+int estimateLiIonSocFromLoadedCellVoltage(float cellVolts,
+                                          float packCurrentA,
+                                          int cellCount);
+// Read-only range projection for an externally supplied SOC (for example the
+// Daly BMS). Uses the same learned pack-energy/Wh-distance model and reserve
+// floors as the VESC path without mutating its filtered SOC or learning state.
+float estimateRemainingRangeForSoc(float socPct, bool toLimpFloor = false);

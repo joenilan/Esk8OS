@@ -1,5 +1,7 @@
 #include "app/App.h"
+#include "app/TripResetPolicy.h"
 #include "esk8os.h"
+#include "telemetry/BatteryView.h"
 #include "ui/ui.h"
 #include "ui/UiRenderer.h"
 #if ESK8OS_FULL_UI
@@ -72,6 +74,9 @@ static void cycleHudFace() {
 // so paging at a stop stays on useful screens and you reach config deliberately.
 static const int PAGE_ORDER[] = {
     PAGE_HUD, PAGE_DASH, PAGE_POWER, PAGE_TRIP, PAGE_GRAPHS,
+#if ESK8OS_BMS_DALY
+    PAGE_BMS,
+#endif
     PAGE_SETTINGS, PAGE_SYSTEM, PAGE_LOGS,
 };
 static const int PAGE_ORDER_N = sizeof(PAGE_ORDER) / sizeof(PAGE_ORDER[0]);
@@ -234,7 +239,18 @@ void pageRel(int dir) {
 
 // Zero the current ride/trip metrics and repaint. Shared by the LEFT long-press and
 // the companion app's TRIP_RESET command — both run on the UI thread.
-void resetTrip() {
+static const char* tripResetEvent(TripResetReason reason) {
+    switch (reason) {
+        case TripResetReason::Physical:     return "trip_reset_button";
+        case TripResetReason::CompanionBle: return "trip_reset_ble";
+        case TripResetReason::Console:      return "trip_reset_console";
+        case TripResetReason::Remote:       return "trip_reset_remote";
+        case TripResetReason::AutoParked:   return "trip_reset_auto_parked";
+        default:                            return "trip_reset_unknown";
+    }
+}
+
+void resetTrip(TripResetReason reason) {
     saveRideSummaryLog();
     tripDistanceKm = 0;
     tripMovingSec = 0;
@@ -271,6 +287,9 @@ void resetTrip() {
         peakWatts = 0;
     }
     saveOdo();
+    // Session logs span trip resets. Record the cleared state and its origin,
+    // then flush immediately so even a following power loss leaves evidence.
+    sessionLogMark(tripResetEvent(reason));
     drawStaticFrame();
     gRedrawAll = true;
     showToast(DEMO_DATA ? "RECHARGED" : "TRIP RESET");
@@ -356,7 +375,7 @@ void checkButtons() {
         if (left == LOW && lastLeftBtn == HIGH) {
             lockSingles = true;
             systemMode = MODE_DASHBOARD;
-            resetTrip();                 // repaints + toasts on its own
+            resetTrip(TripResetReason::Physical); // repaints + toasts on its own
         } else if (right == LOW && lastRightBtn == HIGH) {
             lockSingles = true;
             systemMode = MODE_DASHBOARD;
@@ -451,10 +470,13 @@ void dashboardLoop() {
     // session (lastMovedMs set) and then sits still for 6h, zero the trip so the
     // next ride starts fresh. A power-off gap can't be measured (no RTC), so a
     // cold boot instead continues from NVS; manual TRIP_RESET still zeros anytime.
-    static const unsigned long TRIP_PARK_RESET_MS = 6UL * 3600UL * 1000UL;
-    if (!DEMO_DATA && lastMovedMs != 0 && tripDistanceKm > 0.0f &&
-        now - lastMovedMs > TRIP_PARK_RESET_MS) {
-        resetTrip();
+    // Refresh after pollVescData(): telemetry may have set lastMovedMs a few
+    // milliseconds after the loop timestamp captured above. The policy also
+    // rejects a causally-newer lastMovedMs, preventing unsigned underflow even
+    // if a future refactor accidentally reintroduces a stale timestamp here.
+    const uint32_t parkedNowMs = millis();
+    if (tripParkResetDue(parkedNowMs, lastMovedMs, tripDistanceKm, DEMO_DATA)) {
+        resetTrip(TripResetReason::AutoParked);
     }
 
     // Stream telemetry to the companion app + apply any queued settings/commands.
@@ -470,8 +492,15 @@ void dashboardLoop() {
     // sits on LINK LOST forever, locking the rider out of the very menu that
     // toggles demo mode. Suppress PASSIVE alerts on SETTINGS so config is always
     // reachable; keep the rider-initiated confirm modals (bridge/trip/wifi =
-    // states 5/6/10), which are prompts the rider asked for.
-    if (currentPage == PAGE_SETTINGS && alert != 5 && alert != 6 && alert != 10) {
+    // states 5/6/10), which are prompts the rider asked for. The BMS page gets
+    // the same treatment: its banner says "CHECK PACK PAGE", so while the rider
+    // is ON that page the live cells grid is the alert surface and the frozen
+    // banner on top of it would bury exactly the data it points to.
+    if ((currentPage == PAGE_SETTINGS
+#if ESK8OS_BMS_DALY
+         || currentPage == PAGE_BMS
+#endif
+        ) && alert != 5 && alert != 6 && alert != 10) {
         alert = 0;
     }
     bool toastUp = (long)(gToastUntil - millis()) > 0;
@@ -481,7 +510,11 @@ void dashboardLoop() {
     static bool lowPowerActive = false;
     // Only dim for a genuinely low battery — not for a stale 0% left over when no
     // VESC is linked (otherwise the bench/no-ESC screen sits needlessly dim).
-    bool needsLowPower = telemetryLive && (currentBatteryPercent <= 15);
+    const Esk8OS::Telemetry::BatteryView battery =
+        Esk8OS::Telemetry::getBatteryView();
+    // Same boundary as the crit-battery banner (BATT_CRIT_PCT, below-this
+    // semantics) so the dim and the banner agree at the edge.
+    bool needsLowPower = battery.socValid && (battery.socPct < BATT_CRIT_PCT);
     if (needsLowPower && !lowPowerActive) {
         lowPowerActive = true;
         Esk8OS::Board::setBacklight(25);
@@ -501,6 +534,11 @@ void dashboardLoop() {
                    currentSpeedKmh < 0.5f && fabs(currentAmps) < 1.0f &&
                    (alert == 0 || alert == 2) &&
                    (now - gLastInteractionMs > 2000);   // a recent button press keeps the screen awake
+    // An active BMS alert (11) intentionally blocks idle: a parked board with a
+    // live pack fault keeps its banner visible at full brightness instead of
+    // bouncing a logo over it. Only genuinely live fault bytes feed alertState
+    // (lastFaultBytes stay out of it), so a self-cleared protection re-arms the
+    // saver on its own.
     if (tftIdle) {
         if (tftIdleSinceMs == 0) tftIdleSinceMs = now;
     } else {
@@ -628,7 +666,7 @@ void loop() {
     // throttle loop would race the renderer and put a screen redraw on the
     // critical path of a 100 Hz control loop. No-ops without EVEE_LINK_ENABLED.
     if (RemoteLink::takePageNext())  pageRel(+1);
-    if (RemoteLink::takeTripReset()) resetTrip();
+    if (RemoteLink::takeTripReset()) resetTrip(TripResetReason::Remote);
 
     if (systemMode == MODE_VESC_BRIDGE) {
         companionBleTick();
