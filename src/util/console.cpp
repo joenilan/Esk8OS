@@ -14,6 +14,8 @@
 #include "ui/UiRenderer.h"
 #include <LittleFS.h>
 #include <esp_system.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
 #if ESK8OS_DISPLAY_OLED
 #include <Wire.h>
 #endif
@@ -429,6 +431,66 @@ static void cmdUnset(const char* arg) {
         consoleOut().printf("override '%s' removed - `cfg` shows the fallback tier\n", a.c_str());
     else
         consoleOut().println("unknown key (cells, packAh, stopCell, homeCell, whmi, wheelmm)");
+}
+
+// Compare this board's semver against the release feed. Requires the board
+// itself to be online (WiFi.status() == WL_CONNECTED) - bridge mode or the
+// export AP only bring the radio up; the uplink must actually reach the feed.
+// Parses "version":"x.y.z" out of latest.json and compares numerically.
+static void cmdOtaCheck() {
+    if (WiFi.status() != WL_CONNECTED) {
+        consoleOut().println(
+            "no WiFi station up - otacheck needs the board itself online");
+        return;
+    }
+    consoleOut().println("checking release feed...");
+    HTTPClient http;
+    http.setTimeout(5000);
+    if (!http.begin(
+            "http://apps.zombie.digital/downloads/esk8os-firmware/latest.json")) {
+        consoleOut().println("otacheck: client setup failed");
+        return;
+    }
+    const int code = http.GET();
+    if (code != 200) {
+        consoleOut().printf("fetch failed: %d\n", code);
+        http.end();
+        return;
+    }
+    const String body = http.getString();
+    http.end();
+
+    const int vIdx = body.indexOf("\"version\"");
+    if (vIdx < 0) { consoleOut().println("feed: no version field"); return; }
+    const int q1 = body.indexOf('"', vIdx + 9);
+    const int q2 = q1 < 0 ? -1 : body.indexOf('"', q1 + 1);
+    if (q2 < 0) { consoleOut().println("feed: malformed version"); return; }
+    const String latest = body.substring(q1 + 1, q2);
+
+    int ma = 0, mi = 0, pa = 0;
+    if (sscanf(FW_VERSION_SEMVER, "%d.%d.%d", &ma, &mi, &pa) != 3) {
+        consoleOut().println("otacheck: running version unparsable");
+        return;
+    }
+    int maL = 0, miL = 0, paL = 0;
+    if (sscanf(latest.c_str(), "%d.%d.%d", &maL, &miL, &paL) != 3) {
+        consoleOut().printf("feed version unparsable: %s\n", latest.c_str());
+        return;
+    }
+    const uint32_t oursNum =
+        (uint32_t)ma * 10000 + (uint32_t)mi * 100 + (uint32_t)pa;
+    const uint32_t latestNum =
+        (uint32_t)maL * 10000 + (uint32_t)miL * 100 + (uint32_t)paL;
+    consoleOut().printf("running %s | latest %s\n", FW_VERSION_SEMVER,
+                        latest.c_str());
+    if (oursNum >= latestNum) {
+        consoleOut().println("up to date");
+    } else {
+        consoleOut().printf(
+            "UPDATE AVAILABLE: v%s - fetch from the release feed, flash via "
+            "the export AP updater or USB\n",
+            latest.c_str());
+    }
 }
 
 // One-line machine-readable full state: live telemetry + settings + VESC base.
@@ -887,6 +949,7 @@ static void cmdHelp() {
     consoleOut().println(F("  unset <k>       drop a rider override -> falls back to VESC base"));
     consoleOut().println(F("  json            full state as one JSON line (for scripts/AI)"));
     consoleOut().println(F("  ping            liveness + version (for scripts)"));
+    consoleOut().println(F("  otacheck        compare firmware vs the release feed (needs WiFi up)"));
     consoleOut().println(F("  mcconf          raw VESC config capture status + saved dump"));
     consoleOut().println(F("  sys             fw, uptime, heap/psram, reset reason, fps"));
     consoleOut().println(F("  cfg             units/demo/brightness/battery/wheel config"));
@@ -972,6 +1035,7 @@ static void dispatch(char* line) {
     else if (!strcmp(line, "unset")) cmdUnset(arg);
     else if (!strcmp(line, "json")) cmdJsonDump();
     else if (!strcmp(line, "ping")) consoleOut().printf("pong %s up %lus\n", FW_VERSION_FULL, millis() / 1000UL);
+    else if (!strcmp(line, "otacheck")) cmdOtaCheck();
     else if (!strcmp(line, "mcconf")) cmdMcconf();
     else if (!strcmp(line, "sys"))  cmdSys();
     else if (!strcmp(line, "i2c"))  cmdI2c();
