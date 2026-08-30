@@ -14,7 +14,7 @@ these — diagnostics only.
 | Total Overvolt Protect | 42.5 V | pack rests 41.9 V full — inside |
 | Total Undervolt Protect | 27.0 V | EVEE home floor 41.3 V pack-equivalent fires first |
 | Volt Diff Protect | 0.3 V | EVEE alert threshold 100 mV — fires first |
-| Charge Overcurrent Protect | 20.0 A | not yet read via Modbus (register 0x144 range) |
+| Charge Overcurrent Protect | 20.0 A | deliberately NOT read: the ESP is off while charging and no app is open, so charge-side data has no consumer in this rider's workflow |
 | Discharge Overcurrent Protect | 45.0 A | **matches Modbus protect1 45.0 A / 1000 ms** |
 | Short Circuit Current | 600 A | hardware-level, EVEE does not read |
 | HW Short Circuit Protect | Open | disabled |
