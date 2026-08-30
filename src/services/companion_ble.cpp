@@ -559,6 +559,13 @@ static void dispatchCommand(const char* cmd) {
     }
 
     if      (!strcmp(cmd, "TRIP_RESET"))        Esk8OS::App::resetTrip(Esk8OS::App::TripResetReason::CompanionBle);
+    // Destructive radio commands are refused while the vehicle is moving —
+    // same guardrail as the moving trip-reset block in resetTrip().
+    else if (!strcmp(cmd, "REBOOT") || !strcmp(cmd, "CAL_RESET")) {
+        if (currentSpeedKmh > 3.0f) showToast("BLOCKED - MOVING");
+        else if (!strcmp(cmd, "REBOOT")) { saveOdo(); sessionLogEnd(); delay(100); ESP.restart(); }
+        else { telemetryResetCal(); showToast("CAL RESET"); }
+    }
     else if (!strcmp(cmd, "PAGE_NEXT"))         Esk8OS::App::pageRel(+1);   // same order as the buttons
     else if (!strcmp(cmd, "PAGE_PREV"))         Esk8OS::App::pageRel(-1);
     else if (!strncmp(cmd, "PAGE_SET:", 9))   { int p = atoi(cmd + 9); if (p >= 0 && p < PAGE_COUNT) { settingsCursor = 0; currentPage = p; drawStaticFrame(); gRedrawAll = true; } }  // absolute page (app pages don't 1:1 the board's count)
@@ -567,7 +574,6 @@ static void dispatchCommand(const char* cmd) {
     else if (!strcmp(cmd, "BRIDGE_TOGGLE"))     { if (systemMode == MODE_VESC_BRIDGE) exitBridgeMode(); else requestBridgeMode(); }
     else if (!strcmp(cmd, "WIFI_EXPORT_START")) requestWifiExport();        // standalone AP + http (logs/OTA); telemetry stays live
     else if (!strcmp(cmd, "WIFI_EXPORT_STOP"))  { if (webServiceActive())  { webServiceStop();  showToast("WIFI OFF"); } }
-    else if (!strcmp(cmd, "CAL_RESET"))       { telemetryResetCal(); showToast("CAL RESET"); }   // new battery -> re-learn range from scratch
     else if (!strncmp(cmd, "UNSET:", 6)) {
         // Drop an explicit rider tier so the cached/live VESC base becomes
         // authoritative again. Never implement this by writing the VESC number
@@ -575,7 +581,6 @@ static void dispatchCommand(const char* cmd) {
         if (Esk8OS::Settings::removeOverride(cmd + 6)) showToast("USING VESC");
         else showToast("UNKNOWN SETTING");
     }
-    else if (!strcmp(cmd, "REBOOT"))          { saveOdo(); sessionLogEnd(); delay(100); ESP.restart(); }
 }
 
 class CommandCallbacks : public NimBLECharacteristicCallbacks {

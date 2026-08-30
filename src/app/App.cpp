@@ -251,6 +251,18 @@ static const char* tripResetEvent(TripResetReason reason) {
 }
 
 void resetTrip(TripResetReason reason) {
+    // Radio-sourced resets (phone app, EVEE remote) are refused while the
+    // vehicle is moving: an unauthenticated link must not be able to wipe
+    // trip data mid-ride (the 2026-08-30 commute had its board trip zeroed
+    // at 20+ mph by an auto-restart sending TRIP_RESET). Physical button
+    // and console resets stay allowed — presence plus the confirm flow is
+    // the guard there.
+    const bool radioSourced = reason == TripResetReason::CompanionBle ||
+                              reason == TripResetReason::Remote;
+    if (radioSourced && currentSpeedKmh > 3.0f) {
+        showToast("MOVING - TRIP RESET BLOCKED");
+        return;
+    }
     saveRideSummaryLog();
     tripDistanceKm = 0;
     tripMovingSec = 0;
