@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="preload" as="image" href="img/preview_hud_speed.png?v=3">
-<link rel="stylesheet" href="evee.css?v=7">
+<link rel="stylesheet" href="evee.css?v=8">
 </head>
 <body>
 
@@ -25,9 +25,11 @@
   <div class="wrap topbar-in">
     <a class="brand" href="#top" aria-label="EVEE — back to top">EVEE<span class="brand-tick"></span></a>
     <nav class="topnav" aria-label="Sections">
+      <a href="#blackbox">Black box</a>
       <a href="#screens">Screens</a>
       <a href="#safety">Safety</a>
-      <a href="#themes">Themes</a>
+      <a href="#why">Why</a>
+      <a href="#faq">FAQ</a>
       <a href="#firmware">Firmware</a>
       <a href="#app">App</a>
       <a href="manual.html">Manual</a>
@@ -144,6 +146,56 @@
            alt="Safety HUD face: 3.86 volts per cell in green, PACK OK, battery cells, MIN V, SAG, LIMP and LOW tiles"></span>
       <figcaption>Safety face — cell voltage under load</figcaption>
     </figure>
+  </section>
+
+  <!-- ── Black box ─────────────────────────────────────────────────────── -->
+  <section id="blackbox" class="wrap section split">
+    <div class="split-copy">
+      <p class="eyebrow">The black box</p>
+      <h2>When the board cuts power, you'll know why.</h2>
+      <p class="lede">
+        A smart BMS is the only thing that sees every cell — and it acts on
+        what it sees. Overcurrent, a lagging cell, a protection trip: on any
+        stock setup that's a mystery cutoff mid-ride. EVEE logs the exact
+        second it happened, the fault bytes, the pack voltage, every cell.
+      </p>
+      <p class="lede narrow">
+        This is a real event from a real commute — a Daly BMS opened its
+        discharge MOS at 45 A while the rider was at 23 mph. EVEE was the
+        only witness, and it answered the question the BMS app never could:
+        <strong>not a bug, not the ESC — the pack's own protection, working.</strong>
+      </p>
+      <ul class="spec-rows">
+        <li><span class="mono k">44.9 A</span><span>sustained discharge — the pack's 45 A / 1 s protect threshold</span></li>
+        <li><span class="mono k">DISCHARGE MOS</span><span>opened by the BMS, logged live, auto-retried ~9 s later</span></li>
+        <li><span class="mono k">41.9 → 36.6 V</span><span>pack sag across the ride, per-cell min tracked the whole way</span></li>
+        <li><span class="mono k">0 LOST ROWS</span><span>event rows flush to flash the instant they happen</span></li>
+      </ul>
+    </div>
+    <figure class="split-shot">
+      <span class="shot"><img src="img/preview_bms.png?v=3" width="510" height="960" loading="lazy"
+           alt="Pack page: every cell's voltage, the lagging cell in red, imbalance delta, remaining amp-hours and the BMS's own overcurrent limits"></span>
+      <figcaption>Pack page — per-cell telemetry from a Daly smart BMS over Bluetooth</figcaption>
+    </figure>
+  </section>
+
+  <!-- ── Why EVEE ───────────────────────────────────────────────────────── -->
+  <section id="why" class="wrap section">
+    <p class="eyebrow">Why EVEE</p>
+    <h2>Instrumentation, not another app.</h2>
+    <p class="lede narrow">
+      VESC Tool is for configuring. A phone GPS app is for mapping. Neither
+      watches your pack while you ride, and neither survives a crash without
+      losing the story. EVEE is the always-on layer between them.
+    </p>
+    <div class="spec-rows" style="max-width:none">
+      <li class="spec"><span class="mono">works without the phone</span><span>full dashboard, logging and BMS telemetry while the phone rides in your pocket — or at home</span></li>
+      <li class="spec"><span class="mono">read-only by design</span><span>the only thing EVEE ever writes to the ESC is the odometer; it cannot command current, duty or cutoffs</span></li>
+      <li class="spec"><span class="mono">black-box logging</span><span>1 Hz CSV + BMS per-cell detail, byte-budgeted so fresh rides always fit, event rows flushed at the moment they happen</span></li>
+      <li class="spec"><span class="mono">honest battery math</span><span>sag-compensated range against your learned consumption — plus the BMS's own coulomb counter as a cross-check</span></li>
+      <li class="spec"><span class="mono">self-hosted updates</span><span>checksummed release feed you control, OTA from the board's own WiFi — no vendor servers, no accounts</span></li>
+      <li class="spec"><span class="mono">open source</span><span>firmware, app and this site — audit it, fork it, theme it</span></li>
+    </div>
   </section>
 
   <!-- ── Themes ───────────────────────────────────────────────────────── -->
@@ -292,9 +344,55 @@
         <p>The app reads this site's release feed and compares it to your board's version.</p></div>
       <div class="step"><span class="step-n mono">02</span><h3>Fetch</h3>
         <p>It downloads the build for your hardware, verified against its published checksum.</p></div>
-      <div class="step"><span class="step-n mono">03</span><h3>Flash</h3>
+       <div class="step"><span class="step-n mono">03</span><h3>Flash</h3>
         <p>The board raises its own WiFi, takes the image, verifies, and reboots. Odometer and settings stay put.</p></div>
     </div>
+  </section>
+
+  <!-- ── FAQ ──────────────────────────────────────────────────────────── -->
+  <section id="faq" class="wrap section">
+    <p class="eyebrow">FAQ</p>
+    <h2>The questions riders actually ask.</h2>
+    <details open>
+      <summary>Can it control my motors?</summary>
+      <p>No — and it can't be talked into it. EVEE's firmware has no write
+      path for current, duty, cutoffs or motor config. The only value it ever
+      sends to the ESC is the odometer. Your remote and the VESC remain the
+      only things that drive the motors.</p>
+    </details>
+    <details>
+      <summary>Does it work without the phone?</summary>
+      <p>Fully. Dashboard, settings, themes, logging and BMS telemetry all
+      run on the board alone. The app adds GPS recording, remote faces and
+      firmware updates — it's an enhancement, not a dependency.</p>
+    </details>
+    <details>
+      <summary>Which BMS does it support?</summary>
+      <p>Daly smart BMS with the Bluetooth UART-K module, over BLE — no
+      wiring beyond the module itself. Per-cell voltages, temps, MOS state,
+      protection flags and the pack's own overcurrent limits, read-only.
+      Daly settings writes are intentionally not implemented: your BMS's
+      protections stay yours.</p>
+    </details>
+    <details>
+      <summary>Which VESCs work?</summary>
+      <p>Anything with a UART app on the COMM port — that's essentially every
+      VESC. Some features (the ESC's own ride stats) want firmware 6+. Two
+      motors over CAN are auto-detected.</p>
+    </details>
+    <details>
+      <summary>What happens if the board dies mid-ride?</summary>
+      <p>The log survives. Event rows flush to flash the instant they happen,
+      checkpoints land every 10 seconds, and the phone's recorder keeps GPS
+      mapping through the dropout — then reconciles the board's counter when
+      it comes back. Bench boots can never rotate real ride data away.</p>
+    </details>
+    <details>
+      <summary>Is it really open source?</summary>
+      <p>Firmware, companion app and this site — all in the open. No
+      accounts, no vendor cloud, no telemetry home. The release feed is a
+      JSON file on the rider's own server.</p>
+    </details>
   </section>
 </main>
 

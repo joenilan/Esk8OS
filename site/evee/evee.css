@@ -342,3 +342,40 @@ a.brand, a.brand:hover, a.brand:focus { text-decoration: none; color: var(--text
   .js .reveal { opacity: 1; transform: none; transition: none; }
   .btn, .card, .dl-item, .device-screen, .face-dots button, .screens .shot { transition: none; }
 }
+
+/* ── FAQ ─────────────────────────────────────────────────────────── */
+#faq details {
+  border: 1px solid var(--hairline);
+  border-bottom: none;
+  background: var(--panel);
+}
+#faq details:last-of-type { border-bottom: 1px solid var(--hairline); }
+#faq summary {
+  cursor: pointer;
+  padding: 16px 20px;
+  font-weight: 600;
+  font-size: 0.98rem;
+  color: var(--text);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+#faq summary::-webkit-details-marker { display: none; }
+#faq summary::after {
+  content: "+";
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 1.15rem;
+  transition: transform 0.15s;
+}
+#faq details[open] summary::after { transform: rotate(45deg); }
+#faq details[open] summary { color: var(--accent); }
+#faq details p {
+  margin: 0;
+  padding: 0 20px 18px;
+  color: var(--dim);
+  line-height: 1.65;
+  max-width: 46rem;
+}
+#faq details { margin-top: -1px; }
