@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
-"""Build + publish ESK8OS firmware releases to apps.zombie.digital.
+"""Build and stage a local ESK8OS firmware candidate; never upload or deploy.
 
-Follows the site's RELEASE_CONTRACT.md: builds the release environments,
-packages the .bin artifacts with sha256 sums, writes latest.json/manifest.json/
-notes.md, and uploads everything to the Pi's downloads directory over SFTP.
-
-Usage:
-  python scripts/publish_release.py                 # build + upload
-  python scripts/publish_release.py --dry-run       # build + package only
-  python scripts/publish_release.py --notes "..."   # one-line release summary
-
-Credentials come from .env.raspi (SSH_HOST / SSH_USER / SSH_PASSWORD).
+Use --dry-run to build all six variants and stage checksums and metadata.
+Use --require-clean to enforce a committed, unchanged source identity.
+Publication belongs to the separate website helper after hardware validation.
 """
 
 import argparse
@@ -24,25 +17,31 @@ import sys
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 SLUG = "esk8os-firmware"
-REMOTE_DIR = f"/mnt/data/sites/apps/public/downloads/{SLUG}"
 
-# env name -> (artifact kind, human label)
+# env name -> (artifact kind, human label, BMS driver id)
 RELEASE_ENVS = {
-    "tdisplay_s3_ride_release": ("tdisplay-s3", "LilyGo T-Display-S3 (ride release)"),
-    "esp32s3_oled_i2c_usb":     ("esp32s3-oled", "ESP32-S3 + I2C OLED"),
-    "esp32s3_headless_usb":     ("esp32s3-headless", "ESP32-S3 headless"),
+    "tdisplay_s3_ride_release": ("tdisplay-s3", "LilyGo T-Display-S3 (ride release)", "none"),
+    "tdisplay_s3_bms":          ("tdisplay-s3-bms", "LilyGo T-Display-S3 + Daly BMS (USB serial)", "daly"),
+    "esp32s3_oled_i2c_usb":     ("esp32s3-oled", "ESP32-S3 + I2C OLED", "none"),
+    "esp32s3_oled_i2c_bms_usb": ("esp32s3-oled-bms", "ESP32-S3 + I2C OLED + Daly BMS", "daly"),
+    "esp32s3_headless_usb":     ("esp32s3-headless", "ESP32-S3 headless", "none"),
+    "esp32s3_headless_bms_usb": ("esp32s3-headless-bms", "ESP32-S3 headless + Daly BMS", "daly"),
 }
 
 
-def read_env_file(path: pathlib.Path) -> dict:
-    env = {}
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        env[k.strip()] = v.strip()
-    return env
+def source_identity() -> dict:
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=REPO, stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        dirty = bool(subprocess.check_output(
+            ["git", "status", "--porcelain"], cwd=REPO, stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip())
+        return {"commit": commit, "dirty": dirty}
+    except (OSError, subprocess.CalledProcessError):
+        return {"commit": None, "dirty": None}
 
 
 def sha256_file(p: pathlib.Path) -> str:
@@ -55,32 +54,66 @@ def sha256_file(p: pathlib.Path) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dry-run", action="store_true", help="build + package locally, skip upload")
+    ap.add_argument("--dry-run", action="store_true", help="required: build and package locally; publication is separate")
+    ap.add_argument("--require-clean", action="store_true",
+                    help="require a committed source tree unchanged throughout the build")
     ap.add_argument("--notes", default="", help="one-line release summary for latest.json")
     ap.add_argument("--skip-build", action="store_true", help="package existing .pio build output")
+    ap.add_argument("--output-dir", type=pathlib.Path,
+                    help="verification staging directory (requires --dry-run)")
     args = ap.parse_args()
+    if not args.dry_run:
+        ap.error("Live publishing is retired. Use --dry-run to stage a candidate; "
+                 "publication requires the separate website process after hardware validation.")
+    source = source_identity()
+    if args.require_clean and (not source["commit"] or source["dirty"] is not False):
+        print("[source] a clean committed source tree is required")
+        return 1
 
     version = (REPO / "version.txt").read_text().strip()
-    out = REPO / "release" / version
-    out.mkdir(parents=True, exist_ok=True)
+    out = args.output_dir or REPO / "release" / version
 
     # 1. Build every release environment.
     if not args.skip_build:
         for env in RELEASE_ENVS:
             print(f"[build] {env}")
-            r = subprocess.run(["pio", "run", "-e", env], cwd=REPO)
+            r = subprocess.run([sys.executable, "-m", "platformio", "run", "-e", env], cwd=REPO)
             if r.returncode != 0:
                 print(f"[build] FAILED: {env}")
                 return 1
 
+    if args.require_clean and source_identity() != source:
+        print("[source] source identity changed during the build; refusing packaging")
+        return 1
+
+    # Require the complete hardware/BMS matrix before touching release staging.
+    # In particular --skip-build must never publish a partial release silently.
+    missing = [env for env in RELEASE_ENVS
+               if not (REPO / ".pio" / "build" / env / "firmware.bin").is_file()]
+    # Preserve the bundled font's existing terms. Project licensing is undecided;
+    # draft proposals must not be copied into a release or advertised as adopted.
+    notices = ("OFL.txt",)
+    missing_notices = [name for name in notices if not (REPO / name).is_file()]
+    if missing or missing_notices:
+        print("[package] missing required inputs: " + ", ".join(missing + missing_notices))
+        return 1
+
+    if args.require_clean:
+        stamp = f"v{version} {source['commit'][:7]}".encode() + b"\0"
+        mismatched = [env for env in RELEASE_ENVS
+                      if stamp not in (REPO / ".pio" / "build" / env / "firmware.bin").read_bytes()]
+        if mismatched:
+            print("[source] binaries do not identify the clean source commit: " + ", ".join(mismatched))
+            return 1
+
     # 2. Collect artifacts + sha256.
+    out.mkdir(parents=True, exist_ok=True)
+    for name in notices:
+        shutil.copy2(REPO / name, out / name)
     files_map = {}
     artifacts = []
-    for env, (kind, label) in RELEASE_ENVS.items():
+    for env, (kind, label, bms_driver) in RELEASE_ENVS.items():
         src = REPO / ".pio" / "build" / env / "firmware.bin"
-        if not src.exists():
-            print(f"[package] missing {src} — skipping {env}")
-            continue
         name = f"esk8os_{version}_{kind}.bin"
         dst = out / name
         shutil.copy2(src, dst)
@@ -88,8 +121,11 @@ def main() -> int:
         (out / f"{name}.sha256").write_text(f"{digest}  {name}\n")
         files_map[kind] = name
         artifacts.append({
+            "sourceCommit": source["commit"],
             "kind": kind,
             "label": label,
+            "environment": env,
+            "bms": bms_driver,
             "file": name,
             "sha256": digest,
             "bytes": dst.stat().st_size,
@@ -105,7 +141,10 @@ def main() -> int:
     primary = files_map.get("tdisplay-s3") or artifacts[0]["file"]
     latest = {
         "version": version,
-        "channel": "stable",
+        "channel": "candidate",
+        "source": source,
+        "hardwareValidation": "pending",
+        "publicationStatus": "pending-hardware-validation",
         "publishedAt": now,
         "file": primary,
         "notes": args.notes or f"ESK8OS firmware {version}",
@@ -114,13 +153,19 @@ def main() -> int:
     }
     manifest = {
         "slug": SLUG,
+        "channel": "candidate",
+        "source": source,
+        "hardwareValidation": "pending",
+        "publicationStatus": "pending-hardware-validation",
         "version": version,
         "publishedAt": now,
         "assets": artifacts,
+        "fontLicenseFile": "OFL.txt",
         "install": {
             "ota": "Board web updater: enable WIFI EXPORT from the app (or bridge mode), "
                    "join the board's AP, open http://192.168.4.1 and upload the .bin.",
-            "usb": "pio run -e tdisplay_s3_ride_release -t upload (or esptool write_flash)",
+            "usb": "Archive session logs first, then pio run -e <environment> -t upload. "
+                   "Use the environment listed on the matching hardware/BMS asset.",
         },
     }
     (out / "latest.json").write_text(json.dumps(latest, indent=2) + "\n")
@@ -130,46 +175,7 @@ def main() -> int:
         notes.write_text(f"# ESK8OS {version}\n\n- {args.notes or 'Release ' + version}\n")
 
     print(f"[package] staged in {out}")
-    if args.dry_run:
-        return 0
-
-    # 4. Upload over SFTP (archive the previous release server-side first).
-    env = read_env_file(REPO / ".env.raspi")
-    import paramiko  # deferred: only needed for the upload step
-    c = paramiko.SSHClient()
-    c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    c.connect(env["SSH_HOST"], port=int(env.get("SSH_PORT", 22)), username=env["SSH_USER"],
-              password=env["SSH_PASSWORD"], allow_agent=False, look_for_keys=False)
-    c.exec_command(
-        f"mkdir -p {REMOTE_DIR}/archive && "
-        f"cd {REMOTE_DIR} && "
-        # move any previous version's bins into archive/ (keeps latest.json history simple)
-        f"for f in esk8os_*.bin esk8os_*.bin.sha256; do "
-        f"  [ -e \"$f\" ] && case \"$f\" in *_{version}_*) ;; *) mv \"$f\" archive/ ;; esac; "
-        f"done; true"
-    )[1].channel.recv_exit_status()
-
-    sftp = c.open_sftp()
-    for p in sorted(out.iterdir()):
-        print(f"[upload] {p.name}")
-        sftp.put(str(p), f"{REMOTE_DIR}/{p.name}")
-    sftp.close()
-
-    # 5. Rebuild the Astro site: nginx serves apps/dist, and `astro build` is what
-    #    copies public/downloads (where we just uploaded) into dist. A failed
-    #    build leaves the old dist live — fail loudly instead of printing [done].
-    print("[site] rebuilding apps.zombie.digital ...")
-    i, o, e = c.exec_command(
-        "bash -lc 'cd /mnt/data/sites/apps && yarn build'; echo EXIT:$?")
-    build_out = o.read().decode(errors="replace")
-    print(build_out.encode(sys.stdout.encoding or "utf-8", "replace").decode(sys.stdout.encoding or "utf-8"))
-    if "EXIT:0" not in build_out:
-        print("[site] FAILED: apps.zombie.digital build did not succeed — "
-              "the freshly uploaded files are NOT in the live dist yet. "
-              "SSH in and run the build manually.")
-        return 1
-    c.close()
-    print(f"[done] https://apps.zombie.digital/downloads/{SLUG}/latest.json")
+    print("[candidate] hardware validation pending; no publication or deployment performed")
     return 0
 
 

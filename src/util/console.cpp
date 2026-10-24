@@ -5,6 +5,7 @@
 #include "telemetry/BatteryView.h"
 #include "transports/VescUartTransport.h"
 #include "transports/DalyBms.h"
+#include "transports/BmsDriver.h"
 #include "config/Settings.h"
 #include "services/companion_ble.h"
 #include "version.h"
@@ -849,14 +850,28 @@ static void cmdWheel(const char* arg) {
         w.name, w.wheelDiameterM * 1000.0f);
 }
 
-static void cmdBms() {
+static void cmdBms(const char* arg) {
     using namespace Esk8OS::Transports;
+    if (arg[0]) {
+        const char* address = !strcmp(arg, "forget") ? "" :
+                              (!strncmp(arg, "target ", 7) ? arg + 7 : nullptr);
+        const auto result = address ? setBmsTarget(address) : BmsTargetResult::Invalid;
+        const char* message = result == DalyTargetResult::Saved ? "BMS target saved" :
+            result == DalyTargetResult::Busy ? "BMS selection blocked: stop and exit bridge/remote mode" :
+            result == DalyTargetResult::StorageError ? "BMS target not saved: NVS write failed" :
+            result == DalyTargetResult::NotBuilt ? "BMS support not built in" :
+            "Usage: bms target AA:BB:CC:DD:EE:FF | bms forget";
+        consoleOut().println(message);
+        return;
+    }
 
 #if !ESK8OS_BMS_DALY
     consoleOut().println(F("BMS support not built in (build env tdisplay_s3_bms)"));
     return;
 #endif
 
+    const auto target = getBmsTarget();
+    consoleOut().printf("BMS target: %s\n", target.address[0] ? target.address : "not selected (use the app or bms target <address>)");
     BmsData b;
     getBmsData(&b);   // atomic snapshot (F-2)
 
@@ -941,7 +956,8 @@ static void cmdHelp() {
     consoleOut().println(F("  trip [reset]    trip distance/time/avg/max/range, or full reset"));
     consoleOut().println(F("  cal [reset]     learned battery calibration (pack R/energy/Wh-mi)"));
     consoleOut().println(F("  wheel [mm|reset] wheel-size calibration (120-350mm; reset=use preset)"));
-    consoleOut().println(F("  bms             Daly BMS: pack, per-cell mV, temps, MOS, faults"));
+    consoleOut().println(F("  bms             Daly BMS: pack, cells, temps, MOS, faults"));
+    consoleOut().println(F("  bms target <MAC> / bms forget  select or forget the Daly module"));
     consoleOut().println(F("  vstat           ESC's own ride stats (avg/max spd, power, temps)"));
     consoleOut().println(F("  vesc <cmd>      ESC terminal passthrough (vesc faults, vesc ping, ...)"));
     consoleOut().println(F("  faults          shortcut for `vesc faults` (ESC's own fault log)"));
@@ -984,7 +1000,7 @@ static void dispatch(char* line) {
         cmdRm(arg);
     }
     else if (!strcmp(line, "log"))  cmdLog(arg);
-    else if (!strcmp(line, "bms"))  cmdBms();
+    else if (!strcmp(line, "bms"))  cmdBms(arg);
     else if (!strcmp(line, "wifi")) cmdWifi(arg);
     else if (!strcmp(line, "free")) consoleOut().printf("FS %u/%u B used\n",
                  (unsigned)LittleFS.usedBytes(), (unsigned)LittleFS.totalBytes());

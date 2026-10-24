@@ -19,6 +19,7 @@ The Android app acts as a read/write client to this custom service.
 | **Session** | `5043697A-0004-4682-93CB-33BB0A149F7E` | `NOTIFY` | 1 Hz trip/session statistics (fw 0.9.4+) |
 | **BaseConfig** | `5043697A-0005-4682-93CB-33BB0A149F7E` | `READ` | VESC-read base config + per-value provenance (fw 0.10.1+) |
 | **BMS** | `5043697A-0006-4682-93CB-33BB0A149F7E` | `NOTIFY` | 1 Hz Daly BMS pack + per-cell (BMS builds only) |
+| **BMS target** | `5043697A-0007-4682-93CB-33BB0A149F7E` | `READ`, `WRITE` | Per-device Daly selection (BMS builds, fw 0.12.3+) |
 
 ---
 
@@ -276,6 +277,63 @@ diagnosis, not permission to raise the BMS limits: motor-controller limits,
 cell/pack current ratings, BMS rating, wiring, connectors, and desired transient
 headroom must be considered together before changing either side.
 
+## 2d. BMS selection and driver identity (Characteristic `0007`, fw 0.12.3+)
+
+Available on TFT, OLED, and headless Daly builds. A fresh device has no target;
+there is no default rider address and no automatic selection of nearby packs.
+The Android app offers **Settings -> BMS setup -> Find my BMS**. Its scan
+only discovers advertisements; the phone does not connect to or configure the
+BMS. The rider confirms their own battery module. EVEE's existing client then
+verifies FFF0/FFF1/FFF2 and checksum-valid Daly responses before showing live data.
+
+Firmware 0.12.4+ reports the selected build's driver ID on read:
+
+```json
+{"type":"daly","address":"c2:11:22:33:44:55"}
+```
+
+`type` is read-only driver identity, not a claim that every BMS speaks Daly.
+Currently `daly` means the verified Daly Smart UART K BLE implementation.
+The firmware registry is `src/transports/BmsDriver.*`; new drivers require
+implementation and hardware evidence. The existing telemetry/alarm schema still
+contains Daly-specific evidence and must be adapted explicitly for another
+vendor (see CONTRIBUTING.md). Unknown types are not configured through the
+app's Daly path. Legacy 0.12.3 had no `type` and only supported Daly; that is the
+specific backward-compatible default, not a general unknown-vendor fallback.
+
+Write only the address in the small, separate JSON object (not `0002`):
+
+```json
+{"address":"c2:11:22:33:44:55"}
+```
+
+`{"address":""}` explicitly forgets the module. Writes must contain exactly
+one string field, `address`; malformed, oversized (64 bytes or more), embedded-NUL,
+zero/broadcast, and non-MAC values are ignored. Addresses are normalized to
+lowercase. The main loop persists only NVS key `dalyAddr` on this ESP32; no trip,
+odometer, calibration, or other settings are reset. A non-BMS firmware swap
+preserves the saved selection. No Bluetooth bonding or BMS parameter write is
+performed.
+
+Changes are refused outside dashboard mode, while the live speed magnitude is
+above 1 km/h (also unknown/non-finite speed), or while EVEE Link owns radio/UART.
+Demo speed does not block bench setup. BLE callbacks only queue bounded input;
+the main loop validates/persists it and the BMS poll task owns disconnect/reconnect.
+Changing or forgetting the target invalidates the old pack snapshot immediately,
+including any in-flight poll, so old cell/alarm evidence cannot be attributed to
+the newly selected pack. Empty selection means no live BMS scans or connection.
+
+A BLE write response confirms delivery only. The app reads `0007` back to
+confirm storage; it reports a rejected/not-persisted selection instead of claiming
+success. Matching readback does not prove a live BMS link; use `0006` for that.
+Public and static-random addresses are resolved from live advertisements rather
+than assuming an address type. Rotating identities are not bonded/resolved.
+
+Older firmware lacks `0007`: the app offers an update, not an unsupported write.
+**Upgrade note:** boards previously using the compiled-in rider address must
+select their module once after upgrading. Subsequent boots reconnect from NVS.
+USB fallback: `bms target <MAC>`, `bms forget`, and `bms` to inspect the selection.
+
 ## 3. Telemetry (Characteristics `0001` + `0004`)
 Since fw 0.9.4 telemetry is split across two notify characteristics so neither
 payload can approach the BLE notify size limit (a notify silently truncates past
@@ -477,7 +535,9 @@ The Android app writes a JSON object to this characteristic to change settings. 
 ---
 
 ## 5. Commands (Characteristic `0003`)
-Writing a raw ASCII string to this characteristic triggers immediate physical actions on the ESP32. This allows your phone to act as a remote control for the dashboard UI.
+Writing a raw ASCII string to this characteristic queues a command for the dashboard loop. This allows your phone to act as a remote control for the dashboard UI.
+
+Commands are applied only in dashboard mode. While bridge mode owns the UART, only `BRIDGE_EXIT` and `BRIDGE_TOGGLE` are handled; other command writes are ignored. BLE `TRIP_RESET`, `CAL_RESET`, and `REBOOT` are refused when the firmware speed exceeds 3 km/h. The app must not assume that a successful characteristic write means the requested action was applied.
 
 | Command String | Action |
 | :--- | :--- |
@@ -485,6 +545,7 @@ Writing a raw ASCII string to this characteristic triggers immediate physical ac
 | `"PAGE_NEXT"` | Swipes the physical ESP32 display to the next page. |
 | `"PAGE_PREV"` | Swipes the physical ESP32 display to the previous page. |
 | `"PAGE_SET:<n>"` | Jumps the display to an **absolute** page index (0=HUD,1=DASH,2=POWER,3=TRIP,4=SETTINGS,5=SYSTEM,6=GRAPHS,7=LOGS,8=BMS when built). Use this for page-swipe sync when the app's page set doesn't 1:1 the board's. |
+| `"BRIDGE_EXIT"` / `"BRIDGE_TOGGLE"` | Exits an active VESC bridge. In dashboard mode, `BRIDGE_TOGGLE` requests entry through the same guards as `BRIDGE_MODE`. |
 | `"BRIDGE_MODE"` | Requests VESC Tool Bridge Mode. On boards with buttons the display shows **START BRIDGE? L=YES R=NO** — the rider must physically confirm (30 s timeout) because the BLE link is unauthenticated and the bridge exposes motor config. Buttonless builds enter directly. |
 | `"WIFI_EXPORT_START"`| Requests the ESP32's WiFi AP + HTTP server (logs + OTA) without entering VESC bridge mode — telemetry/BLE keep streaming. On boards with buttons the display shows **ALLOW WIFI? L=YES R=NO** (30 s timeout); the AP only rises after the rider confirms. |
 | `"WIFI_EXPORT_STOP"` | Drops the standalone WiFi AP / HTTP server started by `WIFI_EXPORT_START`. |

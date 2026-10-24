@@ -17,6 +17,7 @@
 #include "telemetry/telemetry.h"
 #include "telemetry/BatteryView.h"
 #include "transports/DalyBms.h"
+#include "transports/BmsDriver.h"
 #include "logging/sessionlog.h"
 #include "config/Settings.h"
 #include "board/BoardLilyGoTDisplayS3.h"
@@ -36,6 +37,7 @@ static const char* CH_SESSION    = "5043697A-0004-4682-93CB-33BB0A149F7E"; // NO
 static const char* CH_BASECONF   = "5043697A-0005-4682-93CB-33BB0A149F7E"; // READ (VESC base + provenance)
 #if ESK8OS_BMS_DALY
 static const char* CH_BMS        = "5043697A-0006-4682-93CB-33BB0A149F7E"; // NOTIFY (1 Hz Daly pack + per-cell)
+static const char* CH_BMS_TARGET = "5043697A-0007-4682-93CB-33BB0A149F7E"; // READ | WRITE target selection
 #endif
 
 static const float KM2MI = 0.621371f;
@@ -53,6 +55,33 @@ static volatile bool g_cmdPending = false;
 static char          g_cmdBuf[40];
 static volatile bool g_setPending = false;
 static char          g_setBuf[256];
+#if ESK8OS_BMS_DALY
+static volatile bool g_bmsTargetPending = false;
+static char g_bmsTargetBuf[64];
+
+class BmsTargetCallbacks : public NimBLECharacteristicCallbacks {
+    void onRead(NimBLECharacteristic* c) override {
+        const auto target = Esk8OS::Transports::getBmsTarget();
+        JsonDocument doc;
+        doc["address"] = target.address;
+        const auto* driver = Esk8OS::Transports::activeBmsDriver();
+        doc["type"] = driver ? driver->id : "none";
+        char buf[64];
+        const size_t n = serializeJson(doc, buf, sizeof(buf));
+        c->setValue((uint8_t*)buf, n);
+    }
+    void onWrite(NimBLECharacteristic* c) override {
+        const std::string value = c->getValue();
+        if (value.empty() || value.size() >= sizeof(g_bmsTargetBuf) ||
+            value.find('\0') != std::string::npos) return;
+        portENTER_CRITICAL(&g_mux);
+        memcpy(g_bmsTargetBuf, value.data(), value.size());
+        g_bmsTargetBuf[value.size()] = 0;
+        g_bmsTargetPending = true;
+        portEXIT_CRITICAL(&g_mux);
+    }
+};
+#endif
 
 static inline float r1(float v) { return roundf(v * 10.0f) / 10.0f; }
 static inline float r2(float v) { return roundf(v * 100.0f) / 100.0f; }
@@ -661,6 +690,9 @@ void companionBleBegin() {
 
 #if ESK8OS_BMS_DALY
     g_bms = svc->createCharacteristic(CH_BMS, NIMBLE_PROPERTY::NOTIFY);
+    auto* target = svc->createCharacteristic(
+        CH_BMS_TARGET, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+    target->setCallbacks(new BmsTargetCallbacks());
 #endif
     svc->start();
 
@@ -681,6 +713,25 @@ void companionBleBegin() {
 }
 
 void companionBleTick() {
+#if ESK8OS_BMS_DALY
+    // Drain even outside dashboard mode: rejected changes must never wait until
+    // a bridge closes or a moving vehicle stops and then apply unexpectedly.
+    if (g_bmsTargetPending) {
+        char local[64];
+        portENTER_CRITICAL(&g_mux);
+        memcpy(local, g_bmsTargetBuf, sizeof(local));
+        g_bmsTargetPending = false;
+        portEXIT_CRITICAL(&g_mux);
+        JsonDocument doc;
+        if (!deserializeJson(doc, local) && doc.is<JsonObject>() &&
+            doc.size() == 1 && doc["address"].is<const char*>()) {
+            const JsonString address = doc["address"].as<JsonString>();
+            // Escaped NUL must not make an invalid address look like "forget".
+            if (address.size() == strlen(address.c_str()))
+                Esk8OS::Transports::setBmsTarget(address.c_str());
+        }
+    }
+#endif
     // Apply queued command writes even in bridge mode so the phone can exit the
     // bridge without local buttons. Settings/telemetry remain dashboard-owned.
     if (g_cmdPending) {

@@ -1,5 +1,7 @@
 #include "transports/DalyBms.h"
 #include "transports/DalyModbus.h"
+#include "esk8os.h"
+#include "services/remote_link.h"
 
 extern bool gDemoMode;   // Settings.cpp (global scope) — drives the bench simulation
 
@@ -14,30 +16,71 @@ namespace Transports {
 // simply show "link down" on a build without the BMS. The poll task below is the
 // only part gated by the flag.
 BmsData gBms;
+static portMUX_TYPE sTargetMux = portMUX_INITIALIZER_UNLOCKED;
+static DalyTarget sTarget;
+static uint32_t sPublishedTargetRevision = 0; // guarded by gBmsMutex
+
+DalyTarget getDalyTarget() {
+    portENTER_CRITICAL(&sTargetMux);
+    const DalyTarget target = sTarget;
+    portEXIT_CRITICAL(&sTargetMux);
+    return target;
+}
 
 // Guards the publish of gBms (poll task, core 0) against reads on the UI/BLE core.
 // Created in beginDalyBms; stays null on a non-BMS build, where gBms never changes
 // and an unlocked copy is safe. (F-2)
 static SemaphoreHandle_t gBmsMutex = nullptr;
 
-bool getBmsData(BmsData* out) {
+bool getDalyBmsData(BmsData* out) {
+    uint32_t revision;
     if (gBmsMutex && xSemaphoreTake(gBmsMutex, portMAX_DELAY) == pdTRUE) {
         *out = gBms;
+        revision = sPublishedTargetRevision;
         xSemaphoreGive(gBmsMutex);
     } else {
         *out = gBms;   // pre-begin, or non-BMS build: no concurrent writer
+        revision = sPublishedTargetRevision;
     }
+    // A target change invalidates every field immediately, even if an old poll
+    // is still finishing. Never present one pack's cells as another pack's data.
+    if (revision != getDalyTarget().revision) *out = BmsData{};
     return out->linkOk;
 }
 
 #if ESK8OS_BMS_DALY
 
-#ifndef DALY_BLE_ADDRESS
-#define DALY_BLE_ADDRESS "d0:18:04:01:39:98"
-#endif
-#ifndef DALY_BLE_NAME
-#define DALY_BLE_NAME "ZOMBIESK8-BMS"
-#endif
+void loadDalyTarget() {
+    const String stored = prefs.getString("dalyAddr", "");
+    char normalized[18] = {};
+    normalizeDalyAddress(stored.c_str(), normalized); // corrupt -> unconfigured
+    portENTER_CRITICAL(&sTargetMux);
+    memcpy(sTarget.address, normalized, sizeof(normalized));
+    ++sTarget.revision;
+    portEXIT_CRITICAL(&sTargetMux);
+}
+
+DalyTargetResult setDalyTarget(const char* address) {
+    char normalized[18] = {};
+    if (!normalizeDalyAddress(address, normalized)) return DalyTargetResult::Invalid;
+    if (!dalyTargetChangeAllowed(systemMode == MODE_DASHBOARD, gDemoMode,
+            currentSpeedKmh, Esk8OS::RemoteLink::blocksRadioAndUart()))
+        return DalyTargetResult::Busy;
+    if (!strcmp(getDalyTarget().address, normalized)) return DalyTargetResult::Saved;
+    // NVS is written only by the main task. A failed write leaves the old target
+    // intact in RAM as well; other settings, ride history and calibration stay put.
+    const bool stored = normalized[0]
+        ? prefs.putString("dalyAddr", normalized) == strlen(normalized)
+        : (!prefs.isKey("dalyAddr") || prefs.remove("dalyAddr"));
+    if (!stored) return DalyTargetResult::StorageError;
+    portENTER_CRITICAL(&sTargetMux);
+    memcpy(sTarget.address, normalized, sizeof(normalized));
+    ++sTarget.revision;
+    portEXIT_CRITICAL(&sTargetMux);
+    return DalyTargetResult::Saved;
+}
+
+static DalyTarget sActiveTarget; // only the BMS poll task owns the live connection
 
 // Fallback until 0x94 tells us the real count — you said 10S, so a first pass of
 // 0x95 (which needs a frame count) has something sane to work with.
@@ -158,7 +201,7 @@ static void scheduleReconnect() {
 }
 
 static bool connectTransport() {
-    if (!NimBLEDevice::getInitialized()) return false;
+    if (!NimBLEDevice::getInitialized() || !sActiveTarget.address[0]) return false;
     if (sReconnectAtMs != 0 && (int32_t)(millis() - sReconnectAtMs) < 0) return false;
 
     sTransportReady = false;
@@ -166,7 +209,7 @@ static bool connectTransport() {
     sWrite = nullptr;
     clearRx();
 
-    // Resolve the configured static-random address from a live advertisement. Besides
+    // Resolve the selected address from a live advertisement (public or random). Besides
     // avoiding blind connection attempts at an out-of-range module, passing the
     // advertised device to NimBLE preserves the address type reported on-air.
     // Scanning shares the controller with the companion peripheral role; it does
@@ -177,11 +220,16 @@ static bool connectTransport() {
     scan->setWindow(45);
     scan->setMaxResults(20);
 
-    Serial.printf("[bms] scanning %lu s for %s %s\n",
-                  (unsigned long)DALY_SCAN_SECONDS, DALY_BLE_NAME, DALY_BLE_ADDRESS);
+    Serial.printf("[bms] scanning %lu s for %s\n",
+                  (unsigned long)DALY_SCAN_SECONDS, sActiveTarget.address);
     NimBLEScanResults results = scan->start(DALY_SCAN_SECONDS, false);
-    NimBLEAdvertisedDevice* advertised =
-        results.getDevice(NimBLEAddress(DALY_BLE_ADDRESS, BLE_ADDR_RANDOM));
+    NimBLEAdvertisedDevice* advertised = nullptr;
+    for (auto* candidate : results) {
+        if (candidate->getAddress().toString() == sActiveTarget.address) {
+            advertised = candidate;
+            break;
+        }
+    }
     if (!advertised) {
         Serial.printf("[bms] target not seen among %d devices; retry in %lu s\n",
                       results.getCount(),
@@ -208,7 +256,7 @@ static bool connectTransport() {
         sClient->setConnectTimeout(5);
     }
 
-    Serial.printf("[bms] connecting %s %s\n", DALY_BLE_NAME, DALY_BLE_ADDRESS);
+    Serial.printf("[bms] connecting %s\n", sActiveTarget.address);
     // NimBLE 1.4.x: the second argument is deleteAttributes (services are
     // re-discovered every connect anyway, since sNotify/sWrite are re-resolved
     // below). NimBLE 2.x renames this parameter to asyncConnect — re-check the
@@ -627,11 +675,32 @@ static void bmsPollTask(void*) {
     bool wasDemo = false;
     for (;;) {
         BmsData b = gBms;   // carry forward last topology (cell/temp counts)
+        const DalyTarget desired = getDalyTarget();
+        if (desired.revision != sActiveTarget.revision) {
+            // Only this task ever disconnects/reconfigures the BMS client.
+            if (sClient && sClient->isConnected()) sClient->disconnect();
+            sTransportReady = false;
+            sDisconnected = false;
+            sNotify = nullptr;
+            sWrite = nullptr;
+            clearRx();
+            sActiveTarget = desired;
+            sReconnectAtMs = 0;
+            sReconnectBackoffMs = RECONNECT_MIN_MS;
+            sSettingsReadPending = true;
+            sNextSettingsReadMs = 0;
+            consecutivePackFailures = 0;
+            wasDemo = false;
+            b = BmsData{};
+        }
 
         if (gDemoMode) {
             simulateBms(b);
             consecutivePackFailures = 0;
             wasDemo = true;
+        } else if (!sActiveTarget.address[0]) {
+            b = BmsData{}; // unconfigured means no scanning or inherited demo data
+            wasDemo = false;
         } else if (ensureTransport()) {
             if (wasDemo) {
                 sSettingsReadPending = true;
@@ -690,6 +759,7 @@ static void bmsPollTask(void*) {
 
         if (gBmsMutex && xSemaphoreTake(gBmsMutex, portMAX_DELAY) == pdTRUE) {
             gBms = b;
+            sPublishedTargetRevision = sActiveTarget.revision;
             xSemaphoreGive(gBmsMutex);
         }
         vTaskDelay(pdMS_TO_TICKS(500));   // 2 Hz; cell voltages do not move fast
@@ -712,6 +782,8 @@ void beginDalyBms() {
 #else   // !ESK8OS_BMS_DALY
 
 void beginDalyBms() {}   // stub; gBms stays linkOk = false
+void loadDalyTarget() {} // preserve NVS when switching to a non-BMS build
+DalyTargetResult setDalyTarget(const char*) { return DalyTargetResult::NotBuilt; }
 
 #endif
 

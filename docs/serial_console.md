@@ -81,7 +81,9 @@ Type `help` (or `?`) for the in-firmware list. `[...]` = optional argument.
 | :--- | :--- |
 | `help`, `?` | List all commands. |
 | `stat`, `tel` | Source-aware status: stable primary battery voltage/SOC/range plus raw VESC-vs-Daly cross-checks. With Daly present, its raw counter is explicitly labeled separately until ride-validated. Drive-only fields stay unavailable without the VESC. |
-| `bms` | Daly link, pack, cells, temperatures, MOS states, raw fault bytes, per-group freshness mask, classified alarm level, and the read-only discharge-overcurrent thresholds/delays from registers `0x145..0x149` (BMS builds only). |
+| `bms` | Saved Daly target, link, pack, cells, temperatures, MOS states, raw fault bytes, per-group freshness mask, classified alarm level, and read-only discharge-overcurrent thresholds/delays (BMS builds only). |
+| `bms target <MAC>` | Save this ESP32's Daly BLE target, e.g. `bms target C2:11:22:33:44:55`. Persists across restarts; fw 0.12.3+. Stop the vehicle and exit bridge/remote mode first. |
+| `bms forget` | Forget the selected Daly module and invalidate its pack data. Does not erase trips, calibration, or other settings. |
 | `diag` | Remote/PPM throttle (−1…+1, accel/brake) + signal-present, VESC firmware version, slave-motor (CAN) online, current/last fault, per-motor current + temps. |
 | `trip` | Trip distance, moving-time (`tmov`), odometer, session avg/max speed, range estimate (learned vs default). |
 | `sys` | Firmware version, uptime, reset reason, FPS, free heap (+ min), free/total PSRAM. |

@@ -1,0 +1,4 @@
+# Host tooling; firmware dependencies are pinned in platformio.ini.
+platformio==6.1.19
+pyserial==3.5
+Pillow==13.0.0

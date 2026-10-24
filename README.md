@@ -72,13 +72,79 @@ together.
 
 Uses [PlatformIO](https://platformio.org/):
 
-| Environment | Target | Notes |
+On Linux, install the host tools in a user-owned virtual environment:
+
+```bash
+python3 -m venv ~/.local/share/esk8os-platformio
+~/.local/share/esk8os-platformio/bin/python -m pip install -r requirements-dev.txt
+./scripts/piow run -e tdisplay_s3_bms        # compile only; no device changes
+```
+
+`scripts/piow` runs from this repository regardless of the current directory.
+Set `EVEE_PIO_VENV` to use another virtual environment. Python tools such as
+`preview.py` and `scripts/archive_sessions.py` can use that environment's Python.
+The ESP32 platform is pinned to 6.12.0 (Arduino 2.0.17); upgrading to Arduino 3
+requires a deliberate compatibility pass. Core library versions match the
+existing checkout's dependencies. The first build downloads Linux toolchains;
+copied Windows build caches are not usable on Linux.
+
+The Android companion is a separate Flutter project at `../esk8os_mobile`.
+Its `AGENTS.md`, `HANDOFF.md`, and `DEVELOPMENT_PHONE.md` cover app development,
+release signing, and preserving ride data during phone updates.
+
+Display hardware and BMS driver are independent choices. The currently
+supported driver is **Daly Smart BMS (UART K BLE)**. Other brands can be added
+through hardware-validated community PRs; BMS support does not imply universal
+compatibility. The current release matrix therefore contains six combinations:
+
+| Hardware | Without BMS | With Daly BMS over BLE |
 |---|---|---|
-| `tdisplay_s3_debug_usb` | LilyGO T-Display-S3 | Full TFT UI + USB serial console (bench/dev) |
-| `tdisplay_s3_ride_release` | LilyGO T-Display-S3 | Ride build |
-| `esp32s3_oled_i2c_usb` | Generic ESP32-S3 + SSD1306 | 128×32 OLED glance UI |
-| `esp32s3_headless_usb` | Generic ESP32-S3 | No display; the app is the UI |
-| `wokwi-simulator` | [Wokwi](https://wokwi.com/) | Generic ESP32 + ILI9341 stand-in, simulated telemetry |
+| LilyGO T-Display-S3 (TFT) | `tdisplay_s3_ride_release` | `tdisplay_s3_bms` |
+| Generic ESP32-S3 + SSD1306 (128×32 OLED) | `esp32s3_oled_i2c_usb` | `esp32s3_oled_i2c_bms_usb` |
+| Generic ESP32-S3, no display | `esp32s3_headless_usb` | `esp32s3_headless_bms_usb` |
+
+The TFT Daly build keeps USB serial enabled, matching the rider's working
+build. The ordinary TFT ride build disables USB CDC; use
+`tdisplay_s3_debug_usb` for non-BMS TFT development with a serial console.
+Generic OLED/headless variants keep USB serial in both cases. Touch and EVEE
+Link experiments remain separate environments outside this release matrix.
+
+**BMS setup (selection from firmware 0.12.3+, explicit driver type from 0.12.4):** each ESP32 remembers its own BMS. In the
+Android app, connect to EVEE, open **Settings -> BMS setup -> Find my BMS**,
+and confirm the module attached to your battery. Turn demo mode off for live
+monitoring. Selection survives restarts; **Forget selected BMS** clears it.
+Stop the vehicle and exit bridge mode before changing the selection.
+
+Fresh devices start with no BMS selected and do not connect to nearby packs
+automatically. Existing boards upgrading from the old compiled-in address also
+need this one-time selection. USB fallback: `bms target <MAC>`, `bms forget`.
+Support is for the verified UART K BLE service, not every Daly protocol. The
+no-BMS builds do not start the Daly client and preserve a saved selection.
+
+`wokwi-simulator` targets a generic ESP32 + ILI9341 stand-in with simulated
+telemetry; it is not a hardware release download.
+
+Build and stage the complete six-artifact release without uploading:
+
+```bash
+~/.local/share/esk8os-platformio/bin/python scripts/publish_release.py --dry-run --require-clean
+python3 -m unittest discover -s tests -v
+```
+
+This producer stages **candidate** metadata with hardware validation pending;
+its retired live-upload/Astro path is disabled. `--require-clean` verifies a
+committed tree, detects changes during the build and rejects images whose
+embedded identity does not match that clean commit. Stable publication belongs
+to the separate website process after hardware validation and explicit approval.
+See [the 0.12.4 candidate review and hardware gate](docs/releases/0.12.4-review.md).
+
+The producer requires every variant; a missing artifact fails the whole
+package, including with `--skip-build`. With `--dry-run`, `--output-dir <directory>`
+stages a verification package separately from `release/<version>`. The manifest records
+each artifact's PlatformIO environment, explicit BMS driver, size, and SHA-256.
+The bundled font's existing OFL.txt is included; no project license is selected.
+Existing
+non-BMS artifact names and the primary download remain compatible.
 
 ```bash
 pio run -e tdisplay_s3_debug_usb -t upload     # flash the LilyGO display board
@@ -119,6 +185,19 @@ before every flash**.
 - `scripts/` — release packaging, session archiving, serial probe, previews
 - [`PERFORMANCE.md`](PERFORMANCE.md) — rendering architecture and the
   dirty-band double-buffer pipeline
+
+## Community drivers and licensing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to propose or implement a BMS driver.
+The lifecycle/setup registry is `src/transports/BmsDriver.*`. Contributors can
+validate hardware they own; the maintainer need not own every model. New drivers
+need their own protocol parsing, normalized fields/alarms, fixtures, explicit
+identity, and supported hardware builds. Unimplemented types are not downloads.
+
+Project licensing and contributor terms are **undecided**; see
+[LICENSING.md](LICENSING.md). Earlier options are archived as drafts only.
+Existing third-party licenses remain intact. Technical development and BMS
+proposals can continue while those decisions are deferred.
 
 ## Versioning
 

@@ -20,6 +20,7 @@
 // ============================================================================
 #pragma once
 #include <Arduino.h>
+#include "transports/DalyTarget.h"
 
 namespace Esk8OS {
 namespace Transports {
@@ -210,11 +211,17 @@ inline BmsAlarmLevel bmsAlarmLevel(const BmsData& b) {
 // Atomic snapshot of the pack state. The ONLY supported way to read the BMS from
 // another task — copies the published struct under a lock so the reader gets a
 // coherent frame. Returns false (and a zeroed *out) on a build without the BMS.
-bool getBmsData(BmsData* out);
+bool getBmsData(BmsData* out); // selected driver facade
+bool getDalyBmsData(BmsData* out); // Daly adapter snapshot
 
 // Starts the BMS BLE-client poll task after companionBleBegin() has initialized
 // the shared NimBLE stack. A no-op unless built with -DESK8OS_BMS_DALY.
 void beginDalyBms();
+
+// Load once after prefs.begin(); mutations run on the UI/console task only.
+void loadDalyTarget();
+DalyTarget getDalyTarget();
+DalyTargetResult setDalyTarget(const char* address);
 
 }  // namespace Transports
 }  // namespace Esk8OS

@@ -1,5 +1,7 @@
 #include "config/Settings.h"
 #include "esk8os.h"
+#include "transports/DalyBms.h"
+#include "transports/BmsDriver.h"
 
 // Variables previously in main.cpp
 const char* PRODUCT_NAME = "ESK8OS";
@@ -109,6 +111,7 @@ static void applyBaseTier();   // defined below begin(); begin() uses it for the
 
 void begin() {
     prefs.begin("esk8os", false);
+    Transports::loadBmsTarget();
     
     // The lifetime odometer, trip, and moving-time are plain scalars — never
     // format-versioned — so ALWAYS preserve them, even across a schema bump.

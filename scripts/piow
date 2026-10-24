@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Project-local Linux launcher; keeps Python tooling out of system packages.
+set -euo pipefail
+
+project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+pio_venv="${EVEE_PIO_VENV:-$HOME/.local/share/esk8os-platformio}"
+
+if [[ ! -x "$pio_venv/bin/pio" ]]; then
+  printf 'PlatformIO not found in %s. Set EVEE_PIO_VENV or follow README setup.\n' "$pio_venv" >&2
+  exit 1
+fi
+
+cd -- "$project_dir"
+exec "$pio_venv/bin/pio" "$@"

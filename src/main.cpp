@@ -8,6 +8,7 @@
 #include "app/App.h"
 #include "transports/VescUartTransport.h"
 #include "transports/DalyBms.h"
+#include "transports/BmsDriver.h"
 #include "services/companion_ble.h"
 #include "telemetry/telemetry.h"
 #include "logging/sessionlog.h"
@@ -47,7 +48,7 @@ void setup() {
     // It owns the one NimBLE stack; the VESC-Tool bridge co-hosts on the same
     // server and the optional Daly transport adds a central/client afterward.
     companionBleBegin();
-    Esk8OS::Transports::beginDalyBms();   // no-op unless -DESK8OS_BMS_DALY
+    Esk8OS::Transports::beginBms();   // no-op unless -DESK8OS_BMS_DALY
     Esk8OS::UiRenderer::showBootSplash(78, "PHONE");
 
     #if ESK8OS_DISPLAY_TFT && !defined(WOKWI_SIMULATION)

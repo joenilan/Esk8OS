@@ -1,0 +1,26 @@
+name: BMS support request or driver proposal
+description: Propose support for a BMS you can identify or test.
+title: "BMS: "
+body:
+  - type: input
+    id: hardware
+    attributes:
+      label: Exact BMS and communication module
+      description: Vendor, model, firmware version, Bluetooth module or wired interface.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Protocol information
+      description: Link documentation or sanitized traces you are allowed to share. Unknown is acceptable.
+  - type: textarea
+    id: validation
+    attributes:
+      label: Hardware and testing access
+      description: What hardware do you own, which EVEE display profile will you use, and what can you validate?
+  - type: textarea
+    id: scope
+    attributes:
+      label: Requested monitoring features
+      description: Pack/cell readings, alarms, freshness, connection behavior, and any known limitations.
