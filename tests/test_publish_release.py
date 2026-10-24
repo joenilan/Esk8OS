@@ -187,6 +187,28 @@ class ReleasePackagingTests(unittest.TestCase):
             self.assertEqual(self.run_release("--require-clean", "--skip-build", "--output-dir", str(self.output)), 1)
             self.assertFalse(self.output.exists())
 
+    def test_cold_build_seeds_generated_header_before_platformio_fingerprints(self):
+        self.create_firmware()
+        header = self.repo / "src/version.h"
+        self.assertFalse(header.exists())
+        def build(*args, **kwargs):
+            self.assertTrue(header.is_file())
+            return subprocess.CompletedProcess(args[0], 0)
+        with patch.object(release.subprocess, "run", side_effect=build) as run:
+            self.assertEqual(self.run_release("--output-dir", str(self.output)), 0)
+        self.assertEqual(run.call_count, 6)
+
+    def test_existing_generated_header_is_not_rewritten_or_retouched(self):
+        self.create_firmware()
+        header = self.repo / "src/version.h"
+        header.parent.mkdir()
+        header.write_text("existing generated identity\n")
+        original_mtime = header.stat().st_mtime_ns
+        with patch.object(release.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)):
+            self.assertEqual(self.run_release("--output-dir", str(self.output)), 0)
+        self.assertEqual(header.read_text(), "existing generated identity\n")
+        self.assertEqual(header.stat().st_mtime_ns, original_mtime)
+
 
 if __name__ == "__main__":
     unittest.main()

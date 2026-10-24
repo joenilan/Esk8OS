@@ -75,6 +75,14 @@ def main() -> int:
 
     # 1. Build every release environment.
     if not args.skip_build:
+        # PlatformIO fingerprints source filenames before SCons runs. On a cold
+        # checkout the hook creates version.h during the first environment;
+        # without this placeholder the next invocation sees a new filename and
+        # deletes every earlier build. The hook still writes the real identity.
+        version_header = REPO / "src" / "version.h"
+        if not version_header.exists():
+            version_header.parent.mkdir(parents=True, exist_ok=True)
+            version_header.touch()
         for env in RELEASE_ENVS:
             print(f"[build] {env}")
             r = subprocess.run([sys.executable, "-m", "platformio", "run", "-e", env], cwd=REPO)
